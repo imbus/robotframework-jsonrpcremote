@@ -1,0 +1,17 @@
+[project]
+name = "simple-robot-jsonrpcserver"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "robotframework-jsonrpcpeer",
+    "robotframework-jsonrpcremote-protocol",
+]
+
+[project.scripts]
+simple-robot-jsonrpcserver = "simple_robot_jsonrpcserver:__main__.run"
+
+[tool.uv.sources]
+robotframework-jsonrpcpeer = { workspace = true }
+robotframework-jsonrpcremote-protocol = { workspace = true }

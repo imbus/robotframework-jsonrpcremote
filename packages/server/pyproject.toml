@@ -1,0 +1,20 @@
+[project]
+name = "robotframework-jsonrpcremote-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Daniel Biehl", email = "dbiehl@live.de" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+robot-jsonrpcremote-server = "robot_jsonrpcremote_server:main"
+
+[tool.uv.build-backend]
+module-name = "robot_jsonrpcremote_server"
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"

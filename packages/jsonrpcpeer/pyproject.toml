@@ -1,0 +1,15 @@
+[project]
+name = "robotframework-jsonrpcpeer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "robot_jsonrpcpeer"

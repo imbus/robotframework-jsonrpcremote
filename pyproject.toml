@@ -1,0 +1,129 @@
+[project]
+name = "robotframework-jsonrpcremote"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]
+requires-python = ">=3.12"
+dependencies = ["robotframework>=7.0", "robotframework-jsonrpcpeer"]
+
+[project.optional-dependencies]
+server = ["robotframework-jsonrpcremote-server"]
+
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "JsonRpcRemote"
+
+[tool.uv.workspace]
+members = ["packages/*", "examples/*"]
+
+
+[tool.uv.sources]
+robotframework-jsonrpcpeer = { workspace = true }
+robotframework-jsonrpcremote-protocol = { workspace = true }
+robotframework-jsonrpcremote-server = { workspace = true }
+simple-robot-jsonrpcserver = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "robotframework-robocop>=7.0.0",
+    "ruff>=0.14.9",
+    "simple-robot-jsonrpcserver",
+]
+
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["bundled/libs", ".hatch"]
+
+[tool.ruff.lint]
+ignore = ["E741", "N805", "N999", "RUF012", "RUF006", "ISC001"]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "N",
+    #"UP",
+    "YTT",
+    #"ANN",
+    #"BLE",
+    #"B",
+    #"A"
+    #"COM"
+    # "C4", # TODO enable this
+    "DTZ",
+    "T10",
+    # "EM",
+    "ISC",
+    "G",
+    #"INP",
+    "PIE",
+    # "T20",
+    "PT",
+    "Q",
+    "RET",
+    # "SIM", # TODO enable this
+    # "TID",
+    # "TCH",
+    # "ARG",
+    # "PTH", # TODO enable this
+    # "SLF", #  TODO enable this
+    # "ERA", # TODO enable this
+    "RSE",
+    # "PL",
+    #"TRY",
+    "RUF",
+    # "TID"
+]
+
+[tool.ruff.lint.per-file-ignores]
+#"__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+detect-same-package = true
+known-first-party = ["robot_jsonrpcpeer", "robot_jsonrpcremote_protocol", "robot_jsonrpcremote_server"]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unused_configs = true
+warn_unreachable = true
+implicit_reexport = false
+implicit_optional = true
+disallow_untyped_decorators = false
+disallow_subclassing_any = false
+explicit_package_bases = true
+namespace_packages = true
+exclude = [
+    '^\.mypy_cache/',
+    '^\.venv/',
+    '^\.hatch/',
+    "^build/",
+    "^dist/",
+    "^out/",
+    "^playground/",
+    "^scripts/",
+]
+mypy_path = [
+    "typings",
+    "src",
+    "packages/jsonrpcpeer/src",
+    "packages/protocol/src",
+    "packages/server/src",
+    "examples/simple_robot_jsonrpcserver/src",
+]

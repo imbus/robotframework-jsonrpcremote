@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+
+# IDE settings
+.vscode/
+.idea/
+
+# MyPy cache
+.mypy_cache/
+
+# ruff cache
+.ruff_cache/
+
+# Robot Framework
+output.xml
+log.html
+report.html
+debug.log
+results/
+
+.robotcode-cache/
