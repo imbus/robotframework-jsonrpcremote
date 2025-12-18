@@ -1,9 +1,40 @@
 from dataclasses import dataclass
+from enum import IntEnum, StrEnum
 
-from typing_extensions import Literal, TypeAlias
+from typing_extensions import TypeAlias
 
 SimpleType: TypeAlias = str | int | float | bool | None
 AnyType: TypeAlias = SimpleType | list[SimpleType] | dict[str, SimpleType]
+
+
+class RobotJsonRpcErrorCode(IntEnum):
+    NOT_INITIALIZED = -32000
+    KEYWORD_NOT_FOUND = -32001
+    ARGUMENT_MISMATCH = -32002
+
+
+class ArgumentKind(StrEnum):
+    POSITIONAL_ONLY = "POSITIONAL_ONLY"
+    POSITIONAL_OR_NAMED = "POSITIONAL_OR_NAMED"
+    VAR_POSITIONAL = "VAR_POSITIONAL"
+    NAMED_ONLY = "NAMED_ONLY"
+    VAR_NAMED = "VAR_NAMED"
+
+
+class RunKeywordErrorMode(StrEnum):
+    CONTINUABLE = "CONTINUABLE"
+    FATAL = "FATAL"
+    SKIP = "SKIP"
+
+
+class LogLevel(StrEnum):
+    TRACE = "TRACE"
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    CONSOLE = "CONSOLE"
+    HTML = "HTML"
+    WARN = "WARN"
+    ERROR = "ERROR"
 
 
 @dataclass
@@ -45,6 +76,8 @@ class ArgumentDefinition:
     name: str
     type: str | None = None
     default: AnyType | None = None
+    required: bool = True
+    kind: ArgumentKind | None = None
     doc: str | None = None
 
 
@@ -55,6 +88,7 @@ class KeywordDefinition:
     doc: str | None = None
     tags: list[str] | None = None
     source: str | None = None
+    lineno: int | None = None
 
 
 @dataclass
@@ -90,20 +124,28 @@ class ShutdownResult:
 @dataclass
 class RunKeywordParams:
     name: str
-    args: list[str | int | float | bool | None]
-    kwargs: dict[str, str | int | float | bool | None]
+    args: list[AnyType] | None = None
+    kwargs: dict[str, AnyType] | None = None
+
+
+@dataclass
+class RunKeywordError:
+    message: str
+    type: str | None = None
+    traceback: str | None = None
+    mode: RunKeywordErrorMode | None = None
 
 
 @dataclass
 class RunKeywordResult:
-    result: AnyType
-    error: str | None
+    result: AnyType | None = None
+    error: RunKeywordError | None = None
 
 
 @dataclass
 class LogParams:
     message: str
-    level: Literal["TRACE", "DEBUG", "INFO", "CONSOLE", "HTML", "WARN", "ERROR"] | None = None
+    level: LogLevel | None = None
     html: bool | None = None
     console: bool | None = None
     timestamp: str | None = None

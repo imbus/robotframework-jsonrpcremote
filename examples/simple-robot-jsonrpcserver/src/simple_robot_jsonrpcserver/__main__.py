@@ -14,7 +14,9 @@ from robot_jsonrpcremote_protocol import (
     InitializeResult,
     KeywordDefinition,
     LibraryDefinition,
+    LogLevel,
     LogParams,
+    RunKeywordError,
     RunKeywordParams,
     RunKeywordResult,
     ServerInfo,
@@ -41,7 +43,7 @@ async def initialize(peer: JsonRpcPeer, params: InitializeParams) -> InitializeR
             keywords=[
                 KeywordDefinition(
                     name="echo",
-                    args=[ArgumentDefinition(name="message", type=str(AnyType), doc="Message to echo back.")],
+                    args=[ArgumentDefinition(name="message", type="Any", doc="Message to echo back.")],
                     doc="Echoes the given message.",
                     tags=["example"],
                     source=__file__ + ":19",
@@ -72,7 +74,7 @@ async def echo(peer: JsonRpcPeer, params: dict[Any, Any]) -> Any:
     for i in range(3):
         await peer.send_notification(
             LOG_NOTIFICATION,
-            LogParams(message=f"Echo {i} request received with params: {params}", level="WARN", html=True),
+            LogParams(message=f"Echo {i} request received with params: {params}", level=LogLevel.WARN, html=True),
         )
 
     return params
@@ -86,7 +88,7 @@ async def run_keyword(peer: JsonRpcPeer, params: RunKeywordParams) -> RunKeyword
         result = f"Echo: {message}"
         return RunKeywordResult(result=result, error=None)
 
-    return RunKeywordResult(result=None, error=f"Keyword '{params.name}' not found.")
+    return RunKeywordResult(result=None, error=RunKeywordError(message=f"Keyword '{params.name}' not found."))
 
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
