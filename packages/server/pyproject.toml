@@ -3,10 +3,9 @@ name = "robotframework-jsonrpcremote-server"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-authors = [
-    { name = "Daniel Biehl", email = "dbiehl@live.de" }
-]
-requires-python = ">=3.12"
+authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]

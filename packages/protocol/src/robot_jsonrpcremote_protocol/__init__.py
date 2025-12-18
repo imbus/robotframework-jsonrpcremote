@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from enum import IntEnum, StrEnum
+from enum import Enum, IntEnum
 
 from typing_extensions import TypeAlias
 
@@ -13,7 +13,7 @@ class RobotJsonRpcErrorCode(IntEnum):
     ARGUMENT_MISMATCH = -32002
 
 
-class ArgumentKind(StrEnum):
+class ArgumentKind(str, Enum):
     POSITIONAL_ONLY = "POSITIONAL_ONLY"
     POSITIONAL_OR_NAMED = "POSITIONAL_OR_NAMED"
     VAR_POSITIONAL = "VAR_POSITIONAL"
@@ -21,13 +21,13 @@ class ArgumentKind(StrEnum):
     VAR_NAMED = "VAR_NAMED"
 
 
-class RunKeywordErrorMode(StrEnum):
+class RunKeywordErrorMode(str, Enum):
     CONTINUABLE = "CONTINUABLE"
     FATAL = "FATAL"
     SKIP = "SKIP"
 
 
-class LogLevel(StrEnum):
+class LogLevel(str, Enum):
     TRACE = "TRACE"
     DEBUG = "DEBUG"
     INFO = "INFO"

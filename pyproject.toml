@@ -4,8 +4,12 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]
-requires-python = ">=3.12"
-dependencies = ["robotframework>=7.0", "robotframework-jsonrpcpeer"]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "robotframework>=7.0",
+    "robotframework-jsonrpcpeer",
+]
 
 [project.optional-dependencies]
 server = ["robotframework-jsonrpcremote-server"]
@@ -31,6 +35,7 @@ simple-robot-jsonrpcserver = { workspace = true }
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",
+    "robotcode[runner]>=2.1.0",
     "robotframework-robocop>=7.0.0",
     "ruff>=0.14.9",
     "simple-robot-jsonrpcserver",
@@ -39,7 +44,7 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py310"
 extend-exclude = ["bundled/libs", ".hatch"]
 
 [tool.ruff.lint]
@@ -96,7 +101,7 @@ mark-parentheses = false
 
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.10"
 strict = true
 warn_redundant_casts = true
 warn_unused_ignores = true
@@ -127,3 +132,8 @@ mypy_path = [
     "packages/server/src",
     "examples/simple_robot_jsonrpcserver/src",
 ]
+
+[[tool.mypy.overrides]]
+module = ["robot.*", "robotremoteserver.*", "debugpy.*", "robocop.*", "pluggy"]
+ignore_missing_imports = true
+no_implicit_reexport = false
