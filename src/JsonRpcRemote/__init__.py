@@ -4,10 +4,12 @@ from collections.abc import Mapping, Sequence
 from enum import Enum
 from threading import Event, Thread
 from typing import Any
+from urllib.parse import urlparse
 
 from robot import result, running
 from robot.api import logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
+from robot.running.context import EXECUTION_CONTEXTS
 
 from robot_jsonrpcpeer import JsonRpcPeer
 from robot_jsonrpcremote_protocol import (
@@ -29,17 +31,29 @@ from robot_jsonrpcremote_protocol import (
     ServerInfo,
 )
 
+from .__version__ import __version__
+
 
 class _Session:
-    def __init__(self, uri: str | None = None) -> None:
+    def __init__(
+        self,
+        uri: str,
+        library_name: str | None,
+        library_args: set[Any] | None,
+        library_kw_args: dict[str, Any] | None,
+        timeout: float = 10.0,
+    ) -> None:
         self._uri = uri
+        self._library_name = library_name
+        self._library_args = library_args
+        self._library_kw_args = library_kw_args
+        self._timeout = timeout
+
         self._loop: asyncio.AbstractEventLoop | None = None
         self._peer: JsonRpcPeer | None = None
         self.initialized = Event()
         self.callback_loop: asyncio.AbstractEventLoop | None = None
         self._finalizer = weakref.finalize(self, self.stop)
-
-        self._timeout = 5.0
 
         self.server_capabilities: ServerCapabilities | None = None
         self.server_info: ServerInfo | None = None
@@ -67,11 +81,20 @@ class _Session:
     async def _log_notification(self, peer: JsonRpcPeer, params: LogParams) -> None:
         if self.callback_loop is not None:
             self.callback_loop.call_soon_threadsafe(
-                logger.write, params.message, params.level or "INFO", params.html or False, params.console or False
+                logger.write,
+                params.message,
+                params.level.value if params.level is not None else "INFO",
+                params.html or False,
+                params.console or False,
             )
         else:
             # TODO: maybe we should use normal print here instead of logger?
-            logger.write(params.message, params.level or "INFO", params.html or False, params.console or False)
+            logger.write(
+                params.message,
+                params.level.value if params.level is not None else "INFO",
+                params.html or False,
+                params.console or False,
+            )
 
     async def _run_client(self) -> None:
         self._loop = asyncio.get_event_loop()
@@ -114,10 +137,11 @@ class _Session:
             InitializeParams(
                 capabilities=ClientCapabilities(),
                 client_info=ClientInfo(name="RobotFramework JsonRpcRemote Client", version="1.0"),
-                # TODO: define requested library parameters
-                # library_name="MyRemoteLibrary",
-                # library_args=[],
-                # library_kw_args={},
+                # initialization_options=None,
+                # trace=None,
+                library_name=self._library_name,
+                library_args=list(self._library_args) if self._library_args is not None else None,
+                library_kw_args=self._library_kw_args,
             ),
         )
         self.server_capabilities = initialize_result.capabilities
@@ -127,14 +151,19 @@ class _Session:
         await self._peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
 
     async def create_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        parsed_uri = urlparse(self._uri)
+        if parsed_uri.scheme != "tcp":
+            raise ValueError(f"Unsupported URI scheme: {parsed_uri.scheme}")
+
         # TODO: support other URI schemes and connection types (e.g., named pipes, sockets, stdio etc.)
 
-        uri = self._uri
-        if uri is None:
-            uri = "127.0.0.1:8888"
-
-        host, _, port_str = uri.rpartition(":")
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, int(port_str)), timeout=self._timeout)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                parsed_uri.hostname,
+                parsed_uri.port if parsed_uri.port is not None else 8888,
+            ),
+            timeout=self._timeout,
+        )
 
         return reader, writer
 
@@ -180,25 +209,42 @@ class SessionScope(Enum):
 
 
 class JsonRpcRemote:
+    ROBOT_LIBRARY_VERSION = __version__
     ROBOT_LIBRARY_SCOPE = "GLOBAL"
     ROBOT_LISTENER_API_VERSION = 3
 
-    def __init__(self, uri: str | None = None, timeout: float = 10.0, scope: SessionScope = SessionScope.SUITE) -> None:
+    def __init__(
+        self,
+        uri: str = "tcp://127.0.0.1:8888",
+        library_name: str | None = None,
+        *library_args: Any,
+        rpc_timeout: float = 10.0,
+        rpc_scope: SessionScope = SessionScope.SUITE,
+        **library_kw_args: Any,
+    ) -> None:
         self._uri = uri
-        self._timeout = timeout
-        self._scope = scope
+        self._timeout = rpc_timeout
+        self._scope = rpc_scope
+
+        self._library_name = library_name
+        self._library_args = library_args
+        self._library_kw_args = library_kw_args
 
         self.__session: _Session | None = None
 
         self.ROBOT_LIBRARY_LISTENER = self
 
+        if EXECUTION_CONTEXTS.current is not None:
+            logger.info(f"JsonRpcRemote library initialized with URI: {self._uri}, scope: {self._scope.name}")
+
     def __del__(self) -> None:
         self._stop_session()
 
-    @property
-    def _session(self) -> _Session:
+    def _start_session(self) -> _Session:
         if self.__session is None:
-            self.__session = _Session(self._uri)
+            self.__session = _Session(
+                self._uri, self._library_name, set(self._library_args), self._library_kw_args, self._timeout
+            )
 
             self.__session.start()
 
@@ -212,8 +258,11 @@ class JsonRpcRemote:
 
         if self.__session.last_error is not None:
             raise self.__session.last_error
-
         return self.__session
+
+    @property
+    def _session(self) -> _Session:
+        return self._start_session()
 
     def _stop_session(self) -> None:
         if self.__session is not None:
