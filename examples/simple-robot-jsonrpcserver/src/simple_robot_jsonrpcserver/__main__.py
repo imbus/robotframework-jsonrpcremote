@@ -67,32 +67,21 @@ async def initialized(peer: JsonRpcPeer, params: InitializedParams) -> None:
         context.initialized = True
 
 
-@end_point.request("echo")
-async def echo(peer: JsonRpcPeer, params: dict[Any, Any]) -> Any:
-    print(f"Echoing params: {params}")
-    params["echoed"] = True
-    await peer.send_notification(
-        LOG_NOTIFICATION, LogParams(message="Echo request received, processing...", console=True)
-    )
-
-    await asyncio.sleep(1)  # Simulate some processing delay
-
-    for i in range(3):
-        await peer.send_notification(
-            LOG_NOTIFICATION,
-            LogParams(message=f"Echo {i} request received with params: {params}", level=LogLevel.WARN, html=True),
-        )
-
-    return params
-
-
 @end_point.request(RUN_KEYWORD_REQUEST)
 async def run_keyword(peer: JsonRpcPeer, params: RunKeywordParams) -> RunKeywordResult:
     print(f"Running keyword: {params.name} with args: {params.args} and kwargs: {params.kwargs}")
 
+    await peer.send_notification(LOG_NOTIFICATION, LogParams(message="RUN_KEYWORD_REQUEST processing...", console=True))
+
     if params.name == "echo":
         message = params.args[0] if params.args else params.kwargs.get("message", "") if params.kwargs else ""
         result = message
+
+        for i in range(3):
+            await peer.send_notification(
+                LOG_NOTIFICATION,
+                LogParams(message=f"Echo {i} request received with params: {params}", level=LogLevel.WARN, html=True),
+            )
         return RunKeywordResult(result=result, error=None)
 
     return RunKeywordResult(result=None, error=RunKeywordError(message=f"Keyword '{params.name}' not found."))
@@ -107,7 +96,10 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
     end_point.register(peer)
 
-    await peer.run()
+    try:
+        await peer.run()
+    except Exception as e:
+        print(f"Error handling client from {addr}: {e}")
 
     print(f"Client from {addr} disconnected")
 
