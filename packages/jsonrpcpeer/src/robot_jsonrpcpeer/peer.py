@@ -513,3 +513,29 @@ class JsonRpcPeer:
                     message=f"Method for notification `{message.method}` not found",
                 ),
             )
+
+
+class JsonRpcEndpoint:
+    def __init__(self) -> None:
+        self._request_handlers: dict[str, Any] = {}
+        self._notification_handlers: dict[str, Any] = {}
+
+    def request(self, method: str) -> Any:
+        def decorator(func: Any) -> Any:
+            self._request_handlers[method] = func
+            return func
+
+        return decorator
+
+    def notification(self, method: str) -> Any:
+        def decorator(func: Any) -> Any:
+            self._notification_handlers[method] = func
+            return func
+
+        return decorator
+
+    def register(self, peer: JsonRpcPeer) -> None:
+        for method, handler in self._request_handlers.items():
+            peer.register_request_handler(method, handler)
+        for method, handler in self._notification_handlers.items():
+            peer.register_notification_handler(method, handler)

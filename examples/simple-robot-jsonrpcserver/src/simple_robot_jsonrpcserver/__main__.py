@@ -2,12 +2,12 @@ import asyncio
 from typing import Any
 
 from robot_jsonrpcpeer import JsonRpcPeer
+from robot_jsonrpcpeer.peer import JsonRpcEndpoint
 from robot_jsonrpcremote_protocol import (
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
-    AnyType,
     ArgumentDefinition,
     InitializedParams,
     InitializeParams,
@@ -29,8 +29,12 @@ class ClientContext:
         self.initialized: bool = False
 
 
+end_point = JsonRpcEndpoint()
+
+
+@end_point.request(INITIALIZE_REQUEST)
 async def initialize(peer: JsonRpcPeer, params: InitializeParams) -> InitializeResult:
-    print(f"Initializing client: {params.client_info}")
+    print(f"Initializing client: {params}")
     context = peer.context
 
     if context is not None:
@@ -54,6 +58,7 @@ async def initialize(peer: JsonRpcPeer, params: InitializeParams) -> InitializeR
     )
 
 
+@end_point.notification(INITIALIZED_NOTIFICATION)
 async def initialized(peer: JsonRpcPeer, params: InitializedParams) -> None:
     print(f"Client initialized with params: {params}")
     context = peer.context
@@ -62,6 +67,7 @@ async def initialized(peer: JsonRpcPeer, params: InitializedParams) -> None:
         context.initialized = True
 
 
+@end_point.request("echo")
 async def echo(peer: JsonRpcPeer, params: dict[Any, Any]) -> Any:
     print(f"Echoing params: {params}")
     params["echoed"] = True
@@ -80,12 +86,13 @@ async def echo(peer: JsonRpcPeer, params: dict[Any, Any]) -> Any:
     return params
 
 
+@end_point.request(RUN_KEYWORD_REQUEST)
 async def run_keyword(peer: JsonRpcPeer, params: RunKeywordParams) -> RunKeywordResult:
     print(f"Running keyword: {params.name} with args: {params.args} and kwargs: {params.kwargs}")
 
     if params.name == "echo":
-        message = params.args[0]
-        result = f"Echo: {message}"
+        message = params.args[0] if params.args else params.kwargs.get("message", "") if params.kwargs else ""
+        result = message
         return RunKeywordResult(result=result, error=None)
 
     return RunKeywordResult(result=None, error=RunKeywordError(message=f"Keyword '{params.name}' not found."))
@@ -98,19 +105,8 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     context = ClientContext()
     peer = JsonRpcPeer(reader, writer, context=context)
 
-    # Here you would typically register request and notification handlers
-    peer.register_request_handler("echo", echo)
+    end_point.register(peer)
 
-    peer.register_request_handler(
-        INITIALIZE_REQUEST,
-        initialize,
-    )
-    peer.register_notification_handler(
-        INITIALIZED_NOTIFICATION,
-        initialized,
-    )
-
-    peer.register_request_handler(RUN_KEYWORD_REQUEST, run_keyword)
     await peer.run()
 
     print(f"Client from {addr} disconnected")
