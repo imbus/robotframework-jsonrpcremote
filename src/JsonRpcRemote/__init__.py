@@ -137,6 +137,7 @@ class _Session:
             InitializeParams(
                 capabilities=ClientCapabilities(),
                 client_info=ClientInfo(name="RobotFramework JsonRpcRemote Client", version="1.0"),
+                # TODO: support other initialization options
                 # initialization_options=None,
                 # trace=None,
                 library_name=self._library_name,
@@ -151,11 +152,10 @@ class _Session:
         await self._peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
 
     async def create_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        # TODO: support other URI schemes and connection types (e.g., named pipes, sockets, stdio etc.)
         parsed_uri = urlparse(self._uri)
         if parsed_uri.scheme != "tcp":
             raise ValueError(f"Unsupported URI scheme: {parsed_uri.scheme}")
-
-        # TODO: support other URI schemes and connection types (e.g., named pipes, sockets, stdio etc.)
 
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(
