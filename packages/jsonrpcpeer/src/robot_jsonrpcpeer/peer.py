@@ -313,12 +313,8 @@ class JsonRpcPeer:
                     else:
                         break
         except asyncio.CancelledError:
-            self.running = False
             raise
-        except KeyboardInterrupt:
-            self.running = False
-            raise
-        except Exception as e:
+        except BaseException as e:
             if not self._completion_future.done():
                 self._completion_future.set_exception(e)
             return

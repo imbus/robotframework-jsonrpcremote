@@ -9,7 +9,6 @@ from urllib.parse import urlparse
 from robot import result, running
 from robot.api import logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
-from robot.running.context import EXECUTION_CONTEXTS
 
 from robot_jsonrpcpeer import JsonRpcPeer
 from robot_jsonrpcremote_protocol import (
@@ -115,6 +114,8 @@ class _Session:
             except Exception as e:
                 self.last_error = e
                 raise
+            finally:
+                await self.close_connection()
         finally:
             self._loop = None
             self._peer = None
@@ -166,6 +167,12 @@ class _Session:
         )
 
         return reader, writer
+
+    async def close_connection(self) -> None:
+        if self._peer is not None:
+            self._peer.reader.feed_eof()
+            self._peer.writer.close()
+            await self._peer.writer.wait_closed()
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -234,8 +241,9 @@ class JsonRpcRemote:
 
         self.ROBOT_LIBRARY_LISTENER = self
 
-        if EXECUTION_CONTEXTS.current is not None:
-            logger.info(f"JsonRpcRemote library initialized with URI: {self._uri}, scope: {self._scope.name}")
+        self._start_session()
+
+        self._finalizer = weakref.finalize(self, self._stop_session)
 
     def __del__(self) -> None:
         self._stop_session()
@@ -288,6 +296,9 @@ class JsonRpcRemote:
     def _get_keyword_definition(self, name: str) -> KeywordDefinition:
         keyword = next((kw for kw in self._library_definition.keywords if kw.name == name), None)
         if keyword is None:
+            if name == "__init__":
+                # Special case for __init__ documentation
+                return KeywordDefinition(name="__init__", args=[])
             raise ValueError(f"Keyword '{name}' not available in the library definition of the remote server")
 
         return keyword
