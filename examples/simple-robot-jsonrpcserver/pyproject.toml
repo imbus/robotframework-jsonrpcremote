@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    "robotframework-jsonrpcpeer",
+    "jsonrpcpeer",
     "robotframework-jsonrpcremote-protocol",
 ]
 
@@ -14,5 +14,5 @@ dependencies = [
 simple-robot-jsonrpcserver = "simple_robot_jsonrpcserver:__main__.run"
 
 [tool.uv.sources]
-robotframework-jsonrpcpeer = { workspace = true }
+jsonrpcpeer = { workspace = true }
 robotframework-jsonrpcremote-protocol = { workspace = true }

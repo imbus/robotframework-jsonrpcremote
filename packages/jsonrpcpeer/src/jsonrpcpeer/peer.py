@@ -1,10 +1,13 @@
 import asyncio
+import codecs
+import inspect
 import json
 import logging
 import traceback
+import weakref
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable, Coroutine, Optional, Type, TypeVar, cast, get_type_hints
+from typing import Any, Callable, Coroutine, Optional, Protocol, Type, TypeAlias, TypeVar, cast, get_type_hints
 
 from .json_helpers import as_json, from_dict
 
@@ -67,14 +70,28 @@ class JsonRpcInvalidRequestError(Exception):
     error_code = JsonRpcErrorCode.INVALID_REQUEST
 
 
-@dataclass
+THandlerCallable: TypeAlias = (
+    Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]] | Callable[[Any], Coroutine[Any, Any, Any]]
+)
+
+
+@dataclass(slots=True)
 class _HanderEntry:
-    handler: Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]]
+    handler: THandlerCallable
     param_type: Type[Any]
+    pass_peer: bool = True
+
+
+class JsonRpcEndpointProtocol(Protocol):
+    rpc_peer: "JsonRpcPeer | None"
 
 
 class JsonRpcPeer:
-    """JSON-RPC 2.0 Peer implementation for asynchronous communication."""
+    """JSON-RPC 2.0 Peer implementation for asynchronous communication.
+
+    This implementation uses a header-based framing protocol (similar to LSP)
+    where each message must be preceded by a 'Content-Length' header.
+    """
 
     logger = logging.getLogger(__name__)
 
@@ -87,6 +104,7 @@ class JsonRpcPeer:
         request_timeout: float | None = None,
         max_message_size: int | None = None,
         default_encoding: str = "utf-8",
+        auto_close: bool = True,
     ) -> None:
         self.reader = reader
         self.writer = writer
@@ -95,6 +113,7 @@ class JsonRpcPeer:
         self.request_timeout: float | None = request_timeout
         self.max_message_size: int | None = max_message_size
         self.default_encoding = default_encoding
+        self.auto_close = auto_close
 
         self._request_handlers: dict[str, _HanderEntry] = {}
         self._notification_handlers: dict[str, _HanderEntry] = {}
@@ -111,9 +130,19 @@ class JsonRpcPeer:
         self.indent_json = None
         self.compact_json = True
 
+        weakref.finalize(self, self._on_finalize)
+
     def _serialize_json(self, obj: Any) -> str:
         """Serialize an object to JSON using the configured options."""
         return as_json(obj, self.indent_json, self.compact_json)
+
+    def _on_finalize(self) -> None:
+        if not self.running:
+            return
+
+        self.running = False
+        if self._read_task and not self._read_task.done():
+            self._read_task.cancel()
 
     @property
     def completion(self) -> asyncio.Future[bool]:
@@ -139,21 +168,28 @@ class JsonRpcPeer:
 
     def _get_and_check_handler_param_type(
         self,
-        handler: Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]],
-    ) -> Type[Any]:
-        type_hints = list(get_type_hints(handler).values())
-        if len(type_hints) != 3:
-            raise ValueError("Handler must have exactly two parameters: peer and params and needs type hints")
+        handler: THandlerCallable,
+    ) -> tuple[Type[Any], bool]:
+        sig = inspect.signature(handler)
+        params = list(sig.parameters.values())
+        type_hints = get_type_hints(handler)
 
-        if type_hints[0] is not JsonRpcPeer:
-            raise ValueError("First parameter of handler must be of type JsonRpcPeer")
+        if len(params) == 2:
+            first_param_type = type_hints.get(params[0].name)
+            if first_param_type is not JsonRpcPeer:
+                raise ValueError("First parameter of handler must be of type JsonRpcPeer")
 
-        return cast(Type[Any], type_hints[1])
+            return cast(Type[Any], type_hints.get(params[1].name, Any)), True
+
+        if len(params) == 1:
+            return cast(Type[Any], type_hints.get(params[0].name, Any)), False
+
+        raise ValueError("Handler must have signature (peer: JsonRpcPeer, params: T) -> R or (params: T) -> R")
 
     def register_request_handler(
         self,
         method_name: str,
-        handler: Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]],
+        handler: THandlerCallable,
     ) -> None:
         if not method_name or method_name.isspace():
             raise ValueError("Method name cannot be null or whitespace")
@@ -161,14 +197,14 @@ class JsonRpcPeer:
         if method_name in self._request_handlers:
             raise ValueError(f"Request handler for method '{method_name}' already exists")
 
-        self._request_handlers[method_name] = _HanderEntry(
-            handler=handler, param_type=self._get_and_check_handler_param_type(handler)
-        )
+        param_type, pass_peer = self._get_and_check_handler_param_type(handler)
+
+        self._request_handlers[method_name] = _HanderEntry(handler=handler, param_type=param_type, pass_peer=pass_peer)
 
     def register_notification_handler(
         self,
         method_name: str,
-        handler: Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]],
+        handler: THandlerCallable,
     ) -> None:
         if not method_name or method_name.isspace():
             raise ValueError("Method name cannot be null or whitespace")
@@ -176,8 +212,10 @@ class JsonRpcPeer:
         if method_name in self._notification_handlers:
             raise ValueError(f"Notification handler for method '{method_name}' already exists")
 
+        param_type, pass_peer = self._get_and_check_handler_param_type(handler)
+
         self._notification_handlers[method_name] = _HanderEntry(
-            handler=handler, param_type=self._get_and_check_handler_param_type(handler)
+            handler=handler, param_type=param_type, pass_peer=pass_peer
         )
 
     async def _send_message(self, message: Any) -> None:
@@ -246,6 +284,7 @@ class JsonRpcPeer:
         content_length = 0
         headers_complete = False
         encoding = self.default_encoding
+        cursor = 0
 
         try:
             while self.running:
@@ -262,13 +301,13 @@ class JsonRpcPeer:
 
                 while True:
                     if not headers_complete:
-                        header_end = buffer.find(b"\r\n\r\n")
+                        header_end = buffer.find(b"\r\n\r\n", cursor)
                         if header_end == -1:
                             break
 
                         encoding = self.default_encoding
 
-                        headers = buffer[:header_end].decode("ascii")
+                        headers = buffer[cursor:header_end].decode("ascii")
                         message_too_large = False
 
                         for line in headers.split("\r\n"):
@@ -294,22 +333,28 @@ class JsonRpcPeer:
                                         if charset:
                                             encoding = charset
 
-                        buffer = buffer[header_end + 4 :]
+                        cursor = header_end + 4
                         headers_complete = True
 
                         if message_too_large:
                             self.running = False
                             break
 
-                    if headers_complete and len(buffer) >= content_length:
-                        body = buffer[:content_length]
-                        message = body.decode(encoding)
+                    if headers_complete and len(buffer) >= cursor + content_length:
+                        # Use memoryview to avoid copying bytes for the body slice
+                        with memoryview(buffer) as mv:
+                            # We use codecs.decode because it accepts memoryview (zero-copy slice)
+                            message = codecs.decode(mv[cursor : cursor + content_length], encoding)
 
-                        await self.handle_message(message)
+                        asyncio.create_task(self.handle_message(message))
 
-                        buffer = buffer[content_length:]
+                        cursor += content_length
                         headers_complete = False
                         content_length = 0
+
+                        if cursor > 1024 * 1024:
+                            del buffer[:cursor]
+                            cursor = 0
                     else:
                         break
         except asyncio.CancelledError:
@@ -320,8 +365,13 @@ class JsonRpcPeer:
             return
         finally:
             self.running = False
+
             if not self._completion_future.done():
                 self._completion_future.set_result(True)
+
+            if self.auto_close:
+                self.writer.close()
+                await self.writer.wait_closed()
 
     async def handle_message(self, json_str: str) -> None:
         try:
@@ -460,7 +510,14 @@ class JsonRpcPeer:
         handler: _HanderEntry,
         params: Any,
     ) -> Any:
-        return await handler.handler(self, from_dict(params, handler.param_type))
+        if handler.pass_peer:
+            return await cast(Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]], handler.handler)(
+                self, from_dict(params, handler.param_type)
+            )
+
+        return await cast(Callable[[Any], Coroutine[Any, Any, Any]], handler.handler)(
+            from_dict(params, handler.param_type)
+        )
 
     async def process_request(self, message: JsonRpcRequest) -> JsonResponseBase:
         if message.method in self._request_handlers:
@@ -510,6 +567,15 @@ class JsonRpcPeer:
                 ),
             )
 
+    def attach_endpoint(self, endpoint: JsonRpcEndpointProtocol) -> None:
+        endpoint.rpc_peer = self
+        for name in dir(endpoint):
+            attr = getattr(endpoint, name)
+            if hasattr(attr, "rpc_request_method"):
+                self.register_request_handler(attr.rpc_request_method, attr)
+            if hasattr(attr, "rpc_notification_method"):
+                self.register_notification_handler(attr.rpc_notification_method, attr)
+
 
 class JsonRpcEndpoint:
     def __init__(self) -> None:
@@ -535,3 +601,22 @@ class JsonRpcEndpoint:
             peer.register_request_handler(method, handler)
         for method, handler in self._notification_handlers.items():
             peer.register_notification_handler(method, handler)
+
+
+F = TypeVar("F", bound=THandlerCallable | Callable[..., Any])
+
+
+def rpc_request(method_name: str) -> Callable[[F], F]:
+    def decorator(func: F) -> F:
+        setattr(func, "rpc_request_method", method_name)
+        return func
+
+    return decorator
+
+
+def rpc_notification(method_name: str) -> Callable[[F], F]:
+    def decorator(func: F) -> F:
+        setattr(func, "rpc_notification_method", method_name)
+        return func
+
+    return decorator

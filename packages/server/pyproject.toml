@@ -6,14 +6,23 @@ readme = "README.md"
 authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "robotframework>=7.0",
+    "jsonrpcpeer",
+    "robotframework-jsonrpcremote-protocol",
+]
 
 [project.scripts]
-robot-jsonrpcremote-server = "robot_jsonrpcremote_server:main"
-
-[tool.uv.build-backend]
-module-name = "robot_jsonrpcremote_server"
+robot-jsonrpcremote-server = "robot_jsonrpcremote_server:__main__.run"
 
 [build-system]
 requires = ["uv_build>=0.9.17,<0.10.0"]
 build-backend = "uv_build"
+
+
+[tool.uv.build-backend]
+module-name = "robot_jsonrpcremote_server"
+
+[tool.uv.sources]
+jsonrpcpeer = { workspace = true }
+robotframework-jsonrpcremote-protocol = { workspace = true }

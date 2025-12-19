@@ -4,7 +4,7 @@ requires-python = ">=3.10"
 
 [manifest]
 members = [
-    "robotframework-jsonrpcpeer",
+    "jsonrpcpeer",
     "robotframework-jsonrpcremote",
     "robotframework-jsonrpcremote-protocol",
     "robotframework-jsonrpcremote-server",
@@ -43,6 +43,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67", size = 134899, upload-time = "2025-03-05T20:05:00.369Z" },
 ]
+
+[[package]]
+name = "jsonrpcpeer"
+version = "0.1.0"
+source = { editable = "packages/jsonrpcpeer" }
 
 [[package]]
 name = "librt"
@@ -435,17 +440,12 @@ wheels = [
 ]
 
 [[package]]
-name = "robotframework-jsonrpcpeer"
-version = "0.1.0"
-source = { editable = "packages/jsonrpcpeer" }
-
-[[package]]
 name = "robotframework-jsonrpcremote"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "jsonrpcpeer" },
     { name = "robotframework" },
-    { name = "robotframework-jsonrpcpeer" },
 ]
 
 [package.optional-dependencies]
@@ -464,8 +464,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "jsonrpcpeer", editable = "packages/jsonrpcpeer" },
     { name = "robotframework", specifier = ">=7.0" },
-    { name = "robotframework-jsonrpcpeer", editable = "packages/jsonrpcpeer" },
     { name = "robotframework-jsonrpcremote-server", marker = "extra == 'server'", editable = "packages/server" },
 ]
 provides-extras = ["server"]
@@ -488,6 +488,18 @@ source = { editable = "packages/protocol" }
 name = "robotframework-jsonrpcremote-server"
 version = "0.1.0"
 source = { editable = "packages/server" }
+dependencies = [
+    { name = "jsonrpcpeer" },
+    { name = "robotframework" },
+    { name = "robotframework-jsonrpcremote-protocol" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jsonrpcpeer", editable = "packages/jsonrpcpeer" },
+    { name = "robotframework", specifier = ">=7.0" },
+    { name = "robotframework-jsonrpcremote-protocol", editable = "packages/protocol" },
+]
 
 [[package]]
 name = "robotframework-robocop"
@@ -540,13 +552,13 @@ name = "simple-robot-jsonrpcserver"
 version = "0.1.0"
 source = { editable = "examples/simple-robot-jsonrpcserver" }
 dependencies = [
-    { name = "robotframework-jsonrpcpeer" },
+    { name = "jsonrpcpeer" },
     { name = "robotframework-jsonrpcremote-protocol" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "robotframework-jsonrpcpeer", editable = "packages/jsonrpcpeer" },
+    { name = "jsonrpcpeer", editable = "packages/jsonrpcpeer" },
     { name = "robotframework-jsonrpcremote-protocol", editable = "packages/protocol" },
 ]
 

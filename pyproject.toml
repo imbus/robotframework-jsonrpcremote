@@ -8,7 +8,7 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
     "robotframework>=7.0",
-    "robotframework-jsonrpcpeer",
+    "jsonrpcpeer",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +27,7 @@ members = ["packages/*", "examples/*"]
 
 
 [tool.uv.sources]
-robotframework-jsonrpcpeer = { workspace = true }
+jsonrpcpeer = { workspace = true }
 robotframework-jsonrpcremote-protocol = { workspace = true }
 robotframework-jsonrpcremote-server = { workspace = true }
 simple-robot-jsonrpcserver = { workspace = true }
@@ -93,7 +93,7 @@ select = [
 
 [tool.ruff.lint.isort]
 detect-same-package = true
-known-first-party = ["robot_jsonrpcpeer", "robot_jsonrpcremote_protocol", "robot_jsonrpcremote_server"]
+known-first-party = ["jsonrpcpeer", "robot_jsonrpcremote_protocol", "robot_jsonrpcremote_server"]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false

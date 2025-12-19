@@ -10,7 +10,7 @@ from robot import result, running
 from robot.api import logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
 
-from robot_jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer import JsonRpcPeer
 from robot_jsonrpcremote_protocol import (
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
