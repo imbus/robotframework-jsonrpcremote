@@ -88,23 +88,21 @@ class DefaultConfig:
         return s
 
 
-__field_name_cache: Dict[Tuple[Type[Any], dataclasses.Field], str] = {}  # type: ignore
+@functools.lru_cache(maxsize=1024)
+def _encode_case_for_field_name_cached(t: Type[Any], field: dataclasses.Field[Any]) -> str:
+    alias = field.metadata.get("alias", None)
+    if alias:
+        return str(alias)
+
+    if hasattr(t, "_encode_case"):
+        return str(t._encode_case(field.name))
+
+    return field.name
 
 
 def encode_case_for_field_name(obj: Any, field: dataclasses.Field) -> str:  # type: ignore
     t = obj if isinstance(obj, type) else type(obj)
-    name = __field_name_cache.get((t, field), __NOT_SET)
-    if name is __NOT_SET:
-        alias = field.metadata.get("alias", None)
-        if alias:
-            name = str(alias)
-        elif hasattr(obj, "_encode_case"):
-            name = str(obj._encode_case(field.name))
-        else:
-            name = field.name
-        __field_name_cache[(t, field)] = name
-
-    return cast(str, name)
+    return _encode_case_for_field_name_cached(t, field)
 
 
 @functools.lru_cache(maxsize=1024)
@@ -412,7 +410,7 @@ def from_dict(
             if origin is Literal:
                 continue
 
-            cased_value: Dict[str, Any] = {_decode_case_for_member_name(t, k): v for k, v in value.items()}
+            cased_value: Dict[str, Any] = {_decode_case_for_member_name(t, k): v for k, v in value.items()}  # type: ignore[arg-type]
 
             type_hints = _get_type_hints_cached(origin or t)
             try:
@@ -603,7 +601,7 @@ class TypeValidationError(Exception):
         return f"{s} (errors = {self.errors!r})"
 
 
-def validate_types(expected_types: Union[type, Tuple[type, ...], None], value: Any) -> List[str]:
+def validate_types(expected_types: Union[Type[Any], Tuple[Type[Any], ...], None], value: Any) -> List[str]:
     if expected_types is None:
         return []
 

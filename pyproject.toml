@@ -45,7 +45,6 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py310"
-extend-exclude = ["bundled/libs", ".hatch"]
 
 [tool.ruff.lint]
 ignore = ["E741", "N805", "N999", "RUF012", "RUF006", "ISC001"]

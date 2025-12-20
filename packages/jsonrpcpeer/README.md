@@ -71,8 +71,6 @@ See [examples/typed_server.py](examples/typed_server.py) and [examples/typed_cli
 
 ### Handler Signatures
 
-### Handler Signatures
-
 Handlers can be registered with two types of signatures:
 
 1.  **(params) -> result**: Simple handler receiving only parameters.

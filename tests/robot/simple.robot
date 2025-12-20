@@ -5,7 +5,7 @@ Library     JsonRpcRemote
 ...             123
 ...             named=hallo
 ...             named_int=${123}
-...             rpc_scope=TEST
+...             rpc_scope=SUITE
 ...             rpc_timeout=10
 
 
@@ -26,6 +26,7 @@ data driven
     ${{ [1,2,3] }}
     ${{ {"a": True} }}
     ${{ {"a"} }}    # this should fail because sets are converted to lists at the moment
+    ${{ "a" * 1024 * 1024 * 10 }}
 
 
 *** Keywords ***

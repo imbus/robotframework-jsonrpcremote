@@ -92,9 +92,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     try:
         await peer.run()
     except Exception as e:
-        print(f"Error handling client from {addr}: {e}")
-
-    print(f"Client from {addr} disconnected")
+        print(f"Error handling client from {addr}: {type(e).__name__}: {e}")
+    finally:
+        print(f"Client from {addr} disconnected")
 
 
 async def run_server() -> None:

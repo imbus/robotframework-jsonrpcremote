@@ -1,5 +1,4 @@
 import asyncio
-import codecs
 import inspect
 import json
 import logging
@@ -68,6 +67,10 @@ class JsonRpcErrorResponse(JsonResponseBase):
 
 class JsonRpcInvalidRequestError(Exception):
     error_code = JsonRpcErrorCode.INVALID_REQUEST
+
+
+class JsonRpcMethodAlreadyRegisteredError(ValueError):
+    """Raised when a handler for a method is already registered."""
 
 
 THandlerCallable: TypeAlias = (
@@ -195,7 +198,7 @@ class JsonRpcPeer:
             raise ValueError("Method name cannot be null or whitespace")
 
         if method_name in self._request_handlers:
-            raise ValueError(f"Request handler for method '{method_name}' already exists")
+            raise JsonRpcMethodAlreadyRegisteredError(f"Request handler for method '{method_name}' already exists")
 
         param_type, pass_peer = self._get_and_check_handler_param_type(handler)
 
@@ -210,7 +213,7 @@ class JsonRpcPeer:
             raise ValueError("Method name cannot be null or whitespace")
 
         if method_name in self._notification_handlers:
-            raise ValueError(f"Notification handler for method '{method_name}' already exists")
+            raise JsonRpcMethodAlreadyRegisteredError(f"Notification handler for method '{method_name}' already exists")
 
         param_type, pass_peer = self._get_and_check_handler_param_type(handler)
 
@@ -280,89 +283,56 @@ class JsonRpcPeer:
                 self._pending_requests.pop(id_str, None)
 
     async def io_loop(self) -> None:
-        buffer = bytearray()
-        content_length = 0
-        headers_complete = False
-        encoding = self.default_encoding
-        cursor = 0
-
         try:
             while self.running:
-                try:
-                    data = await self.reader.read(4096)
-                    if not data:
-                        self.running = False
-                        break
-                except asyncio.CancelledError:
-                    self.running = False
-                    raise
+                content_length = 0
+                encoding = self.default_encoding
 
-                buffer.extend(data)
-
+                # Read headers
                 while True:
-                    if not headers_complete:
-                        header_end = buffer.find(b"\r\n\r\n", cursor)
-                        if header_end == -1:
-                            break
+                    line_bytes = await self.reader.readuntil(b"\r\n")
+                    line = line_bytes.decode("ascii").strip()
 
-                        encoding = self.default_encoding
-
-                        headers = buffer[cursor:header_end].decode("ascii")
-                        message_too_large = False
-
-                        for line in headers.split("\r\n"):
-                            if line.startswith("Content-Length: "):
-                                content_length = int(line[16:])
-
-                                if self.max_message_size is not None and content_length > self.max_message_size:
-                                    self.logger.warning(
-                                        "Message size %d exceeds maximum %d, closing connection",
-                                        content_length,
-                                        self.max_message_size,
-                                    )
-                                    message_too_large = True
-                                    break
-
-                            elif line.startswith("Content-Type: "):
-                                content_type = line[14:]
-                                parts = content_type.split(";")
-                                for part in parts:
-                                    part = part.strip()
-                                    if part.startswith("charset="):
-                                        charset = part[8:].strip().strip('"')
-                                        if charset:
-                                            encoding = charset
-
-                        cursor = header_end + 4
-                        headers_complete = True
-
-                        if message_too_large:
-                            self.running = False
-                            break
-
-                    if headers_complete and len(buffer) >= cursor + content_length:
-                        # Use memoryview to avoid copying bytes for the body slice
-                        with memoryview(buffer) as mv:
-                            # We use codecs.decode because it accepts memoryview (zero-copy slice)
-                            message = codecs.decode(mv[cursor : cursor + content_length], encoding)
-
-                        asyncio.create_task(self.handle_message(message))
-
-                        cursor += content_length
-                        headers_complete = False
-                        content_length = 0
-
-                        if cursor > 1024 * 1024:
-                            del buffer[:cursor]
-                            cursor = 0
-                    else:
+                    if not line:
                         break
+
+                    if line.startswith("Content-Length: "):
+                        content_length = int(line[16:])
+
+                        if self.max_message_size is not None and content_length > self.max_message_size:
+                            self.logger.warning(
+                                "Message size %d exceeds maximum %d, closing connection",
+                                content_length,
+                                self.max_message_size,
+                            )
+                            self.running = False
+                            return
+
+                    elif line.startswith("Content-Type: "):
+                        content_type = line[14:]
+                        parts = content_type.split(";")
+                        for part in parts:
+                            part = part.strip()
+                            if part.startswith("charset="):
+                                charset = part[8:].strip().strip('"')
+                                if charset:
+                                    encoding = charset
+
+                # Read body
+                body_bytes = await self.reader.readexactly(content_length)
+
+                message = body_bytes.decode(encoding)
+                asyncio.create_task(self.handle_message(message))
+
+        except asyncio.IncompleteReadError as e:
+            if e.partial or not self.reader.at_eof():
+                if not self._completion_future.done():
+                    self._completion_future.set_exception(e)
         except asyncio.CancelledError:
             raise
         except BaseException as e:
             if not self._completion_future.done():
                 self._completion_future.set_exception(e)
-            return
         finally:
             self.running = False
 
