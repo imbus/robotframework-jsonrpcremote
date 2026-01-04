@@ -45,7 +45,8 @@ class ClientInfo:
 
 @dataclass
 class ClientCapabilities:
-    pass
+    supports_log: bool | None = None
+    supports_trace: bool | None = None
 
 
 @dataclass
@@ -54,10 +55,6 @@ class InitializeParams:
     client_info: ClientInfo | None = None
     initialization_options: AnyType | None = None
     trace: str | None = None
-
-    library_name: str | None = None
-    library_args: list[AnyType] | None = None
-    library_kw_args: dict[str, AnyType] | None = None
 
 
 @dataclass
@@ -101,14 +98,37 @@ class LibraryDefinition:
 
 @dataclass
 class ServerCapabilities:
-    pass
+    support_exit: bool | None = None
+    libraries: list[str] | None = None
 
 
 @dataclass
 class InitializeResult:
-    library_definition: LibraryDefinition
     capabilities: ServerCapabilities | None = None
     server_info: ServerInfo | None = None
+
+
+@dataclass
+class ImportLibraryParams:
+    name: str
+    args: list[AnyType] | None = None
+    kw_args: dict[str, AnyType] | None = None
+
+
+@dataclass
+class ImportLibraryResult:
+    token: str
+    definition: LibraryDefinition
+
+
+@dataclass
+class FinalizeLibraryParams:
+    token: str
+
+
+@dataclass
+class FinalizeLibraryResult:
+    pass
 
 
 @dataclass
@@ -123,6 +143,7 @@ class ShutdownResult:
 
 @dataclass
 class RunKeywordParams:
+    library_token: str
     name: str
     args: list[AnyType] | None = None
     kwargs: dict[str, AnyType] | None = None
@@ -151,9 +172,15 @@ class LogParams:
     timestamp: str | None = None
 
 
-INITIALIZE_REQUEST = "initialize"
-INITIALIZED_NOTIFICATION = "initialized"
-SHUTDOWN_REQUEST = "shutdown"
-EXIT_NOTIFICATION = "exit"
-RUN_KEYWORD_REQUEST = "run_keyword"
-LOG_NOTIFICATION = "log"
+INITIALIZE_REQUEST = "robot/initialize"
+INITIALIZED_NOTIFICATION = "robot/initialized"
+
+IMPORT_LIBRARY_REQUEST = "robot/import_library"
+FINALIZE_LIBRARY_REQUEST = "robot/finalize_library"
+RUN_KEYWORD_REQUEST = "robot/run_keyword"
+
+SHUTDOWN_REQUEST = "robot/shutdown"
+EXIT_NOTIFICATION = "robot/exit"
+
+LOG_NOTIFICATION = "robot/log"
+TRACE_NOTIFICATION = "robot/trace"

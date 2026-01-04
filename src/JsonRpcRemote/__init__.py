@@ -11,13 +11,17 @@ from robot.api import logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
 
 from jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer.peer import rpc_notification
 from robot_jsonrpcremote_protocol import (
+    IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
     ClientCapabilities,
     ClientInfo,
+    ImportLibraryParams,
+    ImportLibraryResult,
     InitializedParams,
     InitializeParams,
     InitializeResult,
@@ -31,6 +35,66 @@ from robot_jsonrpcremote_protocol import (
 )
 
 from .__version__ import __version__
+
+
+class _ClientEndpoint:
+    def __init__(self) -> None:
+        self.callback_loop: asyncio.AbstractEventLoop | None = None
+        self.rpc_peer: JsonRpcPeer | None = None
+
+    @rpc_notification(LOG_NOTIFICATION)
+    async def _log_notification(self, params: LogParams) -> None:
+        if self.callback_loop is not None:
+            self.callback_loop.call_soon_threadsafe(
+                logger.write,
+                params.message,
+                params.level.value if params.level is not None else "INFO",
+                params.html or False,
+                params.console or False,
+            )
+        else:
+            # TODO: maybe we should use normal print here instead of logger?
+            logger.write(
+                params.message,
+                params.level.value if params.level is not None else "INFO",
+                params.html or False,
+                params.console or False,
+            )
+
+    async def initialize(self) -> InitializeResult:
+        if self.rpc_peer is None:
+            raise RuntimeError("RPC peer is not initialized yet")
+
+        return await self.rpc_peer.send_request_typed(
+            InitializeResult,
+            INITIALIZE_REQUEST,
+            InitializeParams(
+                capabilities=ClientCapabilities(),
+                client_info=ClientInfo(name="RobotFramework JsonRpcRemote Client", version=__version__),
+            ),
+        )
+
+    async def initialized(self) -> None:
+        if self.rpc_peer is None:
+            raise RuntimeError("RPC peer is not initialized yet")
+
+        await self.rpc_peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
+
+    async def import_library(
+        self, name: str, args: Sequence[Any] | None, kw_args: Mapping[str, Any] | None
+    ) -> ImportLibraryResult:
+        if self.rpc_peer is None:
+            raise RuntimeError("RPC peer is not initialized yet")
+
+        return await self.rpc_peer.send_request_typed(
+            ImportLibraryResult,
+            IMPORT_LIBRARY_REQUEST,
+            ImportLibraryParams(
+                name=name,
+                args=list(args) if args is not None else None,
+                kw_args=dict(kw_args) if kw_args is not None else None,
+            ),
+        )
 
 
 class _Session:
@@ -51,14 +115,16 @@ class _Session:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._peer: JsonRpcPeer | None = None
         self.initialized = Event()
-        self.callback_loop: asyncio.AbstractEventLoop | None = None
         self._finalizer = weakref.finalize(self, self.stop)
 
         self.server_capabilities: ServerCapabilities | None = None
         self.server_info: ServerInfo | None = None
         self.library_definition: LibraryDefinition | None = None
+        self.library_token: str | None = None
         self.last_error: BaseException | None = None
         self._thread: Thread | None = None
+
+        self.client_endpoint = _ClientEndpoint()
 
     @property
     def peer(self) -> JsonRpcPeer:
@@ -76,24 +142,6 @@ class _Session:
 
     def _run(self) -> None:
         asyncio.run(self._run_client())
-
-    async def _log_notification(self, peer: JsonRpcPeer, params: LogParams) -> None:
-        if self.callback_loop is not None:
-            self.callback_loop.call_soon_threadsafe(
-                logger.write,
-                params.message,
-                params.level.value if params.level is not None else "INFO",
-                params.html or False,
-                params.console or False,
-            )
-        else:
-            # TODO: maybe we should use normal print here instead of logger?
-            logger.write(
-                params.message,
-                params.level.value if params.level is not None else "INFO",
-                params.html or False,
-                params.console or False,
-            )
 
     async def _run_client(self) -> None:
         self._loop = asyncio.get_event_loop()
@@ -124,7 +172,7 @@ class _Session:
     async def _start_peer(self) -> None:
         self._peer = JsonRpcPeer(*await self.create_connection())
 
-        self._peer.register_notification_handler(LOG_NOTIFICATION, self._log_notification)
+        self._peer.attach_endpoint(self.client_endpoint)
 
         self._peer.start()
 
@@ -132,25 +180,20 @@ class _Session:
         if self._peer is None:
             raise RuntimeError("Peer is not initialized yet")
 
-        initialize_result = await self._peer.send_request_typed(
-            InitializeResult,
-            INITIALIZE_REQUEST,
-            InitializeParams(
-                capabilities=ClientCapabilities(),
-                client_info=ClientInfo(name="RobotFramework JsonRpcRemote Client", version="1.0"),
-                # TODO: support other initialization options
-                # initialization_options=None,
-                # trace=None,
-                library_name=self._library_name,
-                library_args=list(self._library_args) if self._library_args is not None else None,
-                library_kw_args=self._library_kw_args,
-            ),
-        )
+        initialize_result = await self.client_endpoint.initialize()
+
         self.server_capabilities = initialize_result.capabilities
         self.server_info = initialize_result.server_info
-        self.library_definition = initialize_result.library_definition
 
-        await self._peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
+        await self.client_endpoint.initialized()
+
+        import_result = await self.client_endpoint.import_library(
+            self._library_name or "",
+            list(self._library_args) if self._library_args is not None else None,
+            self._library_kw_args or None,
+        )
+        self.library_definition = import_result.definition
+        self.library_token = import_result.token
 
     async def create_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         # TODO: support other URI schemes and connection types (e.g., named pipes, sockets, stdio etc.)
@@ -199,10 +242,13 @@ class _Session:
             if self._peer is None:
                 raise RuntimeError("Peer is not initialized yet")
 
+            if self.library_token is None:
+                raise RuntimeError("Library token is not initialized yet")
+
             return await self._peer.send_request_typed(
                 RunKeywordResult,
                 RUN_KEYWORD_REQUEST,
-                RunKeywordParams(name=name, args=list(args), kwargs=dict(named)),
+                RunKeywordParams(library_token=self.library_token, name=name, args=list(args), kwargs=dict(named)),
             )
         except Exception as e:
             self.last_error = e
@@ -332,7 +378,7 @@ class JsonRpcRemote:
         return self._get_keyword_definition(name).source
 
     async def run_keyword(self, name: str, args: Sequence[Any], named: Mapping[str, Any]) -> Any:
-        self._session.callback_loop = asyncio.get_event_loop()
+        self._session.client_endpoint.callback_loop = asyncio.get_event_loop()
         try:
             result = await asyncio.wrap_future(
                 asyncio.run_coroutine_threadsafe(self._session.run_keyword(name, args, named), self._session.loop)
@@ -343,4 +389,4 @@ class JsonRpcRemote:
 
             return result.result
         finally:
-            self._session.callback_loop = None
+            self._session.client_endpoint.callback_loop = None

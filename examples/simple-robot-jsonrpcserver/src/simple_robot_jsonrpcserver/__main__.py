@@ -2,11 +2,14 @@ import asyncio
 
 from jsonrpcpeer import JsonRpcPeer, rpc_notification, rpc_request
 from robot_jsonrpcremote_protocol import (
+    IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
     ArgumentDefinition,
+    ImportLibraryParams,
+    ImportLibraryResult,
     InitializedParams,
     InitializeParams,
     InitializeResult,
@@ -17,6 +20,7 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordError,
     RunKeywordParams,
     RunKeywordResult,
+    ServerCapabilities,
     ServerInfo,
 )
 
@@ -42,7 +46,25 @@ class SimpleRobotServerEndpoint:
         self.initialize_received = True
 
         return InitializeResult(
-            library_definition=LibraryDefinition(
+            capabilities=ServerCapabilities(support_exit=True, libraries=["SimpleRobotLibrary"]),
+            server_info=ServerInfo(name="SimpleRobotServer", version="1.0"),
+        )
+
+    @rpc_notification(INITIALIZED_NOTIFICATION)
+    async def initialized(self, params: InitializedParams) -> None:
+        print(f"Client initialized with params: {params}")
+        self.initialized_received = True
+
+    @rpc_request(IMPORT_LIBRARY_REQUEST)
+    async def import_library(self, params: ImportLibraryParams) -> ImportLibraryResult:
+        if not self.initialize_received or not self.initialized_received:
+            raise Exception("Initialize and Initialized must be received before ImportLibrary.")
+
+        print(f"Importing library: {params.name}")
+
+        return ImportLibraryResult(
+            token="simple-robot-library-token",
+            definition=LibraryDefinition(
                 name="SimpleRobotLibrary",
                 doc="A simple robot library exposed via JSON-RPC.",
                 keywords=[
@@ -55,16 +77,13 @@ class SimpleRobotServerEndpoint:
                     )
                 ],
             ),
-            server_info=ServerInfo(name="SimpleRobotServer", version="1.0"),
         )
-
-    @rpc_notification(INITIALIZED_NOTIFICATION)
-    async def initialized(self, params: InitializedParams) -> None:
-        print(f"Client initialized with params: {params}")
-        self.initialized_received = True
 
     @rpc_request(RUN_KEYWORD_REQUEST)
     async def run_keyword(self, params: RunKeywordParams) -> RunKeywordResult:
+        if not self.initialize_received or not self.initialized_received:
+            raise Exception("Initialize and Initialized must be received before RunKeyword.")
+
         print(f"Running keyword: {params.name} with args: {params.args} and kwargs: {params.kwargs}")
 
         await self.log("RUN_KEYWORD_REQUEST processing...", console=True)
@@ -75,9 +94,9 @@ class SimpleRobotServerEndpoint:
 
             for i in range(3):
                 await self.log(f"Echo {i} request received with params: {params}", level=LogLevel.WARN, html=True)
-            return RunKeywordResult(result=result, error=None)
+            return RunKeywordResult(result=result)
 
-        return RunKeywordResult(result=None, error=RunKeywordError(message=f"Keyword '{params.name}' not found."))
+        return RunKeywordResult(error=RunKeywordError(message=f"Keyword '{params.name}' not found."))
 
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

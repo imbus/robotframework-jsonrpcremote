@@ -80,18 +80,39 @@ The following data classes define the payload for requests and responses.
     *   `client_info`: `ClientInfo` (optional) - Information about the client (name, version).
     *   `initialization_options`: `AnyType` (optional) - User-provided options for the server.
     *   `trace`: `str` (optional) - The initial trace setting (e.g., "off", "messages", "verbose").
-    *   `library_name`: `str` (optional) - The name of the Robot Framework library to initialize on the server.
-    *   `library_args`: `list` (optional) - Positional arguments to pass to the library constructor.
-    *   `library_kw_args`: `dict` (optional) - Keyword arguments to pass to the library constructor.
 
 *   **`InitializeResult`**
-    *   `library_definition`: `LibraryDefinition` - The definition of the initialized library, including keywords.
     *   `capabilities`: `ServerCapabilities` (optional) - Capabilities provided by the server.
     *   `server_info`: `ServerInfo` (optional) - Information about the server (name, version).
 
 *   **`ClientInfo` / `ServerInfo`**
     *   `name`: `str` - The name of the client or server.
     *   `version`: `str` - The version of the client or server.
+
+*   **`ClientCapabilities`**
+    *   `supports_log`: `bool` (optional) - Whether the client supports log notifications.
+    *   `supports_trace`: `bool` (optional) - Whether the client supports trace notifications.
+
+*   **`ServerCapabilities`**
+    *   `support_exit`: `bool` (optional) - Whether the server supports the exit notification.
+    *   `libraries`: `list[str]` (optional) - A list of available libraries on the server.
+
+### Library Management
+
+*   **`ImportLibraryParams`**
+    *   `name`: `str` - The name of the library to import.
+    *   `args`: `list` (optional) - Positional arguments to pass to the library constructor.
+    *   `kw_args`: `dict` (optional) - Keyword arguments to pass to the library constructor.
+
+*   **`ImportLibraryResult`**
+    *   `token`: `str` - A unique token representing the imported library instance.
+    *   `definition`: `LibraryDefinition` - The definition of the imported library.
+
+*   **`FinalizeLibraryParams`**
+    *   `token`: `str` - The token of the library to finalize.
+
+*   **`FinalizeLibraryResult`**
+    *   (Empty object)
 
 ### Library Definition
 
@@ -125,6 +146,7 @@ The following data classes define the payload for requests and responses.
 ### Execution
 
 *   **`RunKeywordParams`**
+    *   `library_token`: `str` - The token of the library instance to execute the keyword on.
     *   `name`: `str` - The name of the keyword to execute.
     *   `args`: `list` (optional) - A list of positional arguments to pass to the keyword.
     *   `kwargs`: `dict` (optional) - A dictionary of keyword arguments to pass to the keyword.
@@ -136,20 +158,17 @@ The following data classes define the payload for requests and responses.
 *   **`RunKeywordError`**
     *   `message`: `str` - The error message.
     *   `type`: `str` (optional) - The type/name of the exception (e.g., "ValueError", "AssertionError").
-        *   If provided, the client should display the error as `Type: Message`.
-        *   If omitted (or null), the client should display only the `Message` (equivalent to `ROBOT_SUPPRESS_NAME=True`).
-    *   `traceback`: `str` (optional) - The stack trace of the error, useful for debugging.
+    *   `traceback`: `str` (optional) - The stack trace of the error.
     *   `mode`: `str` (optional) - The failure mode. Can be one of:
-        *   `"CONTINUABLE"`: Maps to `ROBOT_CONTINUE_ON_FAILURE = True`.
-        *   `"FATAL"`: Maps to `ROBOT_EXIT_ON_FAILURE = True`.
-        *   `"SKIP"`: Maps to `ROBOT_SKIP_EXECUTION = True`.
-        *   If omitted, it is treated as a standard failure.
+        *   `"CONTINUABLE"`
+        *   `"FATAL"`
+        *   `"SKIP"`
 
 ### Logging
 
 *   **`LogParams`**
     *   `message`: `str` - The log message content.
-    *   `level`: `str` (optional) - The log level (e.g., "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FAIL").
+    *   `level`: `str` (optional) - The log level (e.g., "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CONSOLE", "HTML").
     *   `html`: `bool` (optional) - Whether the message should be treated as HTML.
     *   `console`: `bool` (optional) - Whether the message should be printed to the console.
     *   `timestamp`: `str` (optional) - The timestamp of the log message.
@@ -160,51 +179,39 @@ The following constants define the JSON-RPC method names:
 
 | Constant | Method Name | Type | Params | Result |
 | :--- | :--- | :--- | :--- | :--- |
-| `INITIALIZE_REQUEST` | `initialize` | Request | `InitializeParams` | `InitializeResult` |
-| `INITIALIZED_NOTIFICATION` | `initialized` | Notification | `InitializedParams` | - |
-| `RUN_KEYWORD_REQUEST` | `run_keyword` | Request | `RunKeywordParams` | `RunKeywordResult` |
-| `LOG_NOTIFICATION` | `log` | Notification | `LogParams` | - |
-| `SHUTDOWN_REQUEST` | `shutdown` | Request | `ShutdownParams` | `ShutdownResult` |
-| `EXIT_NOTIFICATION` | `exit` | Notification | - | - |
+| `INITIALIZE_REQUEST` | `robot/initialize` | Request | `InitializeParams` | `InitializeResult` |
+| `INITIALIZED_NOTIFICATION` | `robot/initialized` | Notification | `InitializedParams` | - |
+| `IMPORT_LIBRARY_REQUEST` | `robot/import_library` | Request | `ImportLibraryParams` | `ImportLibraryResult` |
+| `FINALIZE_LIBRARY_REQUEST` | `robot/finalize_library` | Request | `FinalizeLibraryParams` | `FinalizeLibraryResult` |
+| `RUN_KEYWORD_REQUEST` | `robot/run_keyword` | Request | `RunKeywordParams` | `RunKeywordResult` |
+| `LOG_NOTIFICATION` | `robot/log` | Notification | `LogParams` | - |
+| `TRACE_NOTIFICATION` | `robot/trace` | Notification | `LogParams` | - |
+| `SHUTDOWN_REQUEST` | `robot/shutdown` | Request | `ShutdownParams` | `ShutdownResult` |
+| `EXIT_NOTIFICATION` | `robot/exit` | Notification | - | - |
 
 ## Communication Flow
 
 The typical communication lifecycle is as follows:
 
-1.  **Connection**: The client establishes a connection to the server (e.g., via stdio or TCP or ...).
+1.  **Connection**: The client establishes a connection to the server.
 2.  **Initialization**:
-    *   **Request**: The client sends an `initialize` request containing `InitializeParams`. This includes:
-        *   `library_name`: The name of the library to load.
-        *   `library_args` / `library_kw_args`: Arguments required to initialize the library instance.
-    *   **Processing**: The server attempts to import and instantiate the requested library.
-        *   During this phase, the server **may** send `log` notifications to the client. This is useful for reporting loading progress, deprecation warnings, or initialization errors that don't prevent the connection but should be visible to the user.
-    *   **Response (Success)**: Upon successful loading, the server responds with `InitializeResult`. This contains the `LibraryDefinition`, which describes the library and lists all available keywords with their arguments and documentation.
-    *   **Response (Failure)**: If the library cannot be initialized (e.g., module not found, exception during instantiation), the server responds with a JSON-RPC **Error**.
-        *   The error object should contain a meaningful message explaining why the initialization failed.
-        *   The client must handle this error (e.g., by stopping the execution) and should not send an `initialized` notification.
-    *   **Confirmation**: The client processes the library definition (e.g., registering keywords in Robot Framework) and sends an `initialized` notification.
-        *   **Purpose**: This signals the completion of the handshake. It confirms that the client is fully synchronized and ready.
-        *   **Constraint**: The server **must not** process any `run_keyword` requests until this `initialized` notification is received. If a request is received beforehand, the server should respond with a JSON-RPC error (e.g., code `-32000`: Not initialized).
-        *   **Timeout**: If the client fails to send the `initialized` notification within a reasonable timeframe (implementation specific), the server **may** terminate the connection to release resources.
-3.  **Execution Loop**:
-    *   When Robot Framework executes a keyword from the remote library, the client sends a `run_keyword` request.
-    *   The server executes the keyword implementation.
-    *   During execution, the server can send `log` notifications to stream log messages to the client.
-    *   **Response**: The server sends a response back to the client. There are two distinct error categories:
-        1.  **Runtime Errors (Keyword Failure)**: If the keyword execution fails (e.g., assertion error, exception in library code), the server returns a **successful** JSON-RPC response containing a `RunKeywordResult`.
-            *   The `error` field of `RunKeywordResult` contains a `RunKeywordError` object with the error message and optional details (traceback, continuable, etc.).
-            *   The client treats this as a failed keyword execution within the test (FAIL).
-        2.  **Protocol/Resolution Errors**: If the request is invalid (e.g., keyword not found, invalid argument count/types), the server returns a **JSON-RPC Error**.
-            *   Since standard JSON-RPC errors like `-32601` refer to the RPC method (`run_keyword`) itself, specific application error codes are defined for keyword resolution (using the implementation-defined server-error range `-32000` to `-32099`):
-                *   `-32001`: Keyword not found.
-                *   `-32002`: Argument mismatch (e.g., wrong number of arguments).
-            *   The client treats this as an infrastructure/protocol failure.
-4.  **Termination**:
-    *   The client sends a `shutdown` request. This acts as the **finalization** step for the current library session.
-        *   The server releases the library instance, cleans up resources (e.g., closes database connections, file handles), and responds.
-    *   The client sends an `exit` notification.
-        *   This signals the server to close the connection.
-        *   If the server process was started by the client (e.g., via stdio), this notification instructs the server to terminate the process.
+    *   **Request**: The client sends a `robot/initialize` request.
+    *   **Response**: The server responds with `InitializeResult`, exchanging capabilities.
+    *   **Notification**: The client sends `robot/initialized` to confirm readiness.
+3.  **Library Import**:
+    *   **Request**: The client sends `robot/import_library` with the library name and arguments.
+    *   **Response**: The server initializes the library and returns `ImportLibraryResult` containing a `token` and the `LibraryDefinition`.
+4.  **Execution Loop**:
+    *   **Request**: The client sends `robot/run_keyword` with the `library_token`, keyword name, and arguments.
+    *   **Execution**: The server executes the keyword on the instance identified by the token.
+    *   **Logging**: The server may send `robot/log` notifications during execution.
+    *   **Response**: The server returns `RunKeywordResult` (success or error).
+5.  **Library Finalization**:
+    *   **Request**: The client sends `robot/finalize_library` with the `token` when the library is no longer needed.
+    *   **Response**: The server cleans up the library instance.
+6.  **Termination**:
+    *   **Request**: The client sends `robot/shutdown`.
+    *   **Notification**: The client sends `robot/exit` to close the connection.
 
 ## Usage
 
