@@ -4,6 +4,7 @@ import functools
 import inspect
 import itertools
 import json
+import pickle
 import re
 import types
 from typing import (
@@ -722,3 +723,17 @@ class ValidateMixin:
     def __post_init__(self) -> None:
         self._convert()
         self._validate()
+
+
+def is_jsononable_dict(o: Any) -> bool:
+    return isinstance(o, dict) and "__pickled__" in o
+
+
+def object_to_jsonable_dict(o: Any) -> dict[str, Any]:
+    return {"__pickled__": pickle.dumps(o).hex()}
+
+
+def jsonable_dict_to_object(d: dict[str, Any]) -> Any:
+    if is_jsononable_dict(d):
+        return pickle.loads(bytes.fromhex(d["__pickled__"]))
+    raise ValueError("Dictionary does not contain pickled data")
