@@ -344,6 +344,7 @@ class JsonRpcPeer:
                 await self.writer.wait_closed()
 
     async def handle_message(self, json_str: str) -> None:
+        response_id: str | int | None = None
         try:
             json_element = json.loads(json_str)
 
@@ -360,6 +361,8 @@ class JsonRpcPeer:
             else:
                 response = await self.process_single_message(json_element)
                 if response is not None:
+                    if isinstance(response, JsonRpcResponse):
+                        response_id = response.id
                     await self._send_message(response)
 
         except json.JSONDecodeError as ex:
@@ -369,7 +372,7 @@ class JsonRpcPeer:
                     message=str(ex),
                     data=traceback.format_exc(),
                 ),
-                id=None,
+                id=response_id,
             )
             await self._send_message(error_response)
         except JsonRpcInvalidRequestError as ex:
@@ -379,7 +382,7 @@ class JsonRpcPeer:
                     message=str(ex),
                     data=traceback.format_exc(),
                 ),
-                id=None,
+                id=response_id,
             )
             await self._send_message(error_response)
         except Exception as ex:
@@ -389,7 +392,7 @@ class JsonRpcPeer:
                     message=str(ex),
                     data=traceback.format_exc(),
                 ),
-                id=None,
+                id=response_id,
             )
             await self._send_message(error_response)
 
