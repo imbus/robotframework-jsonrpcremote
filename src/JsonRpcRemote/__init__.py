@@ -3,7 +3,7 @@ import weakref
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from threading import Event, Thread
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from robot import result, running
@@ -11,6 +11,7 @@ from robot.api import logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
 
 from jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer.json_helpers import jsonable_dict_to_object, is_jsononable_dict
 from jsonrpcpeer.peer import rpc_notification
 from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
@@ -18,6 +19,8 @@ from robot_jsonrpcremote_protocol import (
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
+    ArgumentDefinition,
+    ArgumentKind,
     ClientCapabilities,
     ClientInfo,
     ImportLibraryParams,
@@ -104,7 +107,7 @@ class _Session:
         library_name: str | None,
         library_args: set[Any] | None,
         library_kw_args: dict[str, Any] | None,
-        timeout: float = 10.0,
+        timeout: float | None = 30.0,
     ) -> None:
         self._uri = uri
         self._library_name = library_name
@@ -261,6 +264,16 @@ class SessionScope(Enum):
     GLOBAL = "GLOBAL"
 
 
+def _from_json_value(o: Any) -> Any:
+    if o is None:
+        return None
+
+    if is_jsononable_dict(o):
+        return jsonable_dict_to_object(cast(dict[str, Any], o))
+
+    return o
+
+
 class JsonRpcRemote:
     ROBOT_LIBRARY_VERSION = __version__
     ROBOT_LIBRARY_SCOPE = "GLOBAL"
@@ -268,12 +281,12 @@ class JsonRpcRemote:
 
     def __init__(
         self,
-        uri: str = "tcp://127.0.0.1:8888",
+        uri: str = "tcp://127.0.0.1:8271",
         library_name: str | None = None,
         *library_args: Any,
         rpc_timeout: float = 10.0,
         rpc_scope: SessionScope = SessionScope.SUITE,
-        **library_kw_args: Any,
+        # **library_kw_args: Any,
     ) -> None:
         self._uri = uri
         self._timeout = rpc_timeout
@@ -281,7 +294,7 @@ class JsonRpcRemote:
 
         self._library_name = library_name
         self._library_args = library_args
-        self._library_kw_args = library_kw_args
+        self._library_kw_args = None
 
         self.__session: _Session | None = None
 
@@ -361,12 +374,29 @@ class JsonRpcRemote:
     def get_keyword_arguments(self, name: str) -> Arguments | None:
         keyword = self._get_keyword_definition(name)
 
-        return [arg.name for arg in keyword.args] if keyword.args is not None else None
+        def arg_tuple(arg: ArgumentDefinition) -> str | tuple[str, object]:
+            if arg.kind == ArgumentKind.POSITIONAL_ONLY_MARKER:
+                return "/"
+            if arg.kind == ArgumentKind.NAMED_ONLY_MARKER:
+                return "*"
+
+            name = arg.name
+            if arg.kind == ArgumentKind.VAR_POSITIONAL:
+                name = "*" + name
+            elif arg.kind == ArgumentKind.VAR_NAMED:
+                name = "**" + name
+
+            if arg.has_default:
+                return (name, _from_json_value(arg.default))
+
+            return name
+
+        return [arg_tuple(arg) for arg in keyword.args] if keyword.args is not None else None
 
     def get_keyword_types(self, name: str) -> TypeHints | None:
         type_hints = {}
         for arg in self._get_keyword_definition(name).args:
-            if arg.type is not None:
+            if arg.type:
                 type_hints[arg.name] = arg.type
 
         return type_hints if type_hints else None

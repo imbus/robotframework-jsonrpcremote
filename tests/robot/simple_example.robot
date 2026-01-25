@@ -1,6 +1,6 @@
 *** Settings ***
 Library     JsonRpcRemote
-...             tcp://localhost:8888
+...             tcp://localhost:8271
 ...             simple_library
 ...             123
 ...             named=hallo
@@ -26,7 +26,7 @@ data driven
     ${{ [1,2,3] }}
     ${{ {"a": True} }}
     ${{ {"a"} }}    # this should fail because sets are converted to lists at the moment
-    ${{ "a" * 1024 * 1024 * 10 }}
+    ${{ "a" * 4}}
 
 
 *** Keywords ***

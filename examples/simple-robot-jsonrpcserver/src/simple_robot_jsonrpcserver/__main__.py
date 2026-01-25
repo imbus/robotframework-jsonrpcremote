@@ -117,9 +117,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
 
 async def run_server() -> None:
-    server = await asyncio.start_server(handle_client, "127.0.0.1", 8888)
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 8271)
     async with server:
-        print("Server started on 127.0.0.1:8888")
+        print("Server started on 127.0.0.1:8271")
         await server.serve_forever()
 
 

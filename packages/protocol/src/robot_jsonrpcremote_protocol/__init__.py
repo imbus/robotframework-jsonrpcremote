@@ -16,9 +16,18 @@ class RobotJsonRpcErrorCode(IntEnum):
 class ArgumentKind(str, Enum):
     POSITIONAL_ONLY = "POSITIONAL_ONLY"
     POSITIONAL_OR_NAMED = "POSITIONAL_OR_NAMED"
+    POSITIONAL_ONLY_MARKER = "POSITIONAL_ONLY_MARKER"
+    NAMED_ONLY_MARKER = "NAMED_ONLY_MARKER"
     VAR_POSITIONAL = "VAR_POSITIONAL"
     NAMED_ONLY = "NAMED_ONLY"
     VAR_NAMED = "VAR_NAMED"
+
+    def from_value(value: str) -> "ArgumentKind":
+        for kind in ArgumentKind:
+            if kind.value == value:
+                return kind
+
+        raise ValueError(f"Unknown ArgumentKind value: {value}")
 
 
 class RunKeywordErrorMode(str, Enum):
@@ -72,6 +81,7 @@ class ServerInfo:
 class ArgumentDefinition:
     name: str
     type: str | None = None
+    has_default: bool | None = None
     default: AnyType | None = None
     required: bool = True
     kind: ArgumentKind | None = None
@@ -93,7 +103,11 @@ class LibraryDefinition:
     name: str
     keywords: list[KeywordDefinition]
     doc: str | None = None
+    doc_format: str | None = None
+    scope: str | None = None
+    version: str | None = None
     source: str | None = None
+    lineno: int | None = None
 
 
 @dataclass
