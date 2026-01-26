@@ -3,7 +3,7 @@ import weakref
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from threading import Event, Thread
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urlparse
 
 from robot import result, running
@@ -11,7 +11,7 @@ from robot.api import logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
 
 from jsonrpcpeer import JsonRpcPeer
-from jsonrpcpeer.json_helpers import jsonable_dict_to_object, is_jsononable_dict
+from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from jsonrpcpeer.peer import rpc_notification
 from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
@@ -97,6 +97,18 @@ class _ClientEndpoint:
                 args=list(args) if args is not None else None,
                 kw_args=dict(kw_args) if kw_args is not None else None,
             ),
+        )
+
+    async def run_keyword(
+        self, library_token: str, name: str, args: list[Any], named: dict[str, Any]
+    ) -> RunKeywordResult:
+        if self.rpc_peer is None:
+            raise RuntimeError("Peer is not initialized yet")
+
+        return await self.rpc_peer.send_request_typed(
+            RunKeywordResult,
+            RUN_KEYWORD_REQUEST,
+            RunKeywordParams(library_token=library_token, name=name, args=args, kwargs=named),
         )
 
 
@@ -232,27 +244,20 @@ class _Session:
             return
 
         try:
-            asyncio.run_coroutine_threadsafe(self.peer.stop(), self.loop).result(30)
+            asyncio.run_coroutine_threadsafe(self.peer.stop(), self.loop).result(self._timeout)
 
             if self._thread is not None:
-                self._thread.join(30)
+                self._thread.join(self._timeout)
         finally:
             self._loop = None
             self._peer = None
 
-    async def run_keyword(self, name: str, args: Sequence[Any], named: Mapping[str, Any]) -> RunKeywordResult:
+    async def run_keyword(self, name: str, args: list[Any], named: dict[str, Any]) -> RunKeywordResult:
         try:
-            if self._peer is None:
-                raise RuntimeError("Peer is not initialized yet")
-
             if self.library_token is None:
                 raise RuntimeError("Library token is not initialized yet")
 
-            return await self._peer.send_request_typed(
-                RunKeywordResult,
-                RUN_KEYWORD_REQUEST,
-                RunKeywordParams(library_token=self.library_token, name=name, args=list(args), kwargs=dict(named)),
-            )
+            return await self.client_endpoint.run_keyword(self.library_token, name, args, named)
         except Exception as e:
             self.last_error = e
             raise
@@ -262,16 +267,6 @@ class SessionScope(Enum):
     TEST = "TEST"
     SUITE = "SUITE"
     GLOBAL = "GLOBAL"
-
-
-def _from_json_value(o: Any) -> Any:
-    if o is None:
-        return None
-
-    if is_jsononable_dict(o):
-        return jsonable_dict_to_object(cast(dict[str, Any], o))
-
-    return o
 
 
 class JsonRpcRemote:
@@ -387,7 +382,7 @@ class JsonRpcRemote:
                 name = "**" + name
 
             if arg.has_default:
-                return (name, _from_json_value(arg.default))
+                return (name, jsonable_to_value(arg.default))
 
             return name
 
@@ -411,12 +406,19 @@ class JsonRpcRemote:
         self._session.client_endpoint.callback_loop = asyncio.get_event_loop()
         try:
             result = await asyncio.wrap_future(
-                asyncio.run_coroutine_threadsafe(self._session.run_keyword(name, args, named), self._session.loop)
+                asyncio.run_coroutine_threadsafe(
+                    self._session.run_keyword(
+                        name,
+                        [value_to_jsonable(arg) for arg in args],
+                        {key: value_to_jsonable(value) for key, value in named.items()},
+                    ),
+                    self._session.loop,
+                )
             )
 
             if result.error is not None:
                 raise RuntimeError(f"Error executing keyword '{name}': {result.error}")
 
-            return result.result
+            return jsonable_to_value(result.result)
         finally:
             self._session.client_endpoint.callback_loop = None

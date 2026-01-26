@@ -1,1 +1,2 @@
 paths = ["tests/robot"]
+#log-level = "TRACE"

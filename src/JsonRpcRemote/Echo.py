@@ -28,4 +28,5 @@ class Echo:
         :param message: The message to echo.
         :return: The echoed message.
         """
+        print(f"Echo called with message: {message}, args: {args}, kwargs: {kwargs}")
         return f"echo: {message}"

@@ -37,6 +37,7 @@ dev = [
     "mypy>=1.19.1",
     "robotcode[runner]>=2.1.0",
     "robotframework-robocop>=7.0.0",
+    "robotremoteserver>=1.1.1",
     "ruff>=0.14.9",
     "simple-robot-jsonrpcserver",
 ]
@@ -110,6 +111,7 @@ warn_unreachable = true
 implicit_reexport = false
 implicit_optional = true
 disallow_untyped_decorators = false
+disallow_untyped_calls = false
 disallow_subclassing_any = false
 explicit_package_bases = true
 namespace_packages = true

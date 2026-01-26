@@ -44,6 +44,8 @@ class LogLevel(str, Enum):
     HTML = "HTML"
     WARN = "WARN"
     ERROR = "ERROR"
+    FAIL = "FAIL"
+    SKIP = "SKIP"
 
 
 @dataclass

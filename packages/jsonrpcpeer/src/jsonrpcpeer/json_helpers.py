@@ -725,7 +725,7 @@ class ValidateMixin:
         self._validate()
 
 
-def is_jsononable_dict(o: Any) -> bool:
+def is_jsonable_dict(o: Any) -> bool:
     return isinstance(o, dict) and "__pickled__" in o
 
 
@@ -734,6 +734,24 @@ def object_to_jsonable_dict(o: Any) -> dict[str, Any]:
 
 
 def jsonable_dict_to_object(d: dict[str, Any]) -> Any:
-    if is_jsononable_dict(d):
+    if is_jsonable_dict(d):
         return pickle.loads(bytes.fromhex(d["__pickled__"]))
     raise ValueError("Dictionary does not contain pickled data")
+
+
+def value_to_jsonable(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return object_to_jsonable_dict(value)
+
+
+def jsonable_to_value(value: Any) -> Any:
+    if value is None:
+        return None
+
+    if is_jsonable_dict(value):
+        return jsonable_dict_to_object(value)
+
+    return value

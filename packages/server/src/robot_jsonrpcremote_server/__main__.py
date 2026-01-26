@@ -4,7 +4,6 @@ import contextlib
 import logging
 import os
 import threading
-import time
 from typing import Awaitable, Literal, Sequence
 
 from jsonrpcpeer import JsonRpcPeer
@@ -65,6 +64,7 @@ async def handle_client(
         logger.exception("Error handling client %s", addr)
         raise
     finally:
+        endpoint.cleanup()
         logger.debug("Client %s disconnected", addr)
         if not writer.is_closing():
             writer.close()

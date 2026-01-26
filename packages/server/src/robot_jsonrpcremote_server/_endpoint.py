@@ -1,5 +1,8 @@
+import asyncio
+import datetime
 import logging
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from typing import Any
 
 from jsonrpcpeer import JsonRpcPeer, rpc_notification, rpc_request
 from robot_jsonrpcremote_protocol import (
@@ -8,14 +11,11 @@ from robot_jsonrpcremote_protocol import (
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
-    ArgumentDefinition,
     ImportLibraryParams,
     ImportLibraryResult,
     InitializedParams,
     InitializeParams,
     InitializeResult,
-    KeywordDefinition,
-    LibraryDefinition,
     LogLevel,
     LogParams,
     RunKeywordError,
@@ -31,6 +31,28 @@ from ._runner import RobotRemoteContext
 logger = logging.getLogger("robot_jsonrpcremote_server.endpoint")
 
 
+def _library_token_id() -> Generator[str, Any, Any]:
+    i = 0
+    while True:
+        yield f"jsonrpc_{i}"
+        i += 1
+
+
+def _robot_log_level_to_protocol_level(level: str) -> LogLevel:
+    level_map = {
+        "TRACE": LogLevel.TRACE,
+        "DEBUG": LogLevel.DEBUG,
+        "INFO": LogLevel.INFO,
+        "WARN": LogLevel.WARN,
+        "ERROR": LogLevel.ERROR,
+        "FAIL": LogLevel.FAIL,
+        "SKIP": LogLevel.SKIP,
+        "CONSOLE": LogLevel.CONSOLE,
+        "HTML": LogLevel.HTML,
+    }
+    return level_map.get(level.upper(), LogLevel.INFO)
+
+
 class RobotServerEndpoint:
     def __init__(
         self, remote_context: RobotRemoteContext, libraries: Sequence[str] | None = None, verbose: bool = False
@@ -41,6 +63,25 @@ class RobotServerEndpoint:
         self.initialize_received: bool = False
         self.initialized_received: bool = False
         self.rpc_peer: JsonRpcPeer | None = None
+        self.remote_context.register_log_message_subscriber(self)
+        self._registered = True
+        self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
+
+    def cleanup(self) -> None:
+        self._registered = False
+        self.remote_context.unregister_log_message_subscriber(self)
+        self.initialize_received = False
+        self.initialized_received = False
+        self.rpc_peer = None
+
+    def log_message(self, message: str, level: str, html: bool, timestamp: datetime.datetime) -> None:
+        if not self._registered:
+            return
+
+        asyncio.run_coroutine_threadsafe(
+            self.log(message=message, level=_robot_log_level_to_protocol_level(level), html=html),
+            self.loop,
+        ).result()
 
     async def log(
         self, message: str, level: LogLevel = LogLevel.INFO, console: bool = False, html: bool = False
@@ -84,10 +125,13 @@ class RobotServerEndpoint:
             raise RuntimeError(f"Library '{lib_name}' is not available.")
 
         logger.debug("Importing library: %s", lib_name)
+        token = f"{lib_name}_{next(_library_token_id())}"
 
-        lib_definition = self.remote_context.import_library(lib_name, list(str(a) for a in params.args or []))
+        lib_definition = await self.remote_context.import_library(
+            lib_name, list(str(a) for a in params.args or []), token
+        )
         return ImportLibraryResult(
-            token="simple-robot-library-token",
+            token=token,
             definition=lib_definition,
         )
 
@@ -96,14 +140,12 @@ class RobotServerEndpoint:
         if not self.initialize_received or not self.initialized_received:
             raise RuntimeError("Initialize and Initialized must be received before RunKeyword.")
 
-        logger.debug("Running keyword: %s with args: %s and kwargs: %s", params.name, params.args, params.kwargs)
-
-        # if params.name == "echo":
-        #     message = params.args[0] if params.args else params.kwargs.get("message", "") if params.kwargs else ""
-        #     result = message
-
-        #     for i in range(3):
-        #         await self.log(f"Echo {i} request received with params: {params}", level=LogLevel.WARN, html=True)
-        #     return RunKeywordResult(result=result)
-
-        return RunKeywordResult(error=RunKeywordError(message=f"Keyword '{params.name}' not found."))
+        try:
+            return RunKeywordResult(
+                result=await self.remote_context.run_keyword(
+                    params.library_token, params.name, params.args or [], params.kwargs or {}
+                )
+            )
+        except Exception as e:
+            logger.exception("Error executing keyword '%s': %s", params.name, e)
+            return RunKeywordResult(error=RunKeywordError(message=str(e)))

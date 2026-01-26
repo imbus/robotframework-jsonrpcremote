@@ -8,5 +8,7 @@ Library     JsonRpcRemote
 
 *** Test Cases ***
 first
-    ${result}    Echo    Hello World
-    Should Be Equal    ${result}    echo: Hello World
+    FOR    ${_}    IN RANGE    1000
+        ${result}    Echo    Hello World
+        Should Be Equal    ${result}    echo: Hello World
+    END
