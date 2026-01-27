@@ -45,8 +45,6 @@ def _robot_log_level_to_protocol_level(level: str) -> LogLevel:
         "INFO": LogLevel.INFO,
         "WARN": LogLevel.WARN,
         "ERROR": LogLevel.ERROR,
-        "FAIL": LogLevel.FAIL,
-        "SKIP": LogLevel.SKIP,
         "CONSOLE": LogLevel.CONSOLE,
         "HTML": LogLevel.HTML,
     }
@@ -76,6 +74,8 @@ class RobotServerEndpoint:
 
     def log_message(self, message: str, level: str, html: bool, timestamp: datetime.datetime) -> None:
         if not self._registered:
+            return
+        if level in ("FAIL", "SKIP"):
             return
 
         asyncio.run_coroutine_threadsafe(

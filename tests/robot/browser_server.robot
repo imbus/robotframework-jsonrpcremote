@@ -1,8 +1,9 @@
 *** Settings ***
-# Library    Browser
-Library   JsonRpcRemote  library_name=Browser
+#Library    Browser
+Library   JsonRpcRemote  tcp://192.168.2.95  library_name=Browser
 
-Suite Setup    New Browser   headless=False
+Test Setup    New Browser   headless=False
+Test Teardown    Close Browser
 
 *** Test Cases ***
 Has Title

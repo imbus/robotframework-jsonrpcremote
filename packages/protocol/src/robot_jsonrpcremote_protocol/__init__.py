@@ -40,12 +40,10 @@ class LogLevel(str, Enum):
     TRACE = "TRACE"
     DEBUG = "DEBUG"
     INFO = "INFO"
-    CONSOLE = "CONSOLE"
-    HTML = "HTML"
     WARN = "WARN"
     ERROR = "ERROR"
-    FAIL = "FAIL"
-    SKIP = "SKIP"
+    CONSOLE = "CONSOLE"
+    HTML = "HTML"
 
 
 @dataclass

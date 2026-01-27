@@ -219,7 +219,7 @@ class _Session:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(
                 parsed_uri.hostname,
-                parsed_uri.port if parsed_uri.port is not None else 8888,
+                parsed_uri.port if parsed_uri.port is not None else 8271,
             ),
             timeout=self._timeout,
         )

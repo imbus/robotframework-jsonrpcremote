@@ -61,7 +61,7 @@ Example Test
 ```
 
 **Arguments:**
-*   `uri`: The address of the remote server (default: `tcp://127.0.0.1:8888`).
+*   `uri`: The address of the remote server (default: `tcp://127.0.0.1:8271`).
 *   `library_name`: The name of the library to initialize on the remote server (optional).
 *   `rpc_timeout`: Connection timeout in seconds (default: `10.0`).
 *   `rpc_scope`: The scope of the remote session (`TEST`, `SUITE`, `GLOBAL`). Default is `SUITE`.
