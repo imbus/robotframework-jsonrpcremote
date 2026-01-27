@@ -28,3 +28,7 @@ debug.log
 results/
 
 .robotcode-cache/
+
+# Ignore temporary files
+*.tmp
+playwright-log.txt
