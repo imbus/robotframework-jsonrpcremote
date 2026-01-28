@@ -22,6 +22,13 @@ _server_started_event = threading.Event()
 _server_stop_event = threading.Event()
 
 
+def _parse_addresses(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    items = [part.strip() for part in value.split(",") if part.strip()]
+    return items or None
+
+
 def configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     root = logging.getLogger()
@@ -73,12 +80,12 @@ async def handle_client(
 
 
 async def run_tcp_server(
-    remote_context: RobotRemoteContext, host: str, port: int, verbose: bool, libraries: Sequence[str] | None
+    remote_context: RobotRemoteContext, addresses: Sequence[str], port: int, verbose: bool, libraries: Sequence[str] | None
 ) -> None:
     def client_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> Awaitable[None]:
         return handle_client(remote_context, reader, writer, verbose, libraries)
 
-    server: asyncio.AbstractServer = await asyncio.start_server(client_handler, host, port)
+    server: asyncio.AbstractServer = await asyncio.start_server(client_handler, addresses, port)
     bind_targets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
     logger.info("Robot JSON-RPC Remote Server listening on %s", bind_targets)
 
@@ -99,14 +106,14 @@ async def run_tcp_server(
 async def run_server_async(
     remote_context: RobotRemoteContext,
     mode: Literal["tcp", "pipe"],
-    host: str,
+    addresses: Sequence[str],
     port: int,
     pipe_name: str,
     libraries: Sequence[str] | None,
     verbose: bool,
 ) -> None:
     if mode == "tcp":
-        await run_tcp_server(remote_context, host, port, verbose, libraries)
+        await run_tcp_server(remote_context, addresses, port, verbose, libraries)
         return
 
     raise NotImplementedError(f"Mode '{mode}' is not implemented yet")
@@ -115,7 +122,7 @@ async def run_server_async(
 def run_server(
     remote_context: RobotRemoteContext,
     mode: Literal["tcp", "pipe"],
-    host: str,
+    addresses: Sequence[str],
     port: int,
     pipe_name: str,
     libraries: Sequence[str] | None,
@@ -125,7 +132,7 @@ def run_server(
         run_server_async(
             remote_context=remote_context,
             mode=mode,
-            host=host,
+            addresses=addresses,
             port=port,
             pipe_name=pipe_name,
             libraries=libraries,
@@ -199,10 +206,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "tcp mode settings", description="Configure the listening address and port for TCP connections."
     )
     tcp_group.add_argument(
-        "--host",
+        "--bind",
+        dest="addresses",
+        action="append",
         type=str,
-        default=os.environ.get("ROBOT_JSONRPC_HOST", "127.0.0.1"),
-        help="Host address to bind the server (default: 127.0.0.1 or ROBOT_JSONRPC_HOST)",
+        metavar="ADDRESS",
+        help="Address to bind (repeatable; comma-separated via ROBOT_JSONRPC_BIND; default: 127.0.0.1)",
     )
     tcp_group.add_argument(
         "--port",
@@ -239,8 +248,11 @@ def run() -> None:
     configure_logging(args.verbose)
     logger.debug("Verbose mode is enabled.")
 
+    env_addresses = _parse_addresses(os.environ.get("ROBOT_JSONRPC_BIND"))
+    addresses = args.addresses or env_addresses or ["127.0.0.1"]
+
     if args.mode == "tcp":
-        logger.info("Server will start on %s:%s", args.host, args.port)
+        logger.info("Server will start on %s:%s", ",".join(addresses), args.port)
     elif args.mode == "pipe":
         logger.info("Server will start with pipe name: %s", args.pipe_name)
     else:
@@ -264,7 +276,7 @@ def run() -> None:
         args=(
             remote_context,
             args.mode,
-            args.host,
+            addresses,
             args.port,
             args.pipe_name,
             args.libraries,
