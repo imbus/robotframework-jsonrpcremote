@@ -4,13 +4,49 @@ version = "0.1.0"
 description = "A server implementation for Robot Framework JSON-RPC remote protocol."
 readme = "README.md"
 authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]
-license = { text = "Apache-2.0" }
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
+keywords = [
+    "Test",
+    "Testing",
+    "RobotFramework",
+    "Keyword Driven",
+    "Robotic Process Automation",
+    "RPA",
+    "JSON-RPC",
+    "JSON-RPC Remote",
+    "Robot Framework Remote Server",
+    "Remote Server",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Framework :: Robot Framework :: Tool",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+    "Intended Audience :: Developers",
+    "Framework :: Robot Framework",
+    "Framework :: Robot Framework :: Library",
+]
 dependencies = [
     "robotframework>=7.0",
     "jsonrpcpeer",
     "robotframework-jsonrpcremote-protocol",
 ]
+
+[project.urls]
+Homepage = "https://github.com/imbus/robotframework-jsonrpcremote"
+Repository = "https://github.com/imbus/robotframework-jsonrpcremote"
+Issues = "https://github.com/imbus/robotframework-jsonrpcremote/issues"
+Documentation = "https://github.com/imbus/robotframework-jsonrpcremote/tree/main/packages/server#readme"
 
 [project.scripts]
 robot-jsonrpcremote-server = "robot_jsonrpcremote_server:__main__.run"

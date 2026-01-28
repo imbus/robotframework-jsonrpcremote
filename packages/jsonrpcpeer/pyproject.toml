@@ -4,9 +4,39 @@ version = "0.1.0"
 description = "A JSON-RPC peer implementation for Python."
 readme = "README.md"
 authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]
-license = { text = "Apache-2.0" }
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
+keywords = [
+    "JSON-RPC",
+    "RPC",
+    "Peer",
+    "Client",
+    "Server",
+    "Async",
+    "Networking",
+    "IPC",
+    "Protocol",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Typing :: Typed",
+    "Intended Audience :: Developers",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/imbus/robotframework-jsonrpcremote"
+Repository = "https://github.com/imbus/robotframework-jsonrpcremote"
+Issues = "https://github.com/imbus/robotframework-jsonrpcremote/issues"
+Documentation = "https://github.com/imbus/robotframework-jsonrpcremote/tree/main/packages/jsonrpcpeer#readme"
 
 [build-system]
 requires = ["uv_build>=0.9.17,<0.10.0"]
