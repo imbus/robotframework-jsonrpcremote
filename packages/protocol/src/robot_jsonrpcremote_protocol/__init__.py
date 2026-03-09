@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-
-from typing_extensions import TypeAlias
+from typing import TypeAlias
 
 SimpleType: TypeAlias = str | int | float | bool | None
 AnyType: TypeAlias = SimpleType | list[SimpleType] | dict[str, SimpleType]
