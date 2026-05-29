@@ -80,12 +80,16 @@ async def handle_client(
 
 
 async def run_tcp_server(
-    remote_context: RobotRemoteContext, addresses: Sequence[str], port: int, verbose: bool, libraries: Sequence[str] | None
+    remote_context: RobotRemoteContext,
+    addresses: Sequence[str],
+    port: int,
+    verbose: bool,
+    libraries: Sequence[str] | None,
 ) -> None:
     def client_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> Awaitable[None]:
         return handle_client(remote_context, reader, writer, verbose, libraries)
 
-    server: asyncio.AbstractServer = await asyncio.start_server(client_handler, addresses, port)
+    server = await asyncio.start_server(client_handler, addresses, port)
     bind_targets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
     logger.info("Robot JSON-RPC Remote Server listening on %s", bind_targets)
 
