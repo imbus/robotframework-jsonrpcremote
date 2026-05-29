@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import uuid
 from collections.abc import Generator, Sequence
 from typing import Any
 
@@ -61,6 +62,11 @@ class RobotServerEndpoint:
         self.initialize_received: bool = False
         self.initialized_received: bool = False
         self.rpc_peer: JsonRpcPeer | None = None
+        # Per-endpoint token source: a unique prefix keeps tokens distinct across
+        # connections (they share one RobotRemoteContext keyword store), and the
+        # per-endpoint counter keeps them readable and unique per import.
+        self._endpoint_id = uuid.uuid4().hex[:8]
+        self._token_ids = _library_token_id()
         self.remote_context.register_log_message_subscriber(self)
         self._registered = True
         self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
@@ -125,7 +131,7 @@ class RobotServerEndpoint:
             raise RuntimeError(f"Library '{lib_name}' is not available.")
 
         logger.debug("Importing library: %s", lib_name)
-        token = f"{lib_name}_{next(_library_token_id())}"
+        token = f"{lib_name}_{self._endpoint_id}_{next(self._token_ids)}"
 
         lib_definition = await self.remote_context.import_library(
             lib_name, list(str(a) for a in params.args or []), token
