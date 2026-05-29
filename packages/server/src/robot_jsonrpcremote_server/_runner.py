@@ -6,7 +6,6 @@ from concurrent.futures import Future
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable, ClassVar, Protocol, Sequence, cast
-from weakref import WeakSet
 
 from robot import result, running
 from robot.api import TestSuite, get_model
@@ -151,30 +150,31 @@ class RobotRemoteContext:
 
         self._stopped = threading.Event()
         self._runner_thread = threading.current_thread()
-        self._command_queue: Queue[tuple[Callable[[], Any], Future[Any]]] = Queue()
-        self._log_message_handlers: WeakSet[LogMessageSubscriber] = WeakSet()
-
-    def register_log_message_subscriber(self, handler: LogMessageSubscriber) -> None:
-        self._log_message_handlers.add(handler)
-
-    def unregister_log_message_subscriber(self, handler: LogMessageSubscriber) -> None:
-        self._log_message_handlers.discard(handler)
+        self._command_queue: Queue[tuple[Callable[[], Any], Future[Any], LogMessageSubscriber | None]] = Queue()
+        # The subscriber whose command is currently executing on the runner thread.
+        # Log messages are routed only to it, so concurrent clients don't see each
+        # other's logs. No lock needed: only ever accessed on the runner thread.
+        self._active_subscriber: LogMessageSubscriber | None = None
 
     def _hook_loop(self) -> None:
         while not self._stopped.is_set():
             try:
-                command, future = self._command_queue.get(timeout=0.1)
+                command, future, subscriber = self._command_queue.get(timeout=0.1)
             except Empty:
                 continue
+            self._active_subscriber = subscriber
             try:
                 result = command()
                 future.set_result(result)
             except Exception as e:
                 future.set_exception(e)
+            finally:
+                self._active_subscriber = None
 
     def _log_message(self, message: result.Message) -> None:
-        for handler in self._log_message_handlers:
-            handler.log_message(message.message, message.level, message.html, message.timestamp)
+        subscriber = self._active_subscriber
+        if subscriber is not None:
+            subscriber.log_message(message.message, message.level, message.html, message.timestamp)
 
     def run(self) -> None:
         curdir = Path.cwd()
@@ -209,22 +209,29 @@ class RobotRemoteContext:
     def stop(self) -> None:
         self._stopped.set()
 
-    async def import_library(self, name: str, args: Sequence[str], library_token: str) -> LibraryDefinition:
+    async def import_library(
+        self, name: str, args: Sequence[str], library_token: str, subscriber: LogMessageSubscriber | None = None
+    ) -> LibraryDefinition:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("import_library cannot be called from the runner thread.")
 
         future: Future[LibraryDefinition] = Future()
-        self._command_queue.put((lambda: _robot_import_library(library_token, name, args), future))
+        self._command_queue.put((lambda: _robot_import_library(library_token, name, args), future, subscriber))
 
         return await asyncio.wrap_future(future)
 
     async def run_keyword(
-        self, library_token: str, name: str, args: list[AnyType], kwargs: dict[str, AnyType]
+        self,
+        library_token: str,
+        name: str,
+        args: list[AnyType],
+        kwargs: dict[str, AnyType],
+        subscriber: LogMessageSubscriber | None = None,
     ) -> AnyType | None:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("run_keyword cannot be called from the runner thread.")
 
         future: Future[AnyType] = Future()
-        self._command_queue.put((lambda: _robot_run_keyword(library_token, name, args, kwargs), future))
+        self._command_queue.put((lambda: _robot_run_keyword(library_token, name, args, kwargs), future, subscriber))
 
         return await asyncio.wrap_future(future)

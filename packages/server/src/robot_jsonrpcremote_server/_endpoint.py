@@ -67,13 +67,11 @@ class RobotServerEndpoint:
         # per-endpoint counter keeps them readable and unique per import.
         self._endpoint_id = uuid.uuid4().hex[:8]
         self._token_ids = _library_token_id()
-        self.remote_context.register_log_message_subscriber(self)
         self._registered = True
         self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
 
     def cleanup(self) -> None:
         self._registered = False
-        self.remote_context.unregister_log_message_subscriber(self)
         self.initialize_received = False
         self.initialized_received = False
         self.rpc_peer = None
@@ -84,10 +82,13 @@ class RobotServerEndpoint:
         if level in ("FAIL", "SKIP"):
             return
 
+        # Fire-and-forget: don't block the runner thread waiting for the send.
+        # Ordering holds because _send_message writes the whole frame synchronously
+        # before its first await, and call_soon_threadsafe scheduling is FIFO.
         asyncio.run_coroutine_threadsafe(
             self.log(message=message, level=_robot_log_level_to_protocol_level(level), html=html),
             self.loop,
-        ).result()
+        )
 
     async def log(
         self, message: str, level: LogLevel = LogLevel.INFO, console: bool = False, html: bool = False
@@ -134,7 +135,7 @@ class RobotServerEndpoint:
         token = f"{lib_name}_{self._endpoint_id}_{next(self._token_ids)}"
 
         lib_definition = await self.remote_context.import_library(
-            lib_name, list(str(a) for a in params.args or []), token
+            lib_name, list(str(a) for a in params.args or []), token, subscriber=self
         )
         return ImportLibraryResult(
             token=token,
@@ -149,7 +150,7 @@ class RobotServerEndpoint:
         try:
             return RunKeywordResult(
                 result=await self.remote_context.run_keyword(
-                    params.library_token, params.name, params.args or [], params.kwargs or {}
+                    params.library_token, params.name, params.args or [], params.kwargs or {}, subscriber=self
                 )
             )
         except Exception as e:
