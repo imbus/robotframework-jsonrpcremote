@@ -1,7 +1,5 @@
 # robotframework-jsonrpcremote
 
-[DRAFT]
-
 A **Robot Framework Remote Library** implementation using **JSON-RPC 2.0**.
 
 This project enables running Robot Framework keywords on a remote server using the standard **JSON-RPC 2.0** protocol. It serves as an alternative to the standard [Remote Library](https://robotframework.org/robotframework/latest/RobotFrameworkUserGuide.html#remote-library-interface).
@@ -80,8 +78,8 @@ This project uses `uv` for dependency management.
 
 1.  **Setup**: `uv sync --all-extras --all-packages --dev`
 2.  **Run Tests**:
-    *   Start simple example server: `uv run -m simple_robot_jsonrpcserver`
-    *   Run tests: `uv run robotcode run`
+    *   Unit tests: `uv run pytest`
+    *   Integration tests (each suite starts its own server): `uv run robotcode run`
 3.  **Build**: `uv build --all-packages`
 
 ## License
