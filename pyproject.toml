@@ -161,8 +161,6 @@ exclude = [
     "^dist/",
     "^out/",
     "^playground/",
-    "^scripts/",
-    "^tests/",
 ]
 mypy_path = [
     "typings",

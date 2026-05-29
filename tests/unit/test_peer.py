@@ -140,7 +140,7 @@ async def test_two_param_handler_requires_peer_first() -> None:
         return params
 
     with pytest.raises(ValueError, match="JsonRpcPeer"):
-        peer.register_request_handler("bad", bad)
+        peer.register_request_handler("bad", bad)  # type: ignore[arg-type]
 
 
 async def test_zero_param_handler_invalid() -> None:
@@ -150,7 +150,7 @@ async def test_zero_param_handler_invalid() -> None:
         return None
 
     with pytest.raises(ValueError, match="signature"):
-        peer.register_request_handler("zero", zero)
+        peer.register_request_handler("zero", zero)  # type: ignore[arg-type]
 
 
 async def test_two_param_handler_with_peer_ok() -> None:
@@ -189,7 +189,7 @@ async def test_empty_batch_returns_error() -> None:
     async def capture(msg: Any) -> None:
         sent.append(msg)
 
-    peer._send_message = capture
+    peer._send_message = capture  # type: ignore[method-assign, assignment]
     await peer.handle_message("[]")
     assert len(sent) == 1
     assert isinstance(sent[0], JsonRpcErrorResponse)
@@ -203,7 +203,7 @@ async def test_request_with_extra_field_error_code() -> None:
     async def capture(msg: Any) -> None:
         sent.append(msg)
 
-    peer._send_message = capture
+    peer._send_message = capture  # type: ignore[method-assign, assignment]
     await peer.handle_message(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "x", "extra": 1}))
     assert len(sent) == 1
     assert isinstance(sent[0], JsonRpcErrorResponse)

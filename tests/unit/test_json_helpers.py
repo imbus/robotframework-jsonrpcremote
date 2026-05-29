@@ -189,4 +189,4 @@ def test_validate_mixin_accepts_valid() -> None:
 
 def test_validate_mixin_rejects_invalid() -> None:
     with pytest.raises(TypeValidationError):
-        Validated("not an int")
+        Validated("not an int")  # type: ignore[arg-type]

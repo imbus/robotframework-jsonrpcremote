@@ -1,4 +1,4 @@
-from robotremoteserver import RobotRemoteServer
+from robotremoteserver import RobotRemoteServer  # type: ignore[import-untyped]
 
 from JsonRpcRemote.Echo import Echo
 
