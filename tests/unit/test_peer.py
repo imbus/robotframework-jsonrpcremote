@@ -208,3 +208,16 @@ async def test_request_with_extra_field_error_code() -> None:
     assert len(sent) == 1
     assert isinstance(sent[0], JsonRpcErrorResponse)
     assert sent[0].error.code != JsonRpcErrorCode.INTERNAL_ERROR
+
+
+async def test_malformed_error_response_resolves_pending_request() -> None:
+    # A non-dict "error" payload must not raise and leave the caller hanging.
+    peer = make_peer()
+    pending: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
+    peer._pending_requests["1"] = pending
+
+    await peer._handle_response({"jsonrpc": "2.0", "id": "1", "error": "boom"}, "1")
+
+    assert pending.done()
+    with pytest.raises(Exception, match="boom"):
+        pending.result()

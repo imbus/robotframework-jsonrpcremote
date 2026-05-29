@@ -65,8 +65,14 @@ class JsonRpcErrorResponse(JsonResponseBase):
     id: str | int | None
 
 
-def _error_from_dict(error_data: dict[str, Any]) -> JsonRpcError:
-    """Build a JsonRpcError from an inbound dict, ignoring any unexpected keys."""
+def _error_from_dict(error_data: Any) -> JsonRpcError:
+    """Build a JsonRpcError from an inbound value, tolerating malformed payloads.
+
+    Unexpected keys are ignored; a non-dict error payload is wrapped as an
+    internal error so a pending request always gets resolved instead of hanging.
+    """
+    if not isinstance(error_data, dict):
+        return JsonRpcError(code=JsonRpcErrorCode.INTERNAL_ERROR, message=str(error_data))
     return JsonRpcError(
         code=error_data.get("code", JsonRpcErrorCode.INTERNAL_ERROR),
         message=str(error_data.get("message", "")),
