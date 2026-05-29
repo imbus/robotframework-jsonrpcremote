@@ -185,11 +185,14 @@ class RobotRemoteContext:
                 sys.path.insert(0, str(path))
 
         curdir = Path.cwd()
-        options: dict[str, object] = {}
+        options: dict[str, object] = {
+            "variable": list(self.variables),
+            "variablefile": list(self.variablefiles),
+        }
 
         settings = RobotSettings(
             options=options,
-            outputdir=str(curdir),
+            outputdir=self.outputdir or str(curdir),
             console="NONE",
             output=self.output,
             log=self.log,

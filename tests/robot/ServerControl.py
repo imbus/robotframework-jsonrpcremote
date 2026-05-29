@@ -12,14 +12,29 @@ class ServerControl:
     def __init__(self) -> None:
         self._process: "subprocess.Popen[bytes] | None" = None
 
-    def start_jsonrpc_server(self, library: str, port: int = 8271, timeout: float = 20.0) -> None:
-        """Start `python -m robot_jsonrpcremote_server <library> --port <port>` and wait for the port."""
+    def start_jsonrpc_server(
+        self,
+        libraries: str,
+        port: int = 8271,
+        pythonpath: str = "",
+        variables: str = "",
+        timeout: float = 20.0,
+    ) -> None:
+        """Start the real server as a subprocess and wait until it accepts connections.
+
+        ``libraries`` and ``variables`` (``name:value``) are whitespace-separated lists.
+        """
         if self._process is not None:
             raise RuntimeError("JSON-RPC server is already running")
 
-        self._process = subprocess.Popen(
-            [sys.executable, "-m", "robot_jsonrpcremote_server", library, "--port", str(port)]
-        )
+        command = [sys.executable, "-m", "robot_jsonrpcremote_server", "--port", str(port)]
+        if pythonpath:
+            command += ["--pythonpath", pythonpath]
+        for variable in variables.split():
+            command += ["--variable", variable]
+        command += libraries.split()
+
+        self._process = subprocess.Popen(command)
         self._wait_for_port("127.0.0.1", int(port), float(timeout))
 
     def stop_jsonrpc_server(self) -> None:

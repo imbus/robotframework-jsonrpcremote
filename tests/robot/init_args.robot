@@ -1,6 +1,7 @@
 *** Settings ***
 Documentation     Library initialization arguments keep their JSON types end-to-end.
-Library           JsonRpcRemote    tcp://127.0.0.1:${PORT}    JsonRpcRemote.Echo    ${42}    text
+...               ServerProbeLib is loaded on the server via --pythonpath.
+Library           JsonRpcRemote    tcp://127.0.0.1:${PORT}    ServerProbeLib    ${42}    text
 
 
 *** Variables ***

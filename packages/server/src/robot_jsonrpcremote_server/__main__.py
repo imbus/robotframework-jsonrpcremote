@@ -238,7 +238,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "-P",
         type=str,
         action="append",
-        help="Add a directory to the Python path for Robot Framework",
+        metavar="PATH",
+        help="Add a directory to the Python path (repeatable), like robot's --pythonpath",
+    )
+    robot_group.add_argument(
+        "--variable",
+        type=str,
+        action="append",
+        metavar="name:value",
+        help="Set an individual variable (repeatable), like robot's --variable (-v is taken by --verbose)",
+    )
+    robot_group.add_argument(
+        "--variablefile",
+        "-V",
+        type=str,
+        action="append",
+        metavar="PATH",
+        help="Load variables from a file (repeatable), like robot's --variablefile",
+    )
+    robot_group.add_argument(
+        "--outputdir",
+        "-d",
+        type=str,
+        metavar="DIR",
+        help="Directory for Robot output files, like robot's --outputdir",
     )
 
     parser.add_argument("libraries", metavar="LIBRARY", nargs="*", help="the library to expose via JSON-RPC")
@@ -267,10 +290,10 @@ def run() -> None:
     logger.debug("Python path additions: %s", args.pythonpath)
 
     remote_context = RobotRemoteContext(
-        variables=(),
-        variablefiles=(),
+        variables=args.variable or (),
+        variablefiles=args.variablefile or (),
         pythonpath=args.pythonpath or (),
-        outputdir=None,
+        outputdir=args.outputdir,
         output=None,
         report=None,
         log=None,
