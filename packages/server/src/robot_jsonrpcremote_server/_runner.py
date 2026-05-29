@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import io
+import sys
 import threading
 from concurrent.futures import Future
 from pathlib import Path
@@ -177,6 +178,12 @@ class RobotRemoteContext:
             subscriber.log_message(message.message, message.level, message.html, message.timestamp)
 
     def run(self) -> None:
+        # Make the configured pythonpath directories importable so libraries can
+        # be loaded from them (e.g. via the server's --pythonpath / -P option).
+        for path in self.pythonpath:
+            if path and path not in sys.path:
+                sys.path.insert(0, str(path))
+
         curdir = Path.cwd()
         options: dict[str, object] = {}
 
