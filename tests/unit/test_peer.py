@@ -13,6 +13,7 @@ from jsonrpcpeer.peer import (
     JsonRpcErrorCode,
     JsonRpcErrorResponse,
     JsonRpcMethodAlreadyRegisteredError,
+    JsonRpcRequest,
 )
 
 
@@ -221,3 +222,16 @@ async def test_malformed_error_response_resolves_pending_request() -> None:
     assert pending.done()
     with pytest.raises(Exception, match="boom"):
         pending.result()
+
+
+async def test_param_conversion_failure_is_invalid_params() -> None:
+    # A handler whose typed params cannot be built from the payload yields -32602.
+    peer = make_peer()
+
+    async def add(params: Sum) -> int:
+        return params.total
+
+    peer.register_request_handler("add", add)
+    resp = await peer.process_request(JsonRpcRequest(method="add", id=1, params={"total": "not-an-int"}))
+    assert isinstance(resp, JsonRpcErrorResponse)
+    assert resp.error.code == JsonRpcErrorCode.INVALID_PARAMS

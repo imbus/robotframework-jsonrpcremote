@@ -88,6 +88,10 @@ class JsonRpcMethodAlreadyRegisteredError(ValueError):
     """Raised when a handler for a method is already registered."""
 
 
+class _InvalidParamsError(Exception):
+    """Internal marker: request/notification params could not be converted to the handler's type."""
+
+
 THandlerCallable: TypeAlias = (
     Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]] | Callable[[Any], Coroutine[Any, Any, Any]]
 )
@@ -516,14 +520,16 @@ class JsonRpcPeer:
         handler: _HandlerEntry,
         params: Any,
     ) -> Any:
-        if handler.pass_peer:
-            return await cast(Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]], handler.handler)(
-                self, from_dict(params, handler.param_type)
-            )
+        try:
+            converted = from_dict(params, handler.param_type)
+        except Exception as ex:
+            raise _InvalidParamsError(str(ex)) from ex
 
-        return await cast(Callable[[Any], Coroutine[Any, Any, Any]], handler.handler)(
-            from_dict(params, handler.param_type)
-        )
+        if handler.pass_peer:
+            handler_with_peer = cast(Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]], handler.handler)
+            return await handler_with_peer(self, converted)
+
+        return await cast(Callable[[Any], Coroutine[Any, Any, Any]], handler.handler)(converted)
 
     async def process_request(self, message: JsonRpcRequest) -> JsonResponseBase:
         if message.method in self._request_handlers:
@@ -531,6 +537,15 @@ class JsonRpcPeer:
             try:
                 result = await self._call_handler(handler, message.params)
                 return JsonRpcResponse(id=message.id, result=result)
+            except _InvalidParamsError as ex:
+                return JsonRpcErrorResponse(
+                    id=message.id,
+                    error=JsonRpcError(
+                        code=JsonRpcErrorCode.INVALID_PARAMS,
+                        message=str(ex),
+                        data=traceback.format_exc(),
+                    ),
+                )
             except Exception as ex:
                 return JsonRpcErrorResponse(
                     id=message.id,
@@ -555,6 +570,15 @@ class JsonRpcPeer:
             try:
                 await self._call_handler(handler, message.params)
                 return None
+            except _InvalidParamsError as ex:
+                return JsonRpcErrorResponse(
+                    id=None,
+                    error=JsonRpcError(
+                        code=JsonRpcErrorCode.INVALID_PARAMS,
+                        message=str(ex),
+                        data=traceback.format_exc(),
+                    ),
+                )
             except Exception as ex:
                 return JsonRpcErrorResponse(
                     id=None,
