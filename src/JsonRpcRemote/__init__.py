@@ -112,6 +112,38 @@ class _ClientEndpoint:
         )
 
 
+class _SessionResources:
+    """Mutable runtime state shared with the session finalizer.
+
+    Held separately from ``_Session`` so the finalizer can reference it without
+    capturing ``self`` -- a bound-method/self reference would keep the session
+    alive and prevent the finalizer from ever running on garbage collection.
+    """
+
+    __slots__ = ("loop", "peer", "thread")
+
+    def __init__(self) -> None:
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.peer: JsonRpcPeer | None = None
+        self.thread: Thread | None = None
+
+
+def _finalize_session(resources: _SessionResources, timeout: float | None) -> None:
+    """Stop the peer and join the worker thread. Idempotent and self-free."""
+    peer = resources.peer
+    loop = resources.loop
+    if peer is None or loop is None:
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(peer.stop(), loop).result(timeout)
+        if resources.thread is not None:
+            resources.thread.join(timeout)
+    finally:
+        resources.loop = None
+        resources.peer = None
+        resources.thread = None
+
+
 class _Session:
     def __init__(
         self,
@@ -127,39 +159,37 @@ class _Session:
         self._library_kw_args = library_kw_args
         self._timeout = timeout
 
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._peer: JsonRpcPeer | None = None
+        self._res = _SessionResources()
         self.initialized = Event()
-        self._finalizer = weakref.finalize(self, self.stop)
+        self._finalizer = weakref.finalize(self, _finalize_session, self._res, self._timeout)
 
         self.server_capabilities: ServerCapabilities | None = None
         self.server_info: ServerInfo | None = None
         self.library_definition: LibraryDefinition | None = None
         self.library_token: str | None = None
         self.last_error: BaseException | None = None
-        self._thread: Thread | None = None
 
         self.client_endpoint = _ClientEndpoint()
 
     @property
     def peer(self) -> JsonRpcPeer:
-        if self._peer is None:
+        if self._res.peer is None:
             raise RuntimeError("Peer is not initialized yet")
 
-        return self._peer
+        return self._res.peer
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
-        if self._loop is None:
+        if self._res.loop is None:
             raise RuntimeError("Event loop is not initialized yet")
 
-        return self._loop
+        return self._res.loop
 
     def _run(self) -> None:
         asyncio.run(self._run_client())
 
     async def _run_client(self) -> None:
-        self._loop = asyncio.get_event_loop()
+        self._res.loop = asyncio.get_event_loop()
         try:
             try:
                 await self._start_peer()
@@ -172,27 +202,27 @@ class _Session:
                 self.initialized.set()
 
             try:
-                if self._peer is not None:
-                    await self._peer.completion
+                if self._res.peer is not None:
+                    await self._res.peer.completion
             except Exception as e:
                 self.last_error = e
                 raise
             finally:
                 await self.close_connection()
         finally:
-            self._loop = None
-            self._peer = None
-            self._thread = None
+            self._res.loop = None
+            self._res.peer = None
+            self._res.thread = None
 
     async def _start_peer(self) -> None:
-        self._peer = JsonRpcPeer(*await self.create_connection())
+        self._res.peer = JsonRpcPeer(*await self.create_connection())
 
-        self._peer.attach_endpoint(self.client_endpoint)
+        self._res.peer.attach_endpoint(self.client_endpoint)
 
-        self._peer.start()
+        self._res.peer.start()
 
     async def _initialize_server(self) -> None:
-        if self._peer is None:
+        if self._res.peer is None:
             raise RuntimeError("Peer is not initialized yet")
 
         initialize_result = await self.client_endpoint.initialize()
@@ -227,30 +257,20 @@ class _Session:
         return reader, writer
 
     async def close_connection(self) -> None:
-        if self._peer is not None:
-            self._peer.reader.feed_eof()
-            self._peer.writer.close()
-            await self._peer.writer.wait_closed()
+        if self._res.peer is not None:
+            self._res.peer.reader.feed_eof()
+            self._res.peer.writer.close()
+            await self._res.peer.writer.wait_closed()
 
     def start(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
+        if self._res.thread is not None and self._res.thread.is_alive():
             return
 
-        self._thread = Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._res.thread = Thread(target=self._run, daemon=True)
+        self._res.thread.start()
 
     def stop(self) -> None:
-        if self._loop is None or self._peer is None:
-            return
-
-        try:
-            asyncio.run_coroutine_threadsafe(self.peer.stop(), self.loop).result(self._timeout)
-
-            if self._thread is not None:
-                self._thread.join(self._timeout)
-        finally:
-            self._loop = None
-            self._peer = None
+        _finalize_session(self._res, self._timeout)
 
     async def run_keyword(self, name: str, args: list[Any], named: dict[str, Any]) -> RunKeywordResult:
         try:
@@ -296,8 +316,6 @@ class JsonRpcRemote:
         self.ROBOT_LIBRARY_LISTENER = self
 
         self._start_session()
-
-        self._finalizer = weakref.finalize(self, self._stop_session)
 
     def __del__(self) -> None:
         self._stop_session()
