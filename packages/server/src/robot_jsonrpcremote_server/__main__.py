@@ -196,14 +196,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_const",
         dest="mode",
         const="pipe",
-        help="Run server in pipe mode (alias for --mode pipe)",
+        help="Run server in pipe mode (alias for --mode pipe) [planned, not yet implemented]",
     )
     mode_ex_group.add_argument(
         "--stdio",
         action="store_const",
         dest="mode",
         const="stdio",
-        help="Run server in stdio mode (alias for --mode stdio)",
+        help="Run server in stdio mode (alias for --mode stdio) [planned, not yet implemented]",
     )
 
     tcp_group = parser.add_argument_group(
@@ -252,15 +252,16 @@ def run() -> None:
     configure_logging(args.verbose)
     logger.debug("Verbose mode is enabled.")
 
+    if args.mode != "tcp":
+        parser.error(
+            f"server mode '{args.mode}' is not supported yet; only 'tcp' is available "
+            "('--pipe' and '--stdio' are planned)."
+        )
+
     env_addresses = _parse_addresses(os.environ.get("ROBOT_JSONRPC_BIND"))
     addresses = args.addresses or env_addresses or ["127.0.0.1"]
 
-    if args.mode == "tcp":
-        logger.info("Server will start on %s:%s", ",".join(addresses), args.port)
-    elif args.mode == "pipe":
-        logger.info("Server will start with pipe name: %s", args.pipe_name)
-    else:
-        raise NotImplementedError(f"Mode '{args.mode}' is not supported.")
+    logger.info("Server will start on %s:%s", ",".join(addresses), args.port)
 
     logger.debug("Libraries to serve: %s", args.libraries)
     logger.debug("Python path additions: %s", args.pythonpath)
