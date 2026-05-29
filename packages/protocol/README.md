@@ -173,6 +173,14 @@ The following data classes define the payload for requests and responses.
     *   `console`: `bool` (optional) - Whether the message should be printed to the console.
     *   `timestamp`: `str` (optional) - The timestamp of the log message.
 
+### Termination
+
+*   **`ShutdownParams` / `ShutdownResult`**
+    *   (Empty objects) - Request the server to prepare for connection shutdown.
+
+*   **`ExitParams`**
+    *   (Empty object) - Sent with the `robot/exit` notification to close the connection.
+
 ## Methods
 
 The following constants define the JSON-RPC method names:
@@ -187,7 +195,7 @@ The following constants define the JSON-RPC method names:
 | `LOG_NOTIFICATION` | `robot/log` | Notification | `LogParams` | - |
 | `TRACE_NOTIFICATION` | `robot/trace` | Notification | `LogParams` | - |
 | `SHUTDOWN_REQUEST` | `robot/shutdown` | Request | `ShutdownParams` | `ShutdownResult` |
-| `EXIT_NOTIFICATION` | `robot/exit` | Notification | - | - |
+| `EXIT_NOTIFICATION` | `robot/exit` | Notification | `ExitParams` | - |
 
 ## Communication Flow
 

@@ -4,9 +4,14 @@ from jsonrpcpeer.json_helpers import as_json, from_dict, from_json
 from robot_jsonrpcremote_protocol import (
     ArgumentKind,
     ClientInfo,
+    ExitParams,
+    FinalizeLibraryParams,
+    FinalizeLibraryResult,
     InitializeParams,
     LibraryDefinition,
     RunKeywordParams,
+    ShutdownParams,
+    ShutdownResult,
 )
 
 
@@ -52,3 +57,15 @@ def test_initialize_params_json_roundtrip() -> None:
     params = InitializeParams(client_info=ClientInfo(name="c", version="1"))
     restored = from_json(as_json(params), InitializeParams)
     assert restored.client_info == ClientInfo(name="c", version="1")
+
+
+def test_finalize_library_params_roundtrip() -> None:
+    params = from_json(as_json(FinalizeLibraryParams(token="lib_1")), FinalizeLibraryParams)
+    assert params.token == "lib_1"
+
+
+@pytest.mark.parametrize("cls", [FinalizeLibraryResult, ShutdownParams, ShutdownResult, ExitParams])
+def test_empty_termination_payloads_roundtrip(cls: type) -> None:
+    # The empty handshake payloads serialize to {} and decode back to an instance.
+    assert as_json(cls()) == "{}"
+    assert isinstance(from_dict({}, cls), cls)

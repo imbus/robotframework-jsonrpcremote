@@ -156,6 +156,11 @@ class ShutdownResult:
 
 
 @dataclass
+class ExitParams:
+    pass
+
+
+@dataclass
 class RunKeywordParams:
     library_token: str
     name: str

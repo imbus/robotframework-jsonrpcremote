@@ -11,6 +11,7 @@ from jsonrpcpeer import JsonRpcPeer
 from .__version__ import __version__
 from ._endpoint import RobotServerEndpoint
 from ._runner import RobotRemoteContext
+from ._signals import patch_robot_signal_handling
 
 DEFAULT_PORT = 8271
 
@@ -71,6 +72,9 @@ async def handle_client(
         logger.exception("Error handling client %s", addr)
         raise
     finally:
+        # Release any libraries this client imported from the shared keyword store,
+        # in case it disconnected without the finalize/shutdown/exit handshake.
+        await endpoint.finalize_all()
         endpoint.cleanup()
         logger.debug("Client %s disconnected", addr)
         if not writer.is_closing():
@@ -320,6 +324,11 @@ def run() -> None:
     if get_server() is None:
         logger.error("Server failed to start.")
         return
+
+    # Let SIGINT/SIGTERM stop the embedded Robot runner gracefully instead of Robot's
+    # noisy "Second signal will force exit." abort. The hook loop ends normally and the
+    # process exits cleanly.
+    patch_robot_signal_handling(remote_context.stop)
 
     try:
         remote_context.run()

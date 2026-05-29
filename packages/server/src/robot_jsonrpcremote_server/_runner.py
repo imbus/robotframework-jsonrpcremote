@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime
 import io
 import sys
@@ -127,6 +128,25 @@ def _robot_run_keyword(
     return cast(AnyType, value_to_jsonable(r))
 
 
+def _robot_finalize_library(library_token: str) -> None:
+    context: "running.context._ExecutionContext" = running.context.EXECUTION_CONTEXTS.current
+    if context is None:
+        raise RuntimeError("No execution context available for finalizing library.")
+
+    # Libraries are imported under their token into the shared keyword store
+    # (keyed by name == alias == token). Dropping the entry releases the instance.
+    store = context.namespace._kw_store
+    lib = store.libraries.pop(library_token, None)
+    if lib is None:
+        return
+
+    # Best-effort: let the library's scope manager tear the instance down.
+    scope_manager = getattr(lib, "scope_manager", None)
+    if scope_manager is not None:
+        with contextlib.suppress(Exception):
+            scope_manager.end_suite()
+
+
 class LogMessageSubscriber(Protocol):
     def log_message(self, message: str, level: str, html: bool, timestamp: datetime.datetime) -> None: ...
 
@@ -246,3 +266,14 @@ class RobotRemoteContext:
         self._command_queue.put((lambda: _robot_run_keyword(library_token, name, args, kwargs), future, subscriber))
 
         return await asyncio.wrap_future(future)
+
+    async def finalize_library(
+        self, library_token: str, subscriber: LogMessageSubscriber | None = None
+    ) -> None:
+        if threading.current_thread() == self._runner_thread:
+            raise RuntimeError("finalize_library cannot be called from the runner thread.")
+
+        future: Future[None] = Future()
+        self._command_queue.put((lambda: _robot_finalize_library(library_token), future, subscriber))
+
+        await asyncio.wrap_future(future)

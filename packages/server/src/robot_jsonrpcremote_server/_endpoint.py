@@ -7,11 +7,17 @@ from typing import Any
 
 from jsonrpcpeer import JsonRpcPeer, rpc_notification, rpc_request
 from robot_jsonrpcremote_protocol import (
+    EXIT_NOTIFICATION,
+    FINALIZE_LIBRARY_REQUEST,
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
+    SHUTDOWN_REQUEST,
+    ExitParams,
+    FinalizeLibraryParams,
+    FinalizeLibraryResult,
     ImportLibraryParams,
     ImportLibraryResult,
     InitializedParams,
@@ -24,6 +30,8 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordResult,
     ServerCapabilities,
     ServerInfo,
+    ShutdownParams,
+    ShutdownResult,
 )
 
 from .__version__ import __version__
@@ -67,6 +75,10 @@ class RobotServerEndpoint:
         # per-endpoint counter keeps them readable and unique per import.
         self._endpoint_id = uuid.uuid4().hex[:8]
         self._token_ids = _library_token_id()
+        # Tokens of libraries imported on this connection, so they can be finalized
+        # on disconnect (the keyword store is shared across connections).
+        self._imported_tokens: set[str] = set()
+        self._shutdown_received: bool = False
         self._registered = True
         self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
 
@@ -141,6 +153,7 @@ class RobotServerEndpoint:
         init_args += [f"{name}={value}" for name, value in (params.kw_args or {}).items()]
 
         lib_definition = await self.remote_context.import_library(lib_name, init_args, token, subscriber=self)
+        self._imported_tokens.add(token)
         return ImportLibraryResult(
             token=token,
             definition=lib_definition,
@@ -160,3 +173,39 @@ class RobotServerEndpoint:
         except Exception as e:
             logger.exception("Error executing keyword '%s': %s", params.name, e)
             return RunKeywordResult(error=RunKeywordError(message=str(e)))
+
+    @rpc_request(FINALIZE_LIBRARY_REQUEST)
+    async def finalize_library(self, params: FinalizeLibraryParams) -> FinalizeLibraryResult:
+        logger.debug("Finalizing library token: %s", params.token)
+        await self.remote_context.finalize_library(params.token, subscriber=self)
+        self._imported_tokens.discard(params.token)
+        return FinalizeLibraryResult()
+
+    @rpc_request(SHUTDOWN_REQUEST)
+    async def shutdown(self, params: ShutdownParams) -> ShutdownResult:
+        # Graceful shutdown handshake: the client signals it is about to close.
+        # The `exit` notification follows to actually close the connection.
+        logger.debug("Shutdown requested by client.")
+        self._shutdown_received = True
+        return ShutdownResult()
+
+    @rpc_notification(EXIT_NOTIFICATION)
+    async def exit(self, params: ExitParams) -> None:
+        # Close only this connection (multi-client server). Feeding EOF lets the
+        # peer's read loop finish cleanly. We deliberately do NOT call peer.stop()
+        # here, since that would cancel this very handler task.
+        logger.debug("Exit notification received; closing connection.")
+        peer = self.rpc_peer
+        if peer is not None:
+            peer.running = False
+            peer.reader.feed_eof()
+
+    async def finalize_all(self) -> None:
+        """Finalize every library still imported on this connection (called on disconnect)."""
+        for token in list(self._imported_tokens):
+            try:
+                await self.remote_context.finalize_library(token, subscriber=self)
+            except Exception:
+                logger.debug("Failed to finalize library token '%s' on disconnect", token, exc_info=True)
+            finally:
+                self._imported_tokens.discard(token)

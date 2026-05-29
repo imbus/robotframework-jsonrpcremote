@@ -11,6 +11,8 @@ class ServerControl:
 
     def __init__(self) -> None:
         self._process: "subprocess.Popen[bytes] | None" = None
+        self._last_returncode: "int | None" = None
+        self._killed: bool = False
 
     def start_jsonrpc_server(
         self,
@@ -38,18 +40,34 @@ class ServerControl:
         self._wait_for_port("127.0.0.1", int(port), float(timeout))
 
     def stop_jsonrpc_server(self) -> None:
-        """Terminate the server subprocess, killing it if it does not stop in time."""
+        """Terminate the server subprocess, killing it if it does not stop in time.
+
+        Records the exit code and whether a ``kill()`` fallback was needed, so tests can
+        assert the server shut down gracefully (exit code 0, no kill).
+        """
         if self._process is None:
             return
 
+        self._killed = False
         self._process.terminate()
         try:
-            self._process.wait(timeout=10)
+            self._last_returncode = self._process.wait(timeout=10)
         except subprocess.TimeoutExpired:
+            self._killed = True
             self._process.kill()
-            self._process.wait(timeout=10)
+            self._last_returncode = self._process.wait(timeout=10)
         finally:
             self._process = None
+
+    def get_server_exit_code(self) -> int:
+        """Return the exit code recorded by the last ``stop_jsonrpc_server`` call."""
+        if self._last_returncode is None:
+            raise RuntimeError("Server has not been stopped yet")
+        return self._last_returncode
+
+    def server_was_killed(self) -> bool:
+        """Return whether the last stop needed a ``kill()`` fallback (i.e. ungraceful)."""
+        return self._killed
 
     def _wait_for_port(self, host: str, port: int, timeout: float) -> None:
         deadline = time.monotonic() + timeout

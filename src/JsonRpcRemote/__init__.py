@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import weakref
 from collections.abc import Mapping, Sequence
 from enum import Enum
@@ -14,15 +15,21 @@ from jsonrpcpeer import JsonRpcPeer
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from jsonrpcpeer.peer import rpc_notification
 from robot_jsonrpcremote_protocol import (
+    EXIT_NOTIFICATION,
+    FINALIZE_LIBRARY_REQUEST,
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
+    SHUTDOWN_REQUEST,
     ArgumentDefinition,
     ArgumentKind,
     ClientCapabilities,
     ClientInfo,
+    ExitParams,
+    FinalizeLibraryParams,
+    FinalizeLibraryResult,
     ImportLibraryParams,
     ImportLibraryResult,
     InitializedParams,
@@ -35,6 +42,8 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordResult,
     ServerCapabilities,
     ServerInfo,
+    ShutdownParams,
+    ShutdownResult,
 )
 
 from .__version__ import __version__
@@ -44,6 +53,10 @@ class _ClientEndpoint:
     def __init__(self) -> None:
         self.callback_loop: asyncio.AbstractEventLoop | None = None
         self.rpc_peer: JsonRpcPeer | None = None
+        # Set after initialize/import so the graceful teardown can finalize the
+        # library and decide whether the server supports the exit notification.
+        self.library_token: str | None = None
+        self.server_capabilities: ServerCapabilities | None = None
 
     @rpc_notification(LOG_NOTIFICATION)
     async def _log_notification(self, params: LogParams) -> None:
@@ -111,6 +124,49 @@ class _ClientEndpoint:
             RunKeywordParams(library_token=library_token, name=name, args=args, kwargs=named),
         )
 
+    async def finalize_library(self, token: str) -> FinalizeLibraryResult:
+        if self.rpc_peer is None:
+            raise RuntimeError("RPC peer is not initialized yet")
+
+        return await self.rpc_peer.send_request_typed(
+            FinalizeLibraryResult,
+            FINALIZE_LIBRARY_REQUEST,
+            FinalizeLibraryParams(token=token),
+        )
+
+    async def shutdown(self) -> ShutdownResult:
+        if self.rpc_peer is None:
+            raise RuntimeError("RPC peer is not initialized yet")
+
+        return await self.rpc_peer.send_request_typed(ShutdownResult, SHUTDOWN_REQUEST, ShutdownParams())
+
+    async def exit(self) -> None:
+        if self.rpc_peer is None:
+            raise RuntimeError("RPC peer is not initialized yet")
+
+        await self.rpc_peer.send_notification(EXIT_NOTIFICATION, ExitParams())
+
+    async def graceful_shutdown(self, timeout: float | None) -> None:
+        """Best-effort protocol teardown: finalize_library -> shutdown -> exit.
+
+        Runs while a session is being stopped. It must neither hang (the peer has no
+        request timeout) nor raise (it may run from a finalizer or with a half-closed
+        connection), so every step is time-bounded and its errors are suppressed.
+        """
+        if self.rpc_peer is None:
+            return
+
+        if self.library_token is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self.finalize_library(self.library_token), timeout)
+
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self.shutdown(), timeout)
+
+        if self.server_capabilities is not None and self.server_capabilities.support_exit:
+            with contextlib.suppress(Exception):
+                await self.exit()
+
 
 class _SessionResources:
     """Mutable runtime state shared with the session finalizer.
@@ -120,12 +176,13 @@ class _SessionResources:
     alive and prevent the finalizer from ever running on garbage collection.
     """
 
-    __slots__ = ("loop", "peer", "thread")
+    __slots__ = ("endpoint", "loop", "peer", "thread")
 
     def __init__(self) -> None:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.peer: JsonRpcPeer | None = None
         self.thread: Thread | None = None
+        self.endpoint: _ClientEndpoint | None = None
 
 
 def _finalize_session(resources: _SessionResources, timeout: float | None) -> None:
@@ -135,6 +192,12 @@ def _finalize_session(resources: _SessionResources, timeout: float | None) -> No
     if peer is None or loop is None:
         return
     try:
+        # Best-effort graceful protocol teardown (finalize/shutdown/exit) while the
+        # connection is still alive, before tearing down the transport.
+        endpoint = resources.endpoint
+        if endpoint is not None:
+            with contextlib.suppress(Exception):
+                asyncio.run_coroutine_threadsafe(endpoint.graceful_shutdown(timeout), loop).result(timeout)
         asyncio.run_coroutine_threadsafe(peer.stop(), loop).result(timeout)
         if resources.thread is not None:
             resources.thread.join(timeout)
@@ -142,6 +205,7 @@ def _finalize_session(resources: _SessionResources, timeout: float | None) -> No
         resources.loop = None
         resources.peer = None
         resources.thread = None
+        resources.endpoint = None
 
 
 class _Session:
@@ -170,6 +234,7 @@ class _Session:
         self.last_error: BaseException | None = None
 
         self.client_endpoint = _ClientEndpoint()
+        self._res.endpoint = self.client_endpoint
 
     @property
     def peer(self) -> JsonRpcPeer:
@@ -229,6 +294,7 @@ class _Session:
 
         self.server_capabilities = initialize_result.capabilities
         self.server_info = initialize_result.server_info
+        self.client_endpoint.server_capabilities = initialize_result.capabilities
 
         await self.client_endpoint.initialized()
 
@@ -239,6 +305,7 @@ class _Session:
         )
         self.library_definition = import_result.definition
         self.library_token = import_result.token
+        self.client_endpoint.library_token = import_result.token
 
     async def create_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         # TODO: support other URI schemes and connection types (e.g., named pipes, sockets, stdio etc.)
