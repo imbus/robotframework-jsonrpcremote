@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import enum
 import functools
@@ -8,6 +10,7 @@ import pickle
 import re
 import types
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -28,6 +31,10 @@ from typing import (
     get_type_hints,
     overload,
 )
+
+if TYPE_CHECKING:
+    from typing_extensions import TypeForm
+
 
 __all__ = [
     "CamelSnakeMixin",
@@ -364,7 +371,7 @@ def __get_signature_keys_cached(t: Type[Any], signature: inspect.Signature) -> S
 
 
 @overload
-def from_dict(value: Any, types: type[_T], /, *, strict: bool = ...) -> _T: ...
+def from_dict(value: Any, types: None = ..., /, *, strict: bool = ...) -> Any: ...
 
 
 @overload
@@ -372,7 +379,7 @@ def from_dict(value: Any, types: tuple[type[_T], ...], /, *, strict: bool = ...)
 
 
 @overload
-def from_dict(value: Any, types: object = ..., /, *, strict: bool = ...) -> Any: ...
+def from_dict(value: Any, types: TypeForm[_T], /, *, strict: bool = ...) -> _T: ...
 
 
 def from_dict(
@@ -500,14 +507,26 @@ def from_dict(
     )
 
 
+@overload
+def from_json(s: Union[str, bytes], types: None = ..., /, *, strict: bool = ...) -> Any: ...
+
+
+@overload
+def from_json(s: Union[str, bytes], types: tuple[type[_T], ...], /, *, strict: bool = ...) -> _T: ...
+
+
+@overload
+def from_json(s: Union[str, bytes], types: TypeForm[_T], /, *, strict: bool = ...) -> _T: ...
+
+
 def from_json(
     s: Union[str, bytes],
-    types: Union[Type[_T], Tuple[Type[_T], ...], None] = None,
+    types: Any = None,
     /,
     *,
     strict: bool = False,
-) -> _T:
-    return cast(_T, from_dict(json.loads(s), types, strict=strict))
+) -> Any:
+    return from_dict(json.loads(s), types, strict=strict)
 
 
 def as_dict(value: Any, *, remove_defaults: bool = False, encode: bool = True) -> Dict[str, Any]:

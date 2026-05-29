@@ -96,6 +96,7 @@ def test_from_dict_strict_disables_coercion() -> None:
 def test_from_dict_optional() -> None:
     assert from_dict(None, Optional[int]) is None
     assert from_dict(7, Optional[int]) == 7
+    assert from_dict(1, int | None) == 1
 
 
 def test_from_dict_union() -> None:

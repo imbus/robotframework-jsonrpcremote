@@ -21,7 +21,6 @@ keywords = [
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -71,6 +70,7 @@ simple-robot-jsonrpcserver = { workspace = true }
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",
+    "pyright>=1.1.409",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "robotcode[runner]>=2.1.0",
@@ -153,6 +153,7 @@ disallow_untyped_calls = false
 disallow_subclassing_any = false
 explicit_package_bases = true
 namespace_packages = true
+enable_incomplete_feature = ["TypeForm"]
 exclude = [
     '^\.mypy_cache/',
     '^\.venv/',
