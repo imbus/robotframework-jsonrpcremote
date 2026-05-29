@@ -5,6 +5,7 @@ packages can be imported through --pythonpath, (b) init-argument types survive t
 JSON-RPC round trip, and (c) server --variable settings reach keyword execution.
 """
 
+from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
 
 
@@ -30,3 +31,24 @@ class ServerProbeLib:
     def get_robot_variable(self, name: str) -> object:
         """Returns the value of the Robot variable ``${name}`` from the server context."""
         return BuiltIn().get_variable_value("${" + name + "}")
+
+    def echo_value(self, value: object) -> object:
+        """Returns the given value unchanged (for argument/return round-trip tests)."""
+        return value
+
+    def type_name_of(self, value: object) -> str:
+        """Returns the type name of the value as it arrived on the server."""
+        return type(value).__name__
+
+    def format_pair(self, first: object, second: object) -> str:
+        """Joins two (possibly named) arguments, for keyword-call kwargs tests."""
+        return f"{first}/{second}"
+
+    def fail_with(self, message: str) -> None:
+        """Raises an error, to check that failures propagate back to the client."""
+        raise RuntimeError(message)
+
+    def emit_log(self, message: str) -> str:
+        """Logs a message on the server; it should be forwarded to the client."""
+        logger.info(message)
+        return message
