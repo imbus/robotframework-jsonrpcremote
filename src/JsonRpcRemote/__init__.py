@@ -117,7 +117,7 @@ class _Session:
         self,
         uri: str,
         library_name: str | None,
-        library_args: set[Any] | None,
+        library_args: Sequence[Any] | None,
         library_kw_args: dict[str, Any] | None,
         timeout: float | None = 30.0,
     ) -> None:
@@ -305,7 +305,7 @@ class JsonRpcRemote:
     def _start_session(self) -> _Session:
         if self.__session is None:
             self.__session = _Session(
-                self._uri, self._library_name, set(self._library_args), self._library_kw_args, self._timeout
+                self._uri, self._library_name, self._library_args, self._library_kw_args, self._timeout
             )
 
             self.__session.start()
