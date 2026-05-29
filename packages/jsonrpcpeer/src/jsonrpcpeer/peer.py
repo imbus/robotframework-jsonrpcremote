@@ -128,6 +128,7 @@ class JsonRpcPeer:
         self.running = False
         self._completion_future: asyncio.Future[bool] = asyncio.Future()
         self._read_task: asyncio.Task[None] | None = None
+        self._inflight: set[asyncio.Future[Any]] = set()
 
         # JSON serialization options
         self.indent_json = None
@@ -163,7 +164,15 @@ class JsonRpcPeer:
                 await self._read_task
             except asyncio.CancelledError:
                 pass
+        await self._cancel_inflight()
         await self.completion
+
+    async def _cancel_inflight(self) -> None:
+        tasks = list(self._inflight)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def run(self) -> None:
         self.start()
@@ -322,7 +331,9 @@ class JsonRpcPeer:
                 body_bytes = await self.reader.readexactly(content_length)
 
                 message = body_bytes.decode(encoding)
-                asyncio.create_task(self.handle_message(message))
+                task = asyncio.create_task(self.handle_message(message))
+                self._inflight.add(task)
+                task.add_done_callback(self._inflight.discard)
 
         except asyncio.IncompleteReadError as e:
             if e.partial or not self.reader.at_eof():
