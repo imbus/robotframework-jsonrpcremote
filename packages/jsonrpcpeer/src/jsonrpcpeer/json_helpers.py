@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import dataclasses
 import enum
 import functools
@@ -10,7 +8,6 @@ import pickle
 import re
 import types
 from typing import (
-    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -32,9 +29,7 @@ from typing import (
     overload,
 )
 
-if TYPE_CHECKING:
-    from typing_extensions import TypeForm
-
+from typing_extensions import TypeForm
 
 __all__ = [
     "CamelSnakeMixin",

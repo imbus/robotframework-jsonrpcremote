@@ -30,7 +30,7 @@ classifiers = [
     "Typing :: Typed",
     "Intended Audience :: Developers",
 ]
-dependencies = []
+dependencies = ["typing_extensions>=4.13.0"]
 
 [project.urls]
 Homepage = "https://github.com/imbus/robotframework-jsonrpcremote"
