@@ -26,6 +26,7 @@ from typing import (
     get_args,
     get_origin,
     get_type_hints,
+    overload,
 )
 
 __all__ = [
@@ -227,11 +228,11 @@ def _get_signature_cached(t: Type[Any]) -> inspect.Signature:
 def _from_dict_with_name(
     name: str,
     value: Any,
-    types: Union[Type[_T], Tuple[Type[_T], ...], None] = None,
+    types: Any = None,
     /,
     *,
     strict: bool = False,
-) -> _T:
+) -> Any:
     try:
         return from_dict(value, types, strict=strict)
     except NamedTypeError as e:
@@ -362,20 +363,36 @@ def __get_signature_keys_cached(t: Type[Any], signature: inspect.Signature) -> S
     return r
 
 
+@overload
+def from_dict(value: Any, types: type[_T], /, *, strict: bool = ...) -> _T: ...
+
+
+@overload
+def from_dict(value: Any, types: tuple[type[_T], ...], /, *, strict: bool = ...) -> _T: ...
+
+
+@overload
+def from_dict(value: Any, types: object = ..., /, *, strict: bool = ...) -> Any: ...
+
+
 def from_dict(
     value: Any,
-    types: Union[Type[_T], Tuple[Type[_T], ...], None] = None,
+    types: Any = None,
     /,
     *,
     strict: bool = False,
-) -> _T:
+) -> Any:
+    # NOTE: `types` is typed as `Any` here on purpose. The overloads above give
+    # callers precise inference for plain classes and tuples of classes, while
+    # still accepting typing special forms (Optional[int], Literal[...], list[int],
+    # unions, ...) which are not `type[...]` and would otherwise be rejected.
     if types is None:
-        return cast(_T, value)
+        return value
 
     if not isinstance(types, tuple):
         types = (types,)
     if not types:
-        return cast(_T, value)
+        return value
 
     for t in types:
         func = __from_dict_handlers_cache.get(t, __NOT_SET)
@@ -391,12 +408,12 @@ def from_dict(
         if func is None:
             continue
 
-        r, ok = func(value, t, strict)  # type: ignore
+        r, ok = func(value, t, strict)  # type: ignore[operator]
         if ok:
-            return cast(_T, r)
+            return r
 
     if isinstance(value, Mapping):
-        match_: Optional[Type[_T]] = None
+        match_: Optional[Type[Any]] = None
         match_same_keys: Optional[Set[str]] = None
         match_value: Optional[Dict[str, Any]] = None
         match_signature: Optional[inspect.Signature] = None
@@ -411,7 +428,7 @@ def from_dict(
             if origin is Literal:
                 continue
 
-            cased_value: Dict[str, Any] = {_decode_case_for_member_name(t, k): v for k, v in value.items()}  # type: ignore[arg-type]
+            cased_value: Dict[str, Any] = {_decode_case_for_member_name(t, k): v for k, v in value.items()}
 
             type_hints = _get_type_hints_cached(origin or t)
             try:
@@ -490,7 +507,7 @@ def from_json(
     *,
     strict: bool = False,
 ) -> _T:
-    return from_dict(json.loads(s), types, strict=strict)
+    return cast(_T, from_dict(json.loads(s), types, strict=strict))
 
 
 def as_dict(value: Any, *, remove_defaults: bool = False, encode: bool = True) -> Dict[str, Any]:
