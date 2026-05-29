@@ -44,7 +44,10 @@ robot-jsonrpcremote-server [options] LIBRARY [LIBRARY ...]
 - `--port PORT`: TCP port (default `8271` or `ROBOT_JSONRPC_PORT`).
 - `--mode {tcp,pipe}`: Server mode (`tcp` today; `pipe`/`stdio` not implemented yet).
 - `--pipe-name NAME`: Pipe name for future pipe mode (default `robot_jsonrpcremote_pipe` or `ROBOT_JSONRPC_PIPE_NAME`).
-- `--pythonpath/-P PATH`: Additional entries added to `PYTHONPATH` before importing libraries.
+- `--pythonpath/-P PATH` (repeatable): Additional directories made importable before loading libraries, like robot's `--pythonpath`. Lets you serve libraries that live outside the installed packages.
+- `--variable name:value` (repeatable): Set an individual Robot variable, like robot's `--variable`. (No `-v` alias here, since `-v` is `--verbose`.)
+- `--variablefile/-V PATH` (repeatable): Load variables from a file, like robot's `--variablefile`.
+- `--outputdir/-d DIR`: Directory for Robot output files, like robot's `--outputdir`.
 - `-v/--verbose`: Enable debug logging.
 - `--version`: Show version.
 - Positional `LIBRARY`: One or more libraries allowed to load. If provided, only these are accepted by clients.

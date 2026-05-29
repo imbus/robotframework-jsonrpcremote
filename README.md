@@ -27,7 +27,8 @@ The project is organized as a monorepo managed by [uv](https://github.com/astral
 *   **`packages/jsonrpcpeer`**: An asynchronous JSON-RPC 2.0 peer implementation using `asyncio`.
 *   **`packages/server`**: Server runtime components to host library code.
 *   **`src/JsonRpcRemote`**: The Robot Framework Client Library (Proxy).
-*   **`examples/`**: Usage examples and integration tests.
+*   **`examples/`**: Runnable usage examples (e.g. a minimal server).
+*   **`tests/`**: Unit tests (`tests/unit`, pytest) and Robot Framework integration tests (`tests/robot`).
 
 ## Requirements
 
@@ -50,11 +51,11 @@ Import the `JsonRpcRemote` library in your Robot Framework test suite and specif
 
 ```robot
 *** Settings ***
-Library    JsonRpcRemote    uri=tcp://127.0.0.1:8888
+Library    JsonRpcRemote    uri=tcp://127.0.0.1:8271    library_name=MyLibrary
 
 *** Test Cases ***
 Example Test
-    ${result}=    Echo    Hello World
+    ${result}=    My Keyword    Hello World
     Should Be Equal    ${result}    Hello World
 ```
 
@@ -64,13 +65,18 @@ Example Test
 *   `rpc_timeout`: Connection timeout in seconds (default: `10.0`).
 *   `rpc_scope`: The scope of the remote session (`TEST`, `SUITE`, `GLOBAL`). Default is `SUITE`.
 *   `*args`: Positional arguments passed to the remote library initialization.
-*   `**kwargs`: Keyword arguments passed to the remote library initialization.
+*   `**kwargs`: Keyword arguments for the remote library initialization (sent as Robot `name=value` arguments and converted server-side via the library's `__init__` signature).
 
 ### Server
 
-To implement a server, you can use the provided server packages.
+The simplest option is the ready-made server package, which hosts your existing Robot Framework libraries without code changes:
 
-For a complete runnable example, please check the `examples/simple-robot-jsonrpcserver` directory in this repository.
+```bash
+pip install robotframework-jsonrpcremote-server
+robot-jsonrpcremote-server --port 8271 MyLibrary
+```
+
+See [`packages/server`](packages/server) for all CLI options. For a hand-written server, check the `examples/simple-robot-jsonrpcserver` directory in this repository.
 
 ## Development
 
