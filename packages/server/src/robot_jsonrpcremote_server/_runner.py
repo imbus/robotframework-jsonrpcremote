@@ -200,10 +200,10 @@ class RobotRemoteContext:
 
         suite = TestSuite.from_model(model)
         suite.configure(**settings.suite_config)
-        result = suite.run(settings)
+        run_result = suite.run(settings)
 
         if settings.log or settings.report or settings.xunit:
-            writer = ResultWriter(settings.output if settings.log else result)
+            writer = ResultWriter(settings.output if settings.log else run_result)
             writer.write_results(settings.get_rebot_settings())
 
     def stop(self) -> None:

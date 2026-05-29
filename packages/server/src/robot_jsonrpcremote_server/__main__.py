@@ -294,7 +294,7 @@ def run() -> None:
     _server_started_event.wait(5)
     logger.info("Server is up and running. Press Ctrl+C to stop.")
 
-    if _server is None:
+    if get_server() is None:
         logger.error("Server failed to start.")
         return
 

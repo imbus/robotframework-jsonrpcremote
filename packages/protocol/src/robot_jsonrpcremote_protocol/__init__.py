@@ -21,6 +21,7 @@ class ArgumentKind(str, Enum):
     NAMED_ONLY = "NAMED_ONLY"
     VAR_NAMED = "VAR_NAMED"
 
+    @staticmethod
     def from_value(value: str) -> "ArgumentKind":
         for kind in ArgumentKind:
             if kind.value == value:

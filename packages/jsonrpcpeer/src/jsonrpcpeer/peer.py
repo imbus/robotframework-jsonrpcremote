@@ -65,6 +65,15 @@ class JsonRpcErrorResponse(JsonResponseBase):
     id: str | int | None
 
 
+def _error_from_dict(error_data: dict[str, Any]) -> JsonRpcError:
+    """Build a JsonRpcError from an inbound dict, ignoring any unexpected keys."""
+    return JsonRpcError(
+        code=error_data.get("code", JsonRpcErrorCode.INTERNAL_ERROR),
+        message=str(error_data.get("message", "")),
+        data=error_data.get("data"),
+    )
+
+
 class JsonRpcInvalidRequestError(Exception):
     error_code = JsonRpcErrorCode.INVALID_REQUEST
 
@@ -79,7 +88,7 @@ THandlerCallable: TypeAlias = (
 
 
 @dataclass(slots=True)
-class _HanderEntry:
+class _HandlerEntry:
     handler: THandlerCallable
     param_type: Type[Any]
     pass_peer: bool = True
@@ -118,12 +127,11 @@ class JsonRpcPeer:
         self.default_encoding = default_encoding
         self.auto_close = auto_close
 
-        self._request_handlers: dict[str, _HanderEntry] = {}
-        self._notification_handlers: dict[str, _HanderEntry] = {}
+        self._request_handlers: dict[str, _HandlerEntry] = {}
+        self._notification_handlers: dict[str, _HandlerEntry] = {}
 
         self._pending_requests: dict[str | int, asyncio.Future[Any]] = {}
         self._id_counter = 1
-        self._id_lock = asyncio.Lock()
 
         self.running = False
         self._completion_future: asyncio.Future[bool] = asyncio.Future()
@@ -211,7 +219,7 @@ class JsonRpcPeer:
 
         param_type, pass_peer = self._get_and_check_handler_param_type(handler)
 
-        self._request_handlers[method_name] = _HanderEntry(handler=handler, param_type=param_type, pass_peer=pass_peer)
+        self._request_handlers[method_name] = _HandlerEntry(handler=handler, param_type=param_type, pass_peer=pass_peer)
 
     def register_notification_handler(
         self,
@@ -226,7 +234,7 @@ class JsonRpcPeer:
 
         param_type, pass_peer = self._get_and_check_handler_param_type(handler)
 
-        self._notification_handlers[method_name] = _HanderEntry(
+        self._notification_handlers[method_name] = _HandlerEntry(
             handler=handler, param_type=param_type, pass_peer=pass_peer
         )
 
@@ -262,11 +270,9 @@ class JsonRpcPeer:
     ) -> T:
         tcs: asyncio.Future[Any] = asyncio.Future()
 
-        async with self._id_lock:
-            id_str = str(self._id_counter)
-            self._id_counter += 1
-
-            self._pending_requests[id_str] = tcs
+        id_str = str(self._id_counter)
+        self._id_counter += 1
+        self._pending_requests[id_str] = tcs
 
         message = JsonRpcRequest(method=method, id=id_str)
         message.jsonrpc = PROTOCOL_VERSION
@@ -288,8 +294,7 @@ class JsonRpcPeer:
 
             return from_dict(response.result, response_type)
         finally:
-            async with self._id_lock:
-                self._pending_requests.pop(id_str, None)
+            self._pending_requests.pop(id_str, None)
 
     async def io_loop(self) -> None:
         try:
@@ -360,6 +365,18 @@ class JsonRpcPeer:
             json_element = json.loads(json_str)
 
             if isinstance(json_element, list):
+                if not json_element:
+                    await self._send_message(
+                        JsonRpcErrorResponse(
+                            id=None,
+                            error=JsonRpcError(
+                                code=JsonRpcErrorCode.INVALID_REQUEST,
+                                message="Invalid Request: batch must not be empty",
+                            ),
+                        )
+                    )
+                    return
+
                 responses = []
 
                 for element in json_element:
@@ -431,12 +448,12 @@ class JsonRpcPeer:
             case {"id": id_value} if "method" not in json_element:
                 return await self._handle_response(json_element, id_value)
 
-            case {"id": id_value, "method": _} if id_value is not None:
-                request = JsonRpcRequest(**json_element)
+            case {"id": id_value, "method": method_name} if id_value is not None:
+                request = JsonRpcRequest(method=method_name, id=id_value, params=json_element.get("params"))
                 return await self.process_request(request)
 
-            case {"method": _}:
-                notification = JsonRpcNotification(**json_element)
+            case {"method": method_name}:
+                notification = JsonRpcNotification(method=method_name, params=json_element.get("params"))
                 return await self.process_notification(notification)
 
             case _:
@@ -455,13 +472,12 @@ class JsonRpcPeer:
 
         tcs = None
         if id_value is not None:
-            async with self._id_lock:
-                tcs = self._pending_requests.pop(id_value, None)
+            tcs = self._pending_requests.pop(id_value, None)
 
         if tcs is not None:
             match json_element:
                 case {"error": error_data}:
-                    error = JsonRpcError(**error_data)
+                    error = _error_from_dict(error_data)
                     tcs.set_exception(
                         Exception(
                             f"RPC Error {error.code}: {error.message}" + (f" ({error.data})" if error.data else "")
@@ -479,7 +495,7 @@ class JsonRpcPeer:
 
         # Handle error with null ID
         if id_value is None and "error" in json_element:
-            error = JsonRpcError(**json_element["error"])
+            error = _error_from_dict(json_element["error"])
             self.logger.warning(
                 "Received error with null ID: %s: %s (%s)",
                 error.code,
@@ -491,7 +507,7 @@ class JsonRpcPeer:
 
     async def _call_handler(
         self,
-        handler: _HanderEntry,
+        handler: _HandlerEntry,
         params: Any,
     ) -> Any:
         if handler.pass_peer:

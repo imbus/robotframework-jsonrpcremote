@@ -179,10 +179,9 @@ async def test_non_dict_payload() -> None:
     assert resp.error.code == JsonRpcErrorCode.INVALID_REQUEST
 
 
-# --- planned fixes: currently xfail, flip to passing when implemented -------
+# --- malformed batch / extra fields (N1, N2) --------------------------------
 
 
-@pytest.mark.xfail(reason="N1: empty batch array should return an Invalid Request error", strict=False)
 async def test_empty_batch_returns_error() -> None:
     peer = make_peer()
     sent: list[Any] = []
@@ -197,7 +196,6 @@ async def test_empty_batch_returns_error() -> None:
     assert sent[0].error.code == JsonRpcErrorCode.INVALID_REQUEST
 
 
-@pytest.mark.xfail(reason="N2: unknown request fields should not surface as INTERNAL_ERROR", strict=False)
 async def test_request_with_extra_field_error_code() -> None:
     peer = make_peer()
     sent: list[Any] = []
