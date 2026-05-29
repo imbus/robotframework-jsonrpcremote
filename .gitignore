@@ -32,3 +32,7 @@ results/
 # Ignore temporary files
 *.tmp
 playwright-log.txt
+
+.agents/
+
+playground/
