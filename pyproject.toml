@@ -52,7 +52,7 @@ server = ["robotframework-jsonrpcremote-server"]
 
 
 [build-system]
-requires = ["uv_build>=0.9.17,<0.10.0"]
+requires = ["uv_build>=0.9.17,<0.12.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
@@ -71,6 +71,8 @@ simple-robot-jsonrpcserver = { workspace = true }
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
     "robotcode[runner]>=2.1.0",
     "robotframework-robocop>=7.0.0",
     "robotremoteserver>=1.1.1",
@@ -160,6 +162,7 @@ exclude = [
     "^out/",
     "^playground/",
     "^scripts/",
+    "^tests/",
 ]
 mypy_path = [
     "typings",
@@ -171,6 +174,11 @@ mypy_path = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["robot.*", "robotremoteserver.*", "debugpy.*", "robocop.*", "pluggy"]
+module = ["robot.*"]
 ignore_missing_imports = true
 no_implicit_reexport = false
+
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests/unit"]
