@@ -134,8 +134,12 @@ class RobotServerEndpoint:
         logger.debug("Importing library: %s", lib_name)
         token = f"{lib_name}_{self._endpoint_id}_{next(self._token_ids)}"
 
+        # Pass init arguments through with their JSON types intact (Robot still
+        # converts strings according to the library's signature). kw_args are not
+        # forwarded: Robot Framework does not support keyword arguments on library
+        # import yet (see RobotRemoteContext._robot_import_library).
         lib_definition = await self.remote_context.import_library(
-            lib_name, list(str(a) for a in params.args or []), token, subscriber=self
+            lib_name, list(params.args or []), token, subscriber=self
         )
         return ImportLibraryResult(
             token=token,

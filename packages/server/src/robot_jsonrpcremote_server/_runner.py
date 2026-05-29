@@ -45,7 +45,7 @@ class _HookListener(ListenerV3):
         self._log_message_callable(message)
 
 
-def _robot_import_library(library_token: str | None, name: str, args: Sequence[str]) -> LibraryDefinition:
+def _robot_import_library(library_token: str | None, name: str, args: Sequence[Any]) -> LibraryDefinition:
     context: "running.context._ExecutionContext" = running.context.EXECUTION_CONTEXTS.current
     if context is None:
         raise RuntimeError("No execution context available for importing library.")
@@ -210,7 +210,7 @@ class RobotRemoteContext:
         self._stopped.set()
 
     async def import_library(
-        self, name: str, args: Sequence[str], library_token: str, subscriber: LogMessageSubscriber | None = None
+        self, name: str, args: Sequence[Any], library_token: str, subscriber: LogMessageSubscriber | None = None
     ) -> LibraryDefinition:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("import_library cannot be called from the runner thread.")

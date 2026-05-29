@@ -30,3 +30,14 @@ class Echo:
         """
         print(f"Echo called with message: {message}, args: {args}, kwargs: {kwargs}")
         return f"echo: {message}"
+
+    def get_init_args(self) -> list[object]:
+        """Returns the positional arguments this library instance was initialized with."""
+        return list(self.args)
+
+    def get_init_arg_types(self) -> list[str]:
+        """Returns the type names of the positional init arguments.
+
+        Useful to verify that argument types survive the JSON-RPC round trip.
+        """
+        return [type(arg).__name__ for arg in self.args]
