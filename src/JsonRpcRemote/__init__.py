@@ -301,7 +301,7 @@ class JsonRpcRemote:
         *library_args: Any,
         rpc_timeout: float = 10.0,
         rpc_scope: SessionScope = SessionScope.SUITE,
-        # **library_kw_args: Any,
+        **library_kw_args: Any,
     ) -> None:
         self._uri = uri
         self._timeout = rpc_timeout
@@ -309,7 +309,7 @@ class JsonRpcRemote:
 
         self._library_name = library_name
         self._library_args = library_args
-        self._library_kw_args = None
+        self._library_kw_args = library_kw_args or None
 
         self.__session: _Session | None = None
 

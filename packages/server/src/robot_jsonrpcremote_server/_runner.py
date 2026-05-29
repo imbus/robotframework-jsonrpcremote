@@ -51,7 +51,8 @@ def _robot_import_library(library_token: str | None, name: str, args: Sequence[A
     if context is None:
         raise RuntimeError("No execution context available for importing library.")
 
-    # TODO: Support kwargs when Robot Framework supports it
+    # Named init args arrive as "name=value" entries in `args`; Robot resolves
+    # and converts them against the library's __init__ signature.
     context.namespace.import_library(name, args, library_token)
 
     lib: "running.TestLibrary" = context.namespace._kw_store.get_library(library_token or name)

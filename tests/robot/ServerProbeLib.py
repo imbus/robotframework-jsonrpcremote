@@ -11,8 +11,9 @@ from robot.libraries.BuiltIn import BuiltIn
 class ServerProbeLib:
     ROBOT_LIBRARY_SCOPE = "TEST"
 
-    def __init__(self, *args: object) -> None:
+    def __init__(self, *args: object, **kwargs: object) -> None:
         self._init_args = list(args)
+        self._init_kwargs = dict(kwargs)
 
     def get_init_args(self) -> list[object]:
         """Returns the positional arguments this library was initialized with."""
@@ -21,6 +22,10 @@ class ServerProbeLib:
     def get_init_arg_types(self) -> list[str]:
         """Returns the type names of the positional init arguments."""
         return [type(arg).__name__ for arg in self._init_args]
+
+    def get_init_kwargs(self) -> dict[str, object]:
+        """Returns the keyword arguments this library was initialized with."""
+        return dict(self._init_kwargs)
 
     def get_robot_variable(self, name: str) -> object:
         """Returns the value of the Robot variable ``${name}`` from the server context."""
