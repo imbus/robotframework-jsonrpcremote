@@ -78,16 +78,6 @@ robot-jsonrpcremote-server --port 8271 MyLibrary
 
 See [`packages/server`](packages/server) for all CLI options. For a hand-written server, check the `examples/simple-robot-jsonrpcserver` directory in this repository.
 
-## Development
-
-This project uses `uv` for dependency management.
-
-1.  **Setup**: `uv sync --all-extras --all-packages --dev`
-2.  **Run Tests**:
-    *   Unit tests: `uv run pytest`
-    *   Integration tests (each suite starts its own server): `uv run robotcode run`
-3.  **Build**: `uv build --all-packages`
-
 ## License
 
 This project is licensed under the Apache-2.0 License.

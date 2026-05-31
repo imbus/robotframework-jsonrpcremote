@@ -59,16 +59,6 @@ robot-jsonrpcremote-server [options] LIBRARY [LIBRARY ...]
 - `ROBOT_JSONRPC_PORT`: Default port.
 - `ROBOT_JSONRPC_PIPE_NAME`: Default pipe name placeholder.
 
-
-## Development
-
-From the repo root:
-
-```bash
-uv sync --all-extras --all-packages --dev
-uv build --all-packages
-```
-
 ## License
 
 Apache-2.0
