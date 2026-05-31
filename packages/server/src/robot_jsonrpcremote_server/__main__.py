@@ -56,7 +56,10 @@ def set_server(value: asyncio.AbstractServer | None) -> None:
 
 async def handle_client(
     remote_context: RobotRemoteContext,
-    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, verbose: bool, libraries: Sequence[str] | None
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    verbose: bool,
+    libraries: Sequence[str] | None,
 ) -> None:
     addr = writer.get_extra_info("peername")
     logger.debug("Client connected from %s", addr)

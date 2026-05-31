@@ -53,7 +53,5 @@ async def main() -> None:
     await peer.send_notification("log", {"message": "Client connected!"})
 
 
-
-
 if __name__ == "__main__":
     asyncio.run(main())

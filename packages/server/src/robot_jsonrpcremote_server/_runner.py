@@ -267,9 +267,7 @@ class RobotRemoteContext:
 
         return await asyncio.wrap_future(future)
 
-    async def finalize_library(
-        self, library_token: str, subscriber: LogMessageSubscriber | None = None
-    ) -> None:
+    async def finalize_library(self, library_token: str, subscriber: LogMessageSubscriber | None = None) -> None:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("finalize_library cannot be called from the runner thread.")
 
