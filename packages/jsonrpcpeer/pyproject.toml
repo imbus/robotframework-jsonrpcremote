@@ -1,6 +1,6 @@
 [project]
 name = "jsonrpcpeer"
-version = "0.1.0"
+version = "0.2.0"
 description = "A JSON-RPC peer implementation for Python."
 readme = "README.md"
 authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]

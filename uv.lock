@@ -324,7 +324,7 @@ wheels = [
 
 [[package]]
 name = "jsonrpcpeer"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/jsonrpcpeer" }
 dependencies = [
     { name = "typing-extensions" },
@@ -991,7 +991,7 @@ wheels = [
 
 [[package]]
 name = "robotframework-jsonrpcremote"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "jsonrpcpeer" },
@@ -1043,12 +1043,12 @@ dev = [
 
 [[package]]
 name = "robotframework-jsonrpcremote-protocol"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/protocol" }
 
 [[package]]
 name = "robotframework-jsonrpcremote-server"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/server" }
 dependencies = [
     { name = "jsonrpcpeer" },
