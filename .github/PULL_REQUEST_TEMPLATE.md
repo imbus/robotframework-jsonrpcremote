@@ -21,7 +21,7 @@
 - [ ] The change is focused on a single concern (no unrelated refactors or formatting noise).
 - [ ] Tests for the change have been added or updated, and `uv run pytest` (plus `uv run robotcode run` where relevant) passes locally.
 - [ ] `uv run ruff check .` and `uv run ruff format --check .` pass.
-- [ ] `uv run mypy src packages/*/src examples/*/src tests/unit` passes.
+- [ ] `uv run mypy` passes.
 - [ ] Documentation has been updated where relevant (package READMEs, code comments, main README).
 - [ ] Commits follow [Conventional Commits](../CONTRIBUTING.md#commit-messages) and are [cryptographically signed](../CONTRIBUTING.md#signed-commits-required) (`git commit -S`, GPG/SSH).
 

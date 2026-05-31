@@ -1,6 +1,6 @@
 [project]
 name = "robotframework-jsonrpcremote"
-version = "0.2.0"
+version = "0.1.0"
 description = "A client implementation for Robot Framework JSON-RPC remote protocol."
 readme = "README.md"
 authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]
@@ -69,7 +69,9 @@ simple-robot-jsonrpcserver = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "commitizen>=4.16.3",
     "mypy>=1.19.1",
+    "pre-commit>=4.6.0",
     "pyright>=1.1.409",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -154,6 +156,14 @@ disallow_subclassing_any = false
 explicit_package_bases = true
 namespace_packages = true
 enable_incomplete_feature = ["TypeForm"]
+files = [
+    "src",
+    "packages/jsonrpcpeer/src",
+    "packages/protocol/src",
+    "packages/server/src",
+    "examples/simple-robot-jsonrpcserver/src",
+    "tests/unit",
+]
 exclude = [
     '^\.mypy_cache/',
     '^\.venv/',
@@ -169,7 +179,7 @@ mypy_path = [
     "packages/jsonrpcpeer/src",
     "packages/protocol/src",
     "packages/server/src",
-    "examples/simple_robot_jsonrpcserver/src",
+    "examples/simple-robot-jsonrpcserver/src",
 ]
 
 [[tool.mypy.overrides]]
@@ -181,3 +191,29 @@ no_implicit_reexport = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests/unit"]
+
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"
+version_scheme = "pep440"
+tag_format = "v$version"
+major_version_zero = true
+update_changelog_on_bump = true
+changelog_incremental = true
+annotated_tag = true
+gpg_sign = true
+bump_message = "chore(release): bump version $current_version → $new_version"
+# `cz bump` keeps the four core packages on a single shared version. The root
+# package version (robotframework-jsonrpcremote) is updated via version_provider;
+# version_files updates the other package versions and every __version__.py.
+# The example under examples/ is versioned independently and bumped by hand.
+version_files = [
+    "src/JsonRpcRemote/__version__.py",
+    "packages/jsonrpcpeer/pyproject.toml:^version",
+    "packages/jsonrpcpeer/src/jsonrpcpeer/__version__.py",
+    "packages/protocol/pyproject.toml:^version",
+    "packages/protocol/src/robot_jsonrpcremote_protocol/__version__.py",
+    "packages/server/pyproject.toml:^version",
+    "packages/server/src/robot_jsonrpcremote_server/__version__.py",
+]

@@ -1,6 +1,6 @@
 [project]
 name = "robotframework-jsonrpcremote-server"
-version = "0.2.0"
+version = "0.1.0"
 description = "A server implementation for Robot Framework JSON-RPC remote protocol."
 readme = "README.md"
 authors = [{ name = "Daniel Biehl", email = "dbiehl@live.de" }]

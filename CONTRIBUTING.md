@@ -21,11 +21,13 @@ And if you like the project, but just don't have time to contribute, that's fine
   - [Suggesting Enhancements](#suggesting-enhancements)
   - [Your First Code Contribution](#your-first-code-contribution)
     - [Development Environment Setup](#development-environment-setup)
+    - [Pre-commit Hooks](#pre-commit-hooks)
     - [Project Structure](#project-structure)
     - [Development Workflow](#development-workflow)
     - [Running Tests](#running-tests)
     - [Linting and Type Checking](#linting-and-type-checking)
     - [Building the Packages](#building-the-packages)
+    - [Releasing (Maintainers)](#releasing-maintainers)
     - [Pull Request Guidelines](#pull-request-guidelines)
     - [Troubleshooting Development Setup](#troubleshooting-development-setup)
   - [Improving The Documentation](#improving-the-documentation)
@@ -146,7 +148,28 @@ This project is a [uv](https://github.com/astral-sh/uv) workspace (monorepo). Al
    uv sync --all-extras --all-packages --dev
    ```
 
-   `uv sync` creates a `.venv` and installs the client, all workspace packages (`packages/*`), the example server, and the development tools (pytest, ruff, mypy, robotcode, robocop, ...). Prefix commands with `uv run` to run them inside that environment, or activate it with `source .venv/bin/activate`.
+   `uv sync` creates a `.venv` and installs the client, all workspace packages (`packages/*`), the example server, and the development tools (pytest, ruff, mypy, robotcode, robocop, pre-commit, commitizen, ...). Prefix commands with `uv run` to run them inside that environment, or activate it with `source .venv/bin/activate`.
+
+3. **Install the pre-commit hooks:**
+   ```bash
+   uv run pre-commit install
+   ```
+
+   This installs the `pre-commit`, `commit-msg`, and `pre-push` git hooks. See [Pre-commit Hooks](#pre-commit-hooks) for what they run.
+
+#### Pre-commit Hooks
+
+The repository ships a [`.pre-commit-config.yaml`](.pre-commit-config.yaml) that runs the same checks locally and automatically that are expected on a pull request:
+
+- **commit-msg:** [commitizen](https://commitizen-tools.github.io/commitizen/) checks that the commit message follows [Conventional Commits](#commit-messages).
+- **pre-commit:** Ruff lint (`ruff check`), a Ruff formatting check (`ruff format --check`, which only verifies formatting without changing files), and mypy type checking run on the staged files.
+- **pre-push:** commitizen validates the commit messages of the range being pushed.
+
+The local hooks call the project's pinned tools via `uv run`, so they use the same Ruff and mypy versions as everything else in the project. Install the hooks once with `uv run pre-commit install` (see step 3 above). To run all hooks manually against the whole repository:
+
+```bash
+uv run pre-commit run --all-files
+```
 
 #### Project Structure
 
@@ -166,7 +189,7 @@ The repository is a uv workspace organized into a client library, several suppor
 2. **Make your changes** following the project's coding standards.
 3. **Run the unit tests:** `uv run pytest`
 4. **Run the integration tests:** `uv run robotcode run`
-5. **Run linting and type checks:** `uv run ruff check .` and `uv run mypy src packages/*/src examples/*/src tests/unit` (see [Linting and Type Checking](#linting-and-type-checking)).
+5. **Run linting and type checks:** `uv run ruff check .` and `uv run mypy` (see [Linting and Type Checking](#linting-and-type-checking)).
 6. **Fix formatting:** `uv run ruff format .`
 7. **Commit your changes** with a descriptive, [Conventional Commits](#commit-messages) message, [cryptographically signed](#signed-commits-required) (`git commit -S`).
 8. **Push and create a pull request.**
@@ -209,10 +232,10 @@ uv run ruff format .           # apply formatting
 
 **Type checking (mypy, strict):**
 ```bash
-uv run mypy src packages/*/src examples/*/src tests/unit
+uv run mypy
 ```
 
-> mypy has no default target configured, so pass the source directories explicitly as shown above. `pyright` is also available in the dev dependencies for editor integration, but mypy is the authoritative type-check gate.
+> The check targets are configured via `files` in `[tool.mypy]` (in [`pyproject.toml`](pyproject.toml)), so `uv run mypy` with no arguments checks the whole project. `pyright` is also available in the dev dependencies for editor integration, but mypy is the authoritative type-check gate.
 
 **Robot Framework style (optional, for `tests/robot`):**
 ```bash
@@ -230,6 +253,33 @@ uv build --all-packages
 
 The build output is written to the `dist/` directory.
 
+#### Releasing (Maintainers)
+
+Releases are driven by [commitizen](https://commitizen-tools.github.io/commitizen/), which derives the next version from the [Conventional Commits](#commit-messages) made since the last release. The four core packages (client, protocol, peer, server) share a single version: `cz bump` updates the root version, the other package versions, and every `__version__.py` together. The example under [`examples/`](examples) is versioned independently and bumped by hand.
+
+Because the project is still in the `0.x` range (`major_version_zero`), a `feat:` bumps the minor version and a `fix:` bumps the patch version; breaking changes also bump the minor version (not the major).
+
+Preview the next version and the changelog entry without changing anything:
+
+```bash
+uv run cz bump --dry-run
+```
+
+When you are happy with the preview, perform the bump:
+
+```bash
+uv run cz bump
+```
+
+This updates the version across all core packages, writes/updates [`CHANGELOG.md`](CHANGELOG.md), creates a `chore(release): ...` commit, and creates a signed, annotated git tag `v<version>`. Review the result, then push the commit together with the tag:
+
+```bash
+git push --follow-tags
+```
+
+> [!NOTE]
+> On the very first bump (no tags yet), commitizen asks "Is this the first tag created?" — answer yes. In a non-interactive shell, pass `--yes`.
+
 #### Pull Request Guidelines
 
 When you open a pull request, GitHub will pre-fill the [pull request template](.github/PULL_REQUEST_TEMPLATE.md). Please keep its checklist intact and tick the boxes that apply.
@@ -241,7 +291,7 @@ Before submitting your pull request, make sure that:
 - [ ] The change is **focused** on a single concern (no unrelated refactors or formatting noise).
 - [ ] **Tests** for the change have been added or updated, and `uv run pytest` (plus `uv run robotcode run` where relevant) passes locally.
 - [ ] **Linting** passes: `uv run ruff check .` and `uv run ruff format --check .`.
-- [ ] **Type checking** passes: `uv run mypy src packages/*/src examples/*/src tests/unit`.
+- [ ] **Type checking** passes: `uv run mypy`.
 - [ ] **Documentation** has been updated where relevant (package READMEs, code comments, main README).
 - [ ] **Commits** follow [Conventional Commits](#commit-messages) and are [cryptographically signed](#signed-commits-required) (`git commit -S`, GPG/SSH).
 - [ ] **AI / tooling disclosure** is included if AI tools or automated agents were used for a substantial part of the change (see [AI_POLICY.md](AI_POLICY.md)).
@@ -274,10 +324,7 @@ A good PR description:
    - Make sure you synced with all packages: `uv sync --all-extras --all-packages --dev`.
    - Run tests through `uv run` so they use the project `.venv`.
 
-3. **mypy reports "Missing target module, package, files, or command":**
-   - mypy needs explicit targets. Use the command from [Linting and Type Checking](#linting-and-type-checking).
-
-4. **VS Code doesn't find the interpreter:**
+3. **VS Code doesn't find the interpreter:**
    - Select the `.venv` interpreter via the Command Palette → "Python: Select Interpreter".
 
 ### Improving The Documentation
@@ -297,7 +344,11 @@ For small fixes, edit the file and submit a pull request. For larger changes, op
 ## Styleguides
 ### Commit Messages
 
-Good commit messages help maintain a clean project history. Please follow [Conventional Commits](https://www.conventionalcommits.org/).
+Good commit messages help maintain a clean project history. Please follow [Conventional Commits](https://www.conventionalcommits.org/). The format is enforced by the [commitizen](https://commitizen-tools.github.io/commitizen/) `commit-msg` hook (see [Pre-commit Hooks](#pre-commit-hooks)). You can also let commitizen build the message interactively:
+
+```bash
+uv run cz commit
+```
 
 #### Format
 
@@ -331,6 +382,7 @@ The scope should indicate the package or area affected:
 - **tests:** Tests
 - **docs:** Documentation
 - **build:** Build, packaging, or tooling
+- **release:** Version bumps (used by `cz bump`)
 
 #### Examples
 
