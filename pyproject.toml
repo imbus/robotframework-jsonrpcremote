@@ -217,3 +217,10 @@ version_files = [
     "packages/server/pyproject.toml:^version",
     "packages/server/src/robot_jsonrpcremote_server/__version__.py",
 ]
+# Keep uv.lock in sync with the bumped package versions and include it in the
+# release commit (pre_bump_hooks run after version files are updated, before the
+# commit is created).
+pre_bump_hooks = [
+    "uv lock",
+    "git add uv.lock",
+]
