@@ -27,6 +27,7 @@ Keyword Runs Against The Isolated Server
 Server Stops Gracefully On Termination
     [Documentation]    SIGTERM is handled by the patched signal monitor: the runner stops,
     ...                the suite finishes, and the process exits 0 without a kill() fallback.
+    [Tags]    posix    # SIGTERM/graceful shutdown is POSIX-only; Windows terminate() is a hard kill.
     Stop Jsonrpc Server
     ${code}=    Get Server Exit Code
     Should Be Equal As Integers    ${code}    0
