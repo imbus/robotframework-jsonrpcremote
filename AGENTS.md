@@ -46,8 +46,8 @@ All commands run inside the project environment via `uv run` (or after activatin
 	- Lint.
 - `uv run ruff format .` / `uv run ruff format --check .`
 	- Apply / verify formatting.
-- `uv run mypy src packages/*/src examples/*/src tests/unit`
-	- Type checking (strict). mypy has no default target, so pass the source directories explicitly. This is the authoritative type-check gate.
+- `uv run mypy`
+	- Type checking (strict). Targets are configured via `files` in `[tool.mypy]`, so no arguments are needed. This is the authoritative type-check gate.
 - `uv run robocop check` / `uv run robocop format`
 	- Lint / format the `.robot` files in `tests/robot/` (optional).
 - `uv build --all-packages`
@@ -65,5 +65,5 @@ These rules are required by the contribution guide; follow them for every change
 ## Agent Notes
 
 - Make small, focused changes and avoid unrelated refactors.
-- Before opening a PR, make sure `uv run pytest`, `uv run ruff check .`, and `uv run mypy ...` pass; run `uv run robotcode run` for changes that affect client/server behavior.
+- Before opening a PR, make sure `uv run --all-packages pytest`, `uv run ruff check .`, and `uv run mypy` pass; run `uv run --all-packages robotcode run` for changes that affect client/server behavior.
 - Update [CONTRIBUTING.md](CONTRIBUTING.md) when contributor rules change; update this file when the orientation, task routing, or common commands change.
