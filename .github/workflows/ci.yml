@@ -54,20 +54,13 @@ jobs:
       - name: Unit tests
         run: uv run pytest
 
-      # The stdio server transport is POSIX-only (the Windows asyncio loop cannot
-      # attach to stdin), so its e2e suites are tagged `posix` and excluded on Windows.
-      # The native Windows guard behaviour is covered by the pytest run above.
+      # paths, output-dir and the Windows-only exclude come from robot.toml.
       - name: Robot integration tests
-        if: runner.os != 'Windows'
-        run: uv run robotcode run --outputdir robot-results tests/robot
-
-      - name: Robot integration tests (stdio suites excluded)
-        if: runner.os == 'Windows'
-        run: uv run robotcode run --exclude posix --outputdir robot-results tests/robot
+        run: uv run robotcode run
 
       - name: Upload Robot results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: robot-results-${{ matrix.os }}
-          path: robot-results/
+          path: results/
