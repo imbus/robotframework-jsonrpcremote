@@ -5,15 +5,35 @@ these cover the URI parsing / error branches and the subprocess wiring in isolat
 """
 
 import asyncio
+import os
 import sys
+import time
 
 import pytest
 
 from JsonRpcRemote import _Session
 
+# tests/robot holds StdioEchoLib, which the spawned server imports via --pythonpath.
+_ROBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "robot"))
+
 
 def _make_session(uri: str, timeout: float = 5.0) -> _Session:
     return _Session(uri, None, None, None, timeout)
+
+
+def _stdio_server_command(library: str) -> str:
+    return f"{sys.executable} -m robot_jsonrpcremote_server --stdio --pythonpath {_ROBOT_DIR} {library}"
+
+
+def _wait_pid_gone(pid: int, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
 
 
 async def test_create_connection_rejects_unknown_scheme() -> None:
@@ -44,3 +64,31 @@ async def test_stdio_uri_spawns_process_and_returns_streams() -> None:
         process.kill()
         await process.wait()
         writer.close()
+
+
+async def test_stdio_bad_command_raises_os_error() -> None:
+    # A server command that cannot be exec'd surfaces as an OSError at connect time
+    # (which the session stores in last_error and re-raises to the caller).
+    session = _make_session("stdio:definitely-not-a-real-server-binary-xyz --stdio Lib")
+    with pytest.raises(FileNotFoundError):
+        await session.create_connection()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stdio server transport is POSIX-only")
+def test_stdio_session_spawns_and_reaps_server() -> None:
+    # Full session against a real stdio server: spawn, handshake, then ensure the
+    # subprocess is reaped on teardown (no orphan, returncode set).
+    session = _Session(f"stdio:{_stdio_server_command('StdioEchoLib')}", "StdioEchoLib", (), None, 20.0)
+    session.start()
+    assert session.initialized.wait(20)
+    assert session.last_error is None
+
+    # A successful handshake (initialized, no error) means the server was alive.
+    process = session._res.process
+    assert process is not None
+    pid = process.pid
+
+    session.stop()
+
+    assert process.returncode is not None  # reaped on teardown
+    assert _wait_pid_gone(pid), f"server subprocess {pid} still alive after teardown"

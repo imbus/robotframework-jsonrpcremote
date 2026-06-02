@@ -2,7 +2,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -235,3 +235,43 @@ async def test_param_conversion_failure_is_invalid_params() -> None:
     resp = await peer.process_request(JsonRpcRequest(method="add", id=1, params={"total": "not-an-int"}))
     assert isinstance(resp, JsonRpcErrorResponse)
     assert resp.error.code == JsonRpcErrorCode.INVALID_PARAMS
+
+
+# --- auto-close cleanup robustness (stdio write pipe) -----------------------
+
+
+class _WriterWithoutCloseWaiter:
+    """A writer whose wait_closed() raises, like the asyncio stdout write pipe.
+
+    The stdio transport's stdout writer (FlowControlMixin protocol) has no close
+    waiter, so wait_closed() raises NotImplementedError.
+    """
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def is_closing(self) -> bool:
+        return self.closed
+
+    async def wait_closed(self) -> None:
+        raise NotImplementedError("write pipe has no close waiter")
+
+
+async def test_io_loop_suppresses_wait_closed_errors() -> None:
+    # On EOF the io_loop closes the writer and awaits wait_closed(); a writer that
+    # raises there must not surface as an unretrieved task exception on shutdown.
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = _WriterWithoutCloseWaiter()
+
+    peer = JsonRpcPeer(reader, cast("asyncio.StreamWriter", writer))
+    await asyncio.wait_for(peer.run(), 2)
+
+    # The read task (which runs io_loop) must finish cleanly despite wait_closed().
+    assert peer._read_task is not None
+    await asyncio.wait_for(peer._read_task, 2)
+    assert peer._read_task.exception() is None
+    assert writer.closed

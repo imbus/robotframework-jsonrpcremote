@@ -4,6 +4,7 @@ Documentation     End-to-end keyword execution over the stdio transport: the Jso
 ...               No separate server start/stop is needed -- the client owns the process.
 Variables         stdio_vars.py
 Library           JsonRpcRemote    stdio:${SERVER_COMMAND}    StdioEchoLib
+Test Tags         posix
 
 
 *** Test Cases ***

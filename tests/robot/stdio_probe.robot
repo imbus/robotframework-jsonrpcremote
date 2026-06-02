@@ -5,6 +5,7 @@ Documentation     The stdio transport carries the full protocol surface -- not j
 Variables         stdio_vars.py
 Library           LogCapture.py
 Library           JsonRpcRemote    stdio:${PROBE_SERVER_COMMAND}    ServerProbeLib
+Test Tags         posix
 
 
 *** Test Cases ***

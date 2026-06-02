@@ -7,6 +7,7 @@ without a running Robot suite.
 """
 
 import asyncio
+import sys
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -141,6 +142,14 @@ async def test_stdio_server_stops_via_stop_server(
 
 async def test_stdio_streams_raises_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.platform", "win32")
+    with pytest.raises(RuntimeError, match="not supported on Windows"):
+        await server_main._stdio_streams()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="exercises the real Windows behavior; runs only on Windows")
+async def test_stdio_streams_raises_on_windows_native() -> None:
+    # No monkeypatching: on a real Windows runner the POSIX pipe wiring is unavailable
+    # and _stdio_streams must fail with the documented, actionable error.
     with pytest.raises(RuntimeError, match="not supported on Windows"):
         await server_main._stdio_streams()
 
