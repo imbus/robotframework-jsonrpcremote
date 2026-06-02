@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import shlex
 import weakref
 from collections.abc import Mapping, Sequence
 from enum import Enum
@@ -176,13 +177,15 @@ class _SessionResources:
     alive and prevent the finalizer from ever running on garbage collection.
     """
 
-    __slots__ = ("endpoint", "loop", "peer", "thread")
+    __slots__ = ("endpoint", "loop", "peer", "process", "thread")
 
     def __init__(self) -> None:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.peer: JsonRpcPeer | None = None
         self.thread: Thread | None = None
         self.endpoint: _ClientEndpoint | None = None
+        # Set for the stdio transport, which spawns the server as a subprocess.
+        self.process: asyncio.subprocess.Process | None = None
 
 
 def _finalize_session(resources: _SessionResources, timeout: float | None) -> None:
@@ -202,10 +205,17 @@ def _finalize_session(resources: _SessionResources, timeout: float | None) -> No
         if resources.thread is not None:
             resources.thread.join(timeout)
     finally:
+        # Backstop: a stdio subprocess is normally reaped by close_connection on the
+        # loop thread. If that never ran (e.g. a wedged loop), don't leak the child.
+        process = resources.process
+        if process is not None and process.returncode is None:
+            with contextlib.suppress(Exception):
+                process.kill()
         resources.loop = None
         resources.peer = None
         resources.thread = None
         resources.endpoint = None
+        resources.process = None
 
 
 class _Session:
@@ -308,26 +318,78 @@ class _Session:
         self.client_endpoint.library_token = import_result.token
 
     async def create_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        # TODO: support other URI schemes and connection types (e.g., named pipes, sockets, stdio etc.)
+        # TODO: support further URI schemes/transports (named pipes, unix sockets, websockets).
         parsed_uri = urlparse(self._uri)
-        if parsed_uri.scheme != "tcp":
-            raise ValueError(f"Unsupported URI scheme: {parsed_uri.scheme}")
 
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(
-                parsed_uri.hostname,
-                parsed_uri.port if parsed_uri.port is not None else 8271,
+        if parsed_uri.scheme == "tcp":
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    parsed_uri.hostname,
+                    parsed_uri.port if parsed_uri.port is not None else 8271,
+                ),
+                timeout=self._timeout,
+            )
+            return reader, writer
+
+        if parsed_uri.scheme == "stdio":
+            return await self._create_stdio_connection()
+
+        raise ValueError(f"Unsupported URI scheme '{parsed_uri.scheme}'; supported schemes are 'tcp' and 'stdio'.")
+
+    async def _create_stdio_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """Spawn the server as a subprocess and talk to it over its stdin/stdout.
+
+        The URI is ``stdio:<command line>`` (an optional leading ``//`` is ignored);
+        the command -- including ``--stdio`` and the allowlist libraries -- is parsed
+        with shlex. The child's stderr is inherited so its logs reach the user.
+        """
+        rest = self._uri[len("stdio:") :]
+        if rest.startswith("//"):
+            rest = rest[2:]
+        argv = shlex.split(rest)
+        if not argv:
+            raise ValueError(
+                "stdio URI must include a server command, e.g. 'stdio:robot-jsonrpcremote-server --stdio Lib'."
+            )
+
+        process = await asyncio.wait_for(
+            asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
             ),
             timeout=self._timeout,
         )
+        self._res.process = process
 
-        return reader, writer
+        # PIPE for stdin/stdout guarantees both streams exist.
+        assert process.stdout is not None
+        assert process.stdin is not None
+        return process.stdout, process.stdin
 
     async def close_connection(self) -> None:
         if self._res.peer is not None:
             self._res.peer.reader.feed_eof()
             self._res.peer.writer.close()
-            await self._res.peer.writer.wait_closed()
+            with contextlib.suppress(Exception):
+                await self._res.peer.writer.wait_closed()
+
+        # For the stdio transport, closing the writer above sent EOF to the server's
+        # stdin so it shuts itself down. Reap the subprocess, escalating to
+        # terminate/kill if it does not exit within the timeout.
+        process = self._res.process
+        if process is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(process.wait(), self._timeout)
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.terminate()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(process.wait(), self._timeout)
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+            self._res.process = None
 
     def start(self) -> None:
         if self._res.thread is not None and self._res.thread.is_alive():

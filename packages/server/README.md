@@ -9,7 +9,7 @@ A **Robot Framework Remote Server** powered by **JSON-RPC 2.0**. It hosts your e
 * **Live logging:** Forwards Robot log messages to the connected client while keywords execute.
 * **Efficient core:** Designed for multiple concurrent clients.
 * **Scoped imports:** Restrict which libraries may be imported by passing them explicitly on startup.
-* **Configurable transport:** TCP is implemented today; pipe/stdio modes are wired but not implemented yet.
+* **Configurable transport:** TCP and stdio are implemented today; the pipe mode is wired but not implemented yet.
 
 ## Installation
 
@@ -34,6 +34,25 @@ Then point your client library to `tcp://<host>:8271`:
 Library    JsonRpcRemote    uri=tcp://127.0.0.1:8271    library_name=MyLibrary
 ```
 
+## Quick start (stdio)
+
+In stdio mode the server serves a **single client** over its stdin/stdout, so the client
+launches it as a subprocess (LSP-style) -- no network port required. The client supplies the
+full command via a `stdio:<command>` URI:
+
+```robot
+*** Settings ***
+Library    JsonRpcRemote    uri=stdio:robot-jsonrpcremote-server --stdio MyLibrary    library_name=MyLibrary
+```
+
+**Notes for stdio mode:**
+
+- **POSIX only.** The Windows asyncio event loop cannot attach to stdin; the server raises a
+  clear error there. Use TCP on Windows.
+- **Keep stdout clean.** stdout carries the JSON-RPC frames. The server's own logs go to
+  stderr, but a hosted keyword library that `print()`s to stdout will corrupt the stream --
+  route such output to stderr (or use Robot's logging) instead.
+
 ## CLI options
 
 ```text
@@ -42,7 +61,8 @@ robot-jsonrpcremote-server [options] LIBRARY [LIBRARY ...]
 
 - `--bind ADDRESS` (repeatable): Address(es) to bind. Defaults to `127.0.0.1`. Also accepts comma-separated `ROBOT_JSONRPC_BIND`.
 - `--port PORT`: TCP port (default `8271` or `ROBOT_JSONRPC_PORT`).
-- `--mode {tcp,pipe}`: Server mode (`tcp` today; `pipe`/`stdio` not implemented yet).
+- `--mode {tcp,stdio,pipe}`: Server mode (`tcp` and `stdio` today; `pipe` not implemented yet). `--tcp`/`--stdio` are aliases.
+- `--stdio`: Serve a single client over stdin/stdout (POSIX only). Alias for `--mode stdio`.
 - `--pipe-name NAME`: Pipe name for future pipe mode (default `robot_jsonrpcremote_pipe` or `ROBOT_JSONRPC_PIPE_NAME`).
 - `--pythonpath/-P PATH` (repeatable): Additional directories made importable before loading libraries, like robot's `--pythonpath`. Lets you serve libraries that live outside the installed packages.
 - `--variable name:value` (repeatable): Set an individual Robot variable, like robot's `--variable`. (No `-v` alias here, since `-v` is `--verbose`.)
