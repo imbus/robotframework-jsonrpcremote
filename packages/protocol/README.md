@@ -47,7 +47,7 @@ Since JSON-RPC is based on JSON, all data types must be JSON-serializable.
 
 ### Extended Type Serialization
 
-To ensure consistent handling of types not natively supported by JSON, the following serialization conventions **must** be used by both client and server:
+To exchange types not natively supported by JSON **across languages** (e.g. a server written in Rust passing rich type information to the Python client, instead of being limited to JSON's native types), the protocol defines these language-agnostic conventions:
 
 *   **Date/Time (`datetime`, `date`, `time`)**: Serialize as **ISO 8601** strings (e.g., `"2025-12-18T14:30:00+00:00"`).
 *   **Binary Data (`bytes`, `bytearray`)**: Serialize as **Base64** encoded strings.
@@ -58,9 +58,13 @@ To ensure consistent handling of types not natively supported by JSON, the follo
     *   If the receiver needs to reconstruct the specific object type, the dictionary **should** include a special discriminator field, such as `__type__` or `_type`, containing the type name.
     *   Example: `{"__type__": "MyCustomObject", "id": 1, "name": "foo"}`.
 
-### Type Resolution Strategy
+> **Implementation status:** the Python reference implementation currently uses a Python-specific representation for non-JSON-native values; encoding and decoding the language-agnostic conventions above (and the type resolution below) is not yet implemented there.
 
-Since type names are transmitted as strings (e.g., in `ArgumentDefinition.type`), implementations must map these strings back to actual language-specific types.
+### Type Resolution Strategy (planned, not implemented)
+
+> **Not implemented.** This is a design idea for resolving the string type names in `ArgumentDefinition.type` back to concrete types. Today those names are transmitted as **informational hints only** — no FQN/`importlib` resolution happens on either side.
+
+Since type names are transmitted as strings (e.g., in `ArgumentDefinition.type`), implementations could map these strings back to actual language-specific types.
 
 *   **Standard Types**: Implementations should automatically map common type names (e.g., `"str"`, `"int"`, `"bool"`, `"datetime"`, `"UUID"`) to their corresponding language types.
 *   **Custom Types**: For custom objects, the type name should be the **Fully Qualified Name (FQN)** of the type (e.g., `package.module.ClassName`).
@@ -120,7 +124,11 @@ The following data classes define the payload for requests and responses.
     *   `name`: `str` - The name of the library.
     *   `keywords`: `list[KeywordDefinition]` - A list of keywords provided by the library.
     *   `doc`: `str` (optional) - Documentation for the library.
+    *   `doc_format`: `str` (optional) - The documentation format (e.g., `ROBOT`, `REST`, `HTML`, `TEXT`).
+    *   `scope`: `str` (optional) - The library scope (`GLOBAL`, `SUITE`, `TEST`).
+    *   `version`: `str` (optional) - The library version.
     *   `source`: `str` (optional) - Path to the library source file (if available).
+    *   `lineno`: `int` (optional) - Line number where the library is defined.
 
 *   **`KeywordDefinition`**
     *   `name`: `str` - The name of the keyword.
@@ -133,11 +141,14 @@ The following data classes define the payload for requests and responses.
 *   **`ArgumentDefinition`**
     *   `name`: `str` - The name of the argument.
     *   `type`: `str` (optional) - The type of the argument (e.g., type hint).
+    *   `has_default`: `bool` (optional) - Whether the argument has a default value. When `true`, `default` holds it (which may be `null`).
     *   `default`: `AnyType` (optional) - The default value of the argument, if any.
-    *   `required`: `bool` (optional) - Whether the argument is required (default: `true`). If `false`, `default` contains the default value (which may be `null`).
+    *   `required`: `bool` (optional) - Reserved; currently always `true`. Use `has_default` to detect optional arguments.
     *   `kind`: `str` (optional) - The kind of the argument. Can be one of:
         *   `"POSITIONAL_ONLY"`
         *   `"POSITIONAL_OR_NAMED"`
+        *   `"POSITIONAL_ONLY_MARKER"` (the `/` separator)
+        *   `"NAMED_ONLY_MARKER"` (the `*` separator)
         *   `"VAR_POSITIONAL"` (`*args`)
         *   `"NAMED_ONLY"`
         *   `"VAR_NAMED"` (`**kwargs`)
