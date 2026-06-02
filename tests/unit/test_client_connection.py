@@ -44,6 +44,7 @@ async def test_stdio_uri_requires_a_command() -> None:
         await session.create_connection()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
 async def test_stdio_uri_spawns_process_and_returns_streams() -> None:
     command = f'{sys.executable} -c "import sys; sys.stdin.read()"'
     session = _make_session(f"stdio:{command}")
