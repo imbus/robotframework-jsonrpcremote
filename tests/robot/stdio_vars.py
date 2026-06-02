@@ -10,4 +10,7 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-SERVER_COMMAND = f"{sys.executable} -m robot_jsonrpcremote_server --stdio --pythonpath {_HERE} StdioEchoLib"
+_BASE = f"{sys.executable} -m robot_jsonrpcremote_server --stdio --pythonpath {_HERE}"
+
+SERVER_COMMAND = f"{_BASE} StdioEchoLib"
+PROBE_SERVER_COMMAND = f"{_BASE} ServerProbeLib"

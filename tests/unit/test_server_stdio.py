@@ -102,6 +102,43 @@ async def test_stdio_server_initializes_and_stops_runner_on_eof(
     assert server_main._server_stop_event.is_set()
 
 
+async def test_stdio_server_stops_via_stop_server(
+    loopback_pair: tuple[
+        tuple[asyncio.StreamReader, asyncio.StreamWriter], tuple[asyncio.StreamReader, asyncio.StreamWriter]
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SIGINT/SIGTERM path: stop_server() must tear down stdio without an EOF."""
+    (server_streams, (_client_reader, client_writer)) = loopback_pair
+
+    async def fake_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        return server_streams
+
+    monkeypatch.setattr(server_main, "_stdio_streams", fake_streams)
+
+    server_main._server_started_event.clear()
+    server_main._server_stop_event.clear()
+
+    remote_context = RobotRemoteContext()
+    task = asyncio.ensure_future(server_main.run_stdio_server(remote_context, verbose=False, libraries=None))
+
+    for _ in range(100):
+        if server_main._server_started_event.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert server_main._server_started_event.is_set()
+
+    # Client stays connected -- shutdown is driven purely by stop_server().
+    server_main.stop_server()
+
+    await asyncio.wait_for(task, 2)
+
+    assert remote_context._stopped.is_set()
+    assert server_main._server_stop_event.is_set()
+
+    client_writer.close()
+
+
 async def test_stdio_streams_raises_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.platform", "win32")
     with pytest.raises(RuntimeError, match="not supported on Windows"):
