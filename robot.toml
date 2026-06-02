@@ -1,10 +1,14 @@
 paths = ["tests/robot"]
 output-dir = "results"
-default-profiles = ["windows"]
+default-profiles = ["windows", "non_windows"]
 #log-level = "TRACE"
 
-# Selected by default but only active on Windows, where stdio (POSIX-only) e2e
-# suites are excluded. Inactive elsewhere, so other OSes run the full suite.
+# Native Windows is the only platform the stdio server rejects (mirrors its
+# sys.platform == "win32" guard); test selection splits on exactly that line.
 [profiles.windows]
 enabled.if = "platform.system() == 'Windows'"
 excludes = ["posix"]
+
+[profiles.non_windows]
+enabled.if = "platform.system() != 'Windows'"
+excludes = ["windows"]

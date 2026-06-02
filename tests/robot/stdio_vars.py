@@ -3,8 +3,6 @@
 import os
 import sys
 
-IS_WINDOWS = sys.platform == "win32"
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 _BASE = f"{sys.executable} -m robot_jsonrpcremote_server --stdio --pythonpath {_HERE}"
