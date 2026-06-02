@@ -48,15 +48,19 @@ jobs:
         with:
           enable-cache: true
 
+      # The unit tests import the server package and the robot suites spawn it,
+      # but uv sync/run target only the workspace root by default -- so operate on
+      # all workspace members. (--all-packages is needed on `uv run` too, since it
+      # re-syncs exactly by default and would otherwise prune the extra members.)
       - name: Sync dependencies
-        run: uv sync
+        run: uv sync --all-packages
 
       - name: Unit tests
-        run: uv run pytest
+        run: uv run --all-packages pytest
 
       # paths, output-dir and the Windows-only exclude come from robot.toml.
       - name: Robot integration tests
-        run: uv run robotcode run
+        run: uv run --all-packages robotcode run
 
       - name: Upload Robot results
         if: always()
