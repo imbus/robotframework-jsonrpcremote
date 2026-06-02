@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (ruff + mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Mypy (strict)
+        run: uv run mypy
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Unit tests
+        run: uv run pytest
+
+      # The stdio server transport is POSIX-only (the Windows asyncio loop cannot
+      # attach to stdin), so its e2e suites are tagged `posix` and excluded on Windows.
+      # The native Windows guard behaviour is covered by the pytest run above.
+      - name: Robot integration tests
+        if: runner.os != 'Windows'
+        run: uv run robotcode run --outputdir robot-results tests/robot
+
+      - name: Robot integration tests (stdio suites excluded)
+        if: runner.os == 'Windows'
+        run: uv run robotcode run --exclude posix --outputdir robot-results tests/robot
+
+      - name: Upload Robot results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-results-${{ matrix.os }}
+          path: robot-results/
