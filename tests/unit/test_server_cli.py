@@ -52,7 +52,7 @@ def test_mode_aliases() -> None:
 # --- run() rejects unsupported modes cleanly -------------------------------
 
 
-@pytest.mark.parametrize("flag", ["--pipe", "--stdio"])
+@pytest.mark.parametrize("flag", ["--pipe"])
 def test_run_rejects_unsupported_mode(flag: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["robot-jsonrpcremote-server", flag, "MyLib"])
     with pytest.raises(SystemExit) as excinfo:

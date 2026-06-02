@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
@@ -367,7 +368,12 @@ class JsonRpcPeer:
 
             if self.auto_close:
                 self.writer.close()
-                await self.writer.wait_closed()
+                # Best-effort: completion is already signalled, so don't let cleanup
+                # errors surface as unretrieved task exceptions. Some writers (e.g. the
+                # asyncio stdout write pipe used by the stdio transport) raise
+                # NotImplementedError from wait_closed(); others may report a reset.
+                with contextlib.suppress(Exception):
+                    await self.writer.wait_closed()
 
     async def handle_message(self, json_str: str) -> None:
         response_id: str | int | None = None

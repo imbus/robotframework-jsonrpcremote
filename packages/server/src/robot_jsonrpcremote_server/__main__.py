@@ -3,8 +3,9 @@ import asyncio
 import contextlib
 import logging
 import os
+import sys
 import threading
-from typing import Awaitable, Literal, Sequence
+from typing import Awaitable, Callable, Literal, Sequence
 
 from jsonrpcpeer import JsonRpcPeer
 
@@ -21,6 +22,11 @@ _server: asyncio.AbstractServer | None = None
 _server_lock = threading.RLock()
 _server_started_event = threading.Event()
 _server_stop_event = threading.Event()
+
+# Generic transport-stop hook so non-server transports (e.g. stdio, which has no
+# asyncio.AbstractServer object) can also be stopped from the main thread.
+_loop: asyncio.AbstractEventLoop | None = None
+_stop_callable: Callable[[], None] | None = None
 
 
 def _parse_addresses(value: str | None) -> list[str] | None:
@@ -52,6 +58,19 @@ def set_server(value: asyncio.AbstractServer | None) -> None:
     with _server_lock:
         global _server
         _server = value
+
+
+def set_transport_stop(loop: asyncio.AbstractEventLoop | None, stop: Callable[[], None] | None) -> None:
+    """Register (or clear) the transport's stop hook and its event loop.
+
+    Both transports register here so ``stop_server()`` has a single, uniform way to
+    shut them down from the main thread, regardless of whether an
+    ``asyncio.AbstractServer`` object exists (TCP) or not (stdio).
+    """
+    with _server_lock:
+        global _loop, _stop_callable
+        _loop = loop
+        _stop_callable = stop
 
 
 async def handle_client(
@@ -102,6 +121,7 @@ async def run_tcp_server(
 
     async with server:
         set_server(server)
+        set_transport_stop(asyncio.get_running_loop(), server.close)
         _server_started_event.set()
         _server_stop_event.clear()
         try:
@@ -110,13 +130,70 @@ async def run_tcp_server(
             logger.debug("Server task cancelled; shutting down.")
         finally:
             set_server(None)
+            set_transport_stop(None, None)
             _server_started_event.clear()
             _server_stop_event.set()
 
 
+async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """Wrap this process's stdin/stdout as an asyncio reader/writer pair.
+
+    POSIX only: the Windows Proactor event loop cannot ``connect_read_pipe`` to stdin.
+    The binary buffers are used deliberately -- the JSON-RPC framing is byte-counted.
+    """
+    if sys.platform == "win32":
+        raise RuntimeError("stdio mode is not supported on Windows; use --tcp instead.")
+
+    loop = asyncio.get_running_loop()
+
+    reader = asyncio.StreamReader()
+    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer)
+
+    write_transport, write_protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout.buffer)
+    writer = asyncio.StreamWriter(write_transport, write_protocol, reader, loop)
+
+    return reader, writer
+
+
+async def run_stdio_server(
+    remote_context: RobotRemoteContext,
+    verbose: bool,
+    libraries: Sequence[str] | None,
+) -> None:
+    reader, writer = await _stdio_streams()
+    loop = asyncio.get_running_loop()
+    logger.info("Robot JSON-RPC Remote Server serving on stdio")
+
+    client_task = asyncio.ensure_future(handle_client(remote_context, reader, writer, verbose, libraries))
+
+    def _stop() -> None:
+        # Invoked via call_soon_threadsafe from stop_server() on SIGINT/SIGTERM.
+        # Feed EOF so the peer read loop ends cleanly; cancel as a backstop.
+        if not reader.at_eof():
+            reader.feed_eof()
+        if not client_task.done():
+            client_task.cancel()
+
+    set_transport_stop(loop, _stop)
+    _server_started_event.set()
+    _server_stop_event.clear()
+    try:
+        await client_task
+    except asyncio.CancelledError:
+        logger.debug("stdio client task cancelled; shutting down.")
+    finally:
+        set_transport_stop(None, None)
+        _server_started_event.clear()
+        _server_stop_event.set()
+        # Unlike TCP -- whose runner outlives individual connections -- stdio has a
+        # single client. When stdin reaches EOF the parent is gone, so stop the runner
+        # to unblock the main-thread remote_context.run() hook loop and let the process exit.
+        remote_context.stop()
+
+
 async def run_server_async(
     remote_context: RobotRemoteContext,
-    mode: Literal["tcp", "pipe"],
+    mode: Literal["tcp", "stdio", "pipe"],
     addresses: Sequence[str],
     port: int,
     pipe_name: str,
@@ -127,12 +204,16 @@ async def run_server_async(
         await run_tcp_server(remote_context, addresses, port, verbose, libraries)
         return
 
+    if mode == "stdio":
+        await run_stdio_server(remote_context, verbose, libraries)
+        return
+
     raise NotImplementedError(f"Mode '{mode}' is not implemented yet")
 
 
 def run_server(
     remote_context: RobotRemoteContext,
-    mode: Literal["tcp", "pipe"],
+    mode: Literal["tcp", "stdio", "pipe"],
     addresses: Sequence[str],
     port: int,
     pipe_name: str,
@@ -153,22 +234,15 @@ def run_server(
 
 
 def stop_server() -> None:
-    server = get_server()
-    if server is None:
+    with _server_lock:
+        loop = _loop
+        stop = _stop_callable
+    if loop is None or stop is None:
         return
-    loop = server.get_loop()
-
-    def shutdown() -> None:
-        # Close the server; once closed, serve_forever() will return.
-        server.close()
-
-        async def finalize() -> None:
-            await server.wait_closed()
-
-        loop.create_task(finalize())
-
-    # Run shutdown inside the server loop to avoid stopping it before serve_forever() completes.
-    loop.call_soon_threadsafe(shutdown)
+    # Run the transport's stop hook inside its own loop. For TCP this closes the
+    # server (serve_forever() then returns); for stdio it feeds EOF / cancels the
+    # single client task.
+    loop.call_soon_threadsafe(stop)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -185,7 +259,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     default_mode = os.environ.get("ROBOT_JSONRPC_MODE", "tcp")
     mode_group.add_argument(
         "--mode",
-        choices=["tcp", "pipe"],
+        choices=["tcp", "stdio", "pipe"],
         default=default_mode,
         help=f"Server mode (default: {default_mode} or ROBOT_JSONRPC_MODE)",
     )
@@ -210,7 +284,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_const",
         dest="mode",
         const="stdio",
-        help="Run server in stdio mode (alias for --mode stdio) [planned, not yet implemented]",
+        help="Run server in stdio mode (alias for --mode stdio): serve a single client over stdin/stdout (POSIX only)",
     )
 
     tcp_group = parser.add_argument_group(
@@ -282,16 +356,19 @@ def run() -> None:
     configure_logging(args.verbose)
     logger.debug("Verbose mode is enabled.")
 
-    if args.mode != "tcp":
+    if args.mode not in ("tcp", "stdio"):
         parser.error(
-            f"server mode '{args.mode}' is not supported yet; only 'tcp' is available "
-            "('--pipe' and '--stdio' are planned)."
+            f"server mode '{args.mode}' is not supported yet; only 'tcp' and 'stdio' are available "
+            "('--pipe' is planned)."
         )
 
     env_addresses = _parse_addresses(os.environ.get("ROBOT_JSONRPC_BIND"))
     addresses = args.addresses or env_addresses or ["127.0.0.1"]
 
-    logger.info("Server will start on %s:%s", ",".join(addresses), args.port)
+    if args.mode == "stdio":
+        logger.info("Server will start in stdio mode.")
+    else:
+        logger.info("Server will start on %s:%s", ",".join(addresses), args.port)
 
     logger.debug("Libraries to serve: %s", args.libraries)
     logger.debug("Python path additions: %s", args.pythonpath)
@@ -324,7 +401,7 @@ def run() -> None:
     _server_started_event.wait(5)
     logger.info("Server is up and running. Press Ctrl+C to stop.")
 
-    if get_server() is None:
+    if not _server_started_event.is_set():
         logger.error("Server failed to start.")
         return
 
