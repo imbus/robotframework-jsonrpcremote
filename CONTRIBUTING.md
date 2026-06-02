@@ -187,8 +187,8 @@ The repository is a uv workspace organized into a client library, several suppor
 
 1. **Create a branch:** `git checkout -b feature/your-feature-name`
 2. **Make your changes** following the project's coding standards.
-3. **Run the unit tests:** `uv run pytest`
-4. **Run the integration tests:** `uv run robotcode run`
+3. **Run the unit tests:** `uv run --all-packages pytest`
+4. **Run the integration tests:** `uv run --all-packages robotcode run`
 5. **Run linting and type checks:** `uv run ruff check .` and `uv run mypy` (see [Linting and Type Checking](#linting-and-type-checking)).
 6. **Fix formatting:** `uv run ruff format .`
 7. **Commit your changes** with a descriptive, [Conventional Commits](#commit-messages) message, [cryptographically signed](#signed-commits-required) (`git commit -S`).
@@ -196,23 +196,26 @@ The repository is a uv workspace organized into a client library, several suppor
 
 #### Running Tests
 
+> [!IMPORTANT]
+> This is a uv workspace, and `uv sync`/`uv run` operate on the **workspace root** by default. `uv run` also re-syncs the environment *exactly* on each call, which prunes the other workspace members (e.g. the server package). The unit tests import the server package and the robot suites spawn it, so pass `--all-packages` to `uv run` (as below) — or activate the venv (`source .venv/bin/activate`) after `uv sync --all-packages --dev` and call the tools directly. Otherwise you'll get `ModuleNotFoundError: No module named 'robot_jsonrpcremote_server'`.
+
 **Unit tests (pytest):**
 
 ```bash
-uv run pytest
+uv run --all-packages pytest
 ```
 
 `pytest` is configured (in [`pyproject.toml`](pyproject.toml)) to collect from `tests/unit` and runs in asyncio auto mode. To run a single file or test:
 
 ```bash
-uv run pytest tests/unit/test_peer.py
-uv run pytest tests/unit/test_peer.py::test_name -q
+uv run --all-packages pytest tests/unit/test_peer.py
+uv run --all-packages pytest tests/unit/test_peer.py::test_name -q
 ```
 
 **Integration tests (Robot Framework):**
 
 ```bash
-uv run robotcode run
+uv run --all-packages robotcode run
 ```
 
 This runs the Robot Framework suites under [`tests/robot`](tests/robot) (configured via [`robot.toml`](robot.toml)). Each suite starts and stops its own server, so no separate server process is required. `robotcode run` writes its `output.xml`, `log.html`, and `report.html` to the `results/` directory by default (gitignored).
@@ -289,7 +292,7 @@ When you open a pull request, GitHub will pre-fill the [pull request template](.
 Before submitting your pull request, make sure that:
 
 - [ ] The change is **focused** on a single concern (no unrelated refactors or formatting noise).
-- [ ] **Tests** for the change have been added or updated, and `uv run pytest` (plus `uv run robotcode run` where relevant) passes locally.
+- [ ] **Tests** for the change have been added or updated, and `uv run --all-packages pytest` (plus `uv run --all-packages robotcode run` where relevant) passes locally.
 - [ ] **Linting** passes: `uv run ruff check .` and `uv run ruff format --check .`.
 - [ ] **Type checking** passes: `uv run mypy`.
 - [ ] **Documentation** has been updated where relevant (package READMEs, code comments, main README).
@@ -320,9 +323,8 @@ A good PR description:
    uv sync --all-extras --all-packages --dev
    ```
 
-2. **Tests fail with import errors for workspace packages:**
-   - Make sure you synced with all packages: `uv sync --all-extras --all-packages --dev`.
-   - Run tests through `uv run` so they use the project `.venv`.
+2. **Tests fail with `ModuleNotFoundError` for a workspace package (e.g. `robot_jsonrpcremote_server`):**
+   - `uv run` targets the workspace root and re-syncs exactly, which prunes the other members. Pass `--all-packages` to the test commands (`uv run --all-packages pytest`, `uv run --all-packages robotcode run`), or activate the venv after `uv sync --all-packages --dev` and run the tools directly.
 
 3. **VS Code doesn't find the interpreter:**
    - Select the `.venv` interpreter via the Command Palette → "Python: Select Interpreter".

@@ -38,9 +38,9 @@ All commands run inside the project environment via `uv run` (or after activatin
 
 - `uv sync --all-extras --all-packages --dev`
 	- One-time setup: create `.venv` and install the client, all workspace packages, and the dev tools.
-- `uv run pytest`
-	- Unit tests (collected from `tests/unit`). Run on every change.
-- `uv run robotcode run`
+- `uv run --all-packages pytest`
+	- Unit tests (collected from `tests/unit`). Run on every change. `--all-packages` is required: `uv run` targets the workspace root and re-syncs exactly, so the server package would otherwise be pruned (`ModuleNotFoundError`).
+- `uv run --all-packages robotcode run`
 	- Robot Framework integration tests under `tests/robot/`. Output is written to `results/` by default.
 - `uv run ruff check .`
 	- Lint.
