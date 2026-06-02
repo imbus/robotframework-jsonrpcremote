@@ -368,10 +368,8 @@ class JsonRpcPeer:
 
             if self.auto_close:
                 self.writer.close()
-                # Best-effort: completion is already signalled, so don't let cleanup
-                # errors surface as unretrieved task exceptions. Some writers (e.g. the
-                # asyncio stdout write pipe used by the stdio transport) raise
-                # NotImplementedError from wait_closed(); others may report a reset.
+                # Some writers (e.g. the stdio stdout pipe) raise from wait_closed(); the
+                # completion future is already set, so ignore cleanup errors here.
                 with contextlib.suppress(Exception):
                     await self.writer.wait_closed()
 

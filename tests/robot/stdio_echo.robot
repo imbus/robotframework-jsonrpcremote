@@ -1,7 +1,5 @@
 *** Settings ***
-Documentation     End-to-end keyword execution over the stdio transport: the JsonRpcRemote
-...               client spawns the server as a subprocess and talks over its stdin/stdout.
-...               No separate server start/stop is needed -- the client owns the process.
+Documentation     Keyword execution over the stdio transport (the client spawns the server).
 Variables         stdio_vars.py
 Library           JsonRpcRemote    stdio:${SERVER_COMMAND}    StdioEchoLib
 Test Tags         posix

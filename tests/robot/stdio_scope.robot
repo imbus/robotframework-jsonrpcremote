@@ -1,7 +1,5 @@
 *** Settings ***
-Documentation     A TEST-scoped stdio library spawns its own server subprocess and tears it
-...               down after each test, so every test runs against a fresh server. Exercises
-...               the spawn/handshake/reap cycle repeatedly over the stdio transport.
+Documentation     A TEST-scoped stdio library spawns and reaps a fresh server per test.
 Variables         stdio_vars.py
 Library           JsonRpcRemote    stdio:${SERVER_COMMAND}    StdioEchoLib    rpc_scope=TEST
 Test Tags         posix

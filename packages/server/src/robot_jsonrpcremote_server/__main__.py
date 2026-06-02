@@ -23,8 +23,7 @@ _server_lock = threading.RLock()
 _server_started_event = threading.Event()
 _server_stop_event = threading.Event()
 
-# Generic transport-stop hook so non-server transports (e.g. stdio, which has no
-# asyncio.AbstractServer object) can also be stopped from the main thread.
+# Stop hook for transports without an asyncio.AbstractServer (e.g. stdio).
 _loop: asyncio.AbstractEventLoop | None = None
 _stop_callable: Callable[[], None] | None = None
 
@@ -61,12 +60,7 @@ def set_server(value: asyncio.AbstractServer | None) -> None:
 
 
 def set_transport_stop(loop: asyncio.AbstractEventLoop | None, stop: Callable[[], None] | None) -> None:
-    """Register (or clear) the transport's stop hook and its event loop.
-
-    Both transports register here so ``stop_server()`` has a single, uniform way to
-    shut them down from the main thread, regardless of whether an
-    ``asyncio.AbstractServer`` object exists (TCP) or not (stdio).
-    """
+    """Register (or clear) the transport's stop hook so stop_server() can stop it uniformly."""
     with _server_lock:
         global _loop, _stop_callable
         _loop = loop
@@ -136,11 +130,7 @@ async def run_tcp_server(
 
 
 async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """Wrap this process's stdin/stdout as an asyncio reader/writer pair.
-
-    POSIX only: the Windows Proactor event loop cannot ``connect_read_pipe`` to stdin.
-    The binary buffers are used deliberately -- the JSON-RPC framing is byte-counted.
-    """
+    """Wrap stdin/stdout as an asyncio reader/writer pair (POSIX only; binary buffers)."""
     if sys.platform == "win32":
         raise RuntimeError("stdio mode is not supported on Windows; use --tcp instead.")
 
@@ -167,8 +157,7 @@ async def run_stdio_server(
     client_task = asyncio.ensure_future(handle_client(remote_context, reader, writer, verbose, libraries))
 
     def _stop() -> None:
-        # Invoked via call_soon_threadsafe from stop_server() on SIGINT/SIGTERM.
-        # Feed EOF so the peer read loop ends cleanly; cancel as a backstop.
+        # Called via stop_server() on SIGINT/SIGTERM: end the read loop, cancel as backstop.
         if not reader.at_eof():
             reader.feed_eof()
         if not client_task.done():
@@ -185,9 +174,7 @@ async def run_stdio_server(
         set_transport_stop(None, None)
         _server_started_event.clear()
         _server_stop_event.set()
-        # Unlike TCP -- whose runner outlives individual connections -- stdio has a
-        # single client. When stdin reaches EOF the parent is gone, so stop the runner
-        # to unblock the main-thread remote_context.run() hook loop and let the process exit.
+        # stdio has a single client: on EOF/stop, stop the runner so the main thread exits.
         remote_context.stop()
 
 

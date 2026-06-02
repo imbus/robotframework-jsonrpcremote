@@ -1,14 +1,8 @@
-"""Variables for the stdio transport suite.
-
-Builds the ``stdio:<command>`` server command used by the JsonRpcRemote client to
-spawn the server as a subprocess. ``sys.executable`` keeps it tied to the active
-interpreter; ``--pythonpath`` makes ``StdioEchoLib`` importable by the server.
-"""
+"""Variables for the stdio transport suites: the ``stdio:<command>`` server commands."""
 
 import os
 import sys
 
-# Exposed so the Windows-only suite can self-skip on POSIX (where stdio works).
 IS_WINDOWS = sys.platform == "win32"
 
 _HERE = os.path.dirname(os.path.abspath(__file__))

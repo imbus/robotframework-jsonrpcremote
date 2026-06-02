@@ -184,7 +184,7 @@ class _SessionResources:
         self.peer: JsonRpcPeer | None = None
         self.thread: Thread | None = None
         self.endpoint: _ClientEndpoint | None = None
-        # Set for the stdio transport, which spawns the server as a subprocess.
+        # The spawned server subprocess (stdio transport only).
         self.process: asyncio.subprocess.Process | None = None
 
 
@@ -205,8 +205,7 @@ def _finalize_session(resources: _SessionResources, timeout: float | None) -> No
         if resources.thread is not None:
             resources.thread.join(timeout)
     finally:
-        # Backstop: a stdio subprocess is normally reaped by close_connection on the
-        # loop thread. If that never ran (e.g. a wedged loop), don't leak the child.
+        # Backstop in case close_connection never reaped the stdio subprocess.
         process = resources.process
         if process is not None and process.returncode is None:
             with contextlib.suppress(Exception):
@@ -337,12 +336,7 @@ class _Session:
         raise ValueError(f"Unsupported URI scheme '{parsed_uri.scheme}'; supported schemes are 'tcp' and 'stdio'.")
 
     async def _create_stdio_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        """Spawn the server as a subprocess and talk to it over its stdin/stdout.
-
-        The URI is ``stdio:<command line>`` (an optional leading ``//`` is ignored);
-        the command -- including ``--stdio`` and the allowlist libraries -- is parsed
-        with shlex. The child's stderr is inherited so its logs reach the user.
-        """
+        """Spawn the server from a ``stdio:<command>`` URI and talk over its stdin/stdout."""
         rest = self._uri[len("stdio:") :]
         if rest.startswith("//"):
             rest = rest[2:]
@@ -362,7 +356,6 @@ class _Session:
         )
         self._res.process = process
 
-        # PIPE for stdin/stdout guarantees both streams exist.
         assert process.stdout is not None
         assert process.stdin is not None
         return process.stdout, process.stdin
@@ -374,8 +367,7 @@ class _Session:
             with contextlib.suppress(Exception):
                 await self._res.peer.writer.wait_closed()
 
-        # For the stdio transport, closing the writer above sent EOF to the server's
-        # stdin so it shuts itself down. Reap the subprocess, escalating to
+        # Closing the writer sent EOF to the server's stdin; reap it, escalating to
         # terminate/kill if it does not exit within the timeout.
         process = self._res.process
         if process is not None:

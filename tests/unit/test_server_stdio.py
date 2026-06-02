@@ -1,10 +1,4 @@
-"""Unit tests for the server's stdio transport wiring.
-
-These exercise ``run_stdio_server`` over a loopback stream pair substituted for the
-real stdin/stdout, so the transport lifecycle -- including the EOF-triggered
-``remote_context.stop()`` that lets the blocked main thread exit -- is covered
-without a running Robot suite.
-"""
+"""Unit tests for the server's stdio transport wiring."""
 
 import asyncio
 import sys
@@ -69,14 +63,12 @@ async def test_stdio_server_initializes_and_stops_runner_on_eof(
     remote_context = RobotRemoteContext()
     task = asyncio.ensure_future(server_main.run_stdio_server(remote_context, verbose=False, libraries=None))
 
-    # Wait until the transport reports it is up.
     for _ in range(100):
         if server_main._server_started_event.is_set():
             break
         await asyncio.sleep(0.01)
     assert server_main._server_started_event.is_set()
 
-    # Drive a real initialize round-trip over the substituted stream pair.
     client = JsonRpcPeer(client_reader, client_writer)
     client.start()
     result = await asyncio.wait_for(
@@ -92,13 +84,11 @@ async def test_stdio_server_initializes_and_stops_runner_on_eof(
     )
     assert result.capabilities is not None
 
-    # Closing the client end sends EOF to the server's stdin-equivalent.
     await client.stop()
     client_writer.close()
 
     await asyncio.wait_for(task, 2)
 
-    # The single-connection EOF must stop the runner and signal the stop event.
     assert remote_context._stopped.is_set()
     assert server_main._server_stop_event.is_set()
 
@@ -109,7 +99,6 @@ async def test_stdio_server_stops_via_stop_server(
     ],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The SIGINT/SIGTERM path: stop_server() must tear down stdio without an EOF."""
     (server_streams, (_client_reader, client_writer)) = loopback_pair
 
     async def fake_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
@@ -129,7 +118,6 @@ async def test_stdio_server_stops_via_stop_server(
         await asyncio.sleep(0.01)
     assert server_main._server_started_event.is_set()
 
-    # Client stays connected -- shutdown is driven purely by stop_server().
     server_main.stop_server()
 
     await asyncio.wait_for(task, 2)
@@ -148,8 +136,6 @@ async def test_stdio_streams_raises_on_windows(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="exercises the real Windows behavior; runs only on Windows")
 async def test_stdio_streams_raises_on_windows_native() -> None:
-    # No monkeypatching: on a real Windows runner the POSIX pipe wiring is unavailable
-    # and _stdio_streams must fail with the documented, actionable error.
     with pytest.raises(RuntimeError, match="not supported on Windows"):
         await server_main._stdio_streams()
 

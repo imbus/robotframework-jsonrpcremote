@@ -1,8 +1,5 @@
-"""Unit tests for the JsonRpcRemote client's transport selection.
-
-The full stdio happy path is covered end-to-end by tests/robot/stdio_echo.robot;
-these cover the URI parsing / error branches and the subprocess wiring in isolation.
-"""
+"""Unit tests for the JsonRpcRemote client's transport selection (the stdio happy path
+is covered end-to-end by tests/robot/stdio_echo.robot)."""
 
 import asyncio
 import os
@@ -13,7 +10,6 @@ import pytest
 
 from JsonRpcRemote import _Session
 
-# tests/robot holds StdioEchoLib, which the spawned server imports via --pythonpath.
 _ROBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "robot"))
 
 
@@ -49,7 +45,6 @@ async def test_stdio_uri_requires_a_command() -> None:
 
 
 async def test_stdio_uri_spawns_process_and_returns_streams() -> None:
-    # A long-lived child that just blocks on stdin; we never speak the protocol here.
     command = f'{sys.executable} -c "import sys; sys.stdin.read()"'
     session = _make_session(f"stdio:{command}")
 
@@ -57,7 +52,7 @@ async def test_stdio_uri_spawns_process_and_returns_streams() -> None:
     try:
         assert isinstance(reader, asyncio.StreamReader)
         assert session._res.process is not None
-        assert session._res.process.returncode is None  # still running
+        assert session._res.process.returncode is None
     finally:
         process = session._res.process
         assert process is not None
@@ -67,8 +62,6 @@ async def test_stdio_uri_spawns_process_and_returns_streams() -> None:
 
 
 async def test_stdio_bad_command_raises_os_error() -> None:
-    # A server command that cannot be exec'd surfaces as an OSError at connect time
-    # (which the session stores in last_error and re-raises to the caller).
     session = _make_session("stdio:definitely-not-a-real-server-binary-xyz --stdio Lib")
     with pytest.raises(FileNotFoundError):
         await session.create_connection()
@@ -76,19 +69,16 @@ async def test_stdio_bad_command_raises_os_error() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the stdio server transport is POSIX-only")
 def test_stdio_session_spawns_and_reaps_server() -> None:
-    # Full session against a real stdio server: spawn, handshake, then ensure the
-    # subprocess is reaped on teardown (no orphan, returncode set).
     session = _Session(f"stdio:{_stdio_server_command('StdioEchoLib')}", "StdioEchoLib", (), None, 20.0)
     session.start()
     assert session.initialized.wait(20)
     assert session.last_error is None
 
-    # A successful handshake (initialized, no error) means the server was alive.
     process = session._res.process
     assert process is not None
     pid = process.pid
 
     session.stop()
 
-    assert process.returncode is not None  # reaped on teardown
+    assert process.returncode is not None
     assert _wait_pid_gone(pid), f"server subprocess {pid} still alive after teardown"

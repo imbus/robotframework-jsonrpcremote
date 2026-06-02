@@ -1,9 +1,5 @@
-"""Minimal echo library for the stdio transport suite.
-
-Unlike ``JsonRpcRemote.Echo`` this keyword does NOT ``print``: in stdio mode the
-server's stdout carries the JSON-RPC frames, so any write to stdout from a keyword
-would corrupt the stream. Use stderr (or RF logging) instead.
-"""
+"""Echo library for the stdio suites that, unlike JsonRpcRemote.Echo, never writes to
+stdout (stdout carries the JSON-RPC frames in stdio mode)."""
 
 
 class StdioEchoLib:
@@ -11,5 +7,4 @@ class StdioEchoLib:
     ROBOT_LIBRARY_VERSION = "1.0"
 
     def echo(self, message: str = "qwerty") -> str:
-        """Return the given message prefixed with 'echo: ' (no stdout writes)."""
         return f"echo: {message}"
