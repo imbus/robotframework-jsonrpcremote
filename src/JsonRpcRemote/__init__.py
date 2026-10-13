@@ -1,16 +1,19 @@
 import asyncio
+import concurrent.futures
 import contextlib
 import shlex
+import time
 import weakref
-from collections.abc import Mapping, Sequence
+from collections.abc import Coroutine, Mapping, Sequence
 from enum import Enum
-from threading import Event, Thread
-from typing import Any
+from threading import Event, Lock, Thread
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from robot import result, running
 from robot.api import logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
+from robot.utils import timestr_to_secs
 
 from jsonrpcpeer import JsonRpcPeer
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
@@ -48,6 +51,8 @@ from robot_jsonrpcremote_protocol import (
 )
 
 from .__version__ import __version__
+
+T = TypeVar("T")
 
 
 class _ClientEndpoint:
@@ -241,9 +246,57 @@ class _Session:
         self.library_definition: LibraryDefinition | None = None
         self.library_token: str | None = None
         self.last_error: BaseException | None = None
+        # Exit code of the spawned server (stdio transport), once it has been reaped.
+        self.process_returncode: int | None = None
+
+        # Set by stop(): the client closed the session itself, so it was not "lost".
+        self.closed_by_client = False
+        # Set once the worker thread has fully finished (event loop closed).
+        self.ended = Event()
+        # Futures of coroutines submitted to the loop that have not completed yet, so
+        # they can be failed instead of hanging if the loop ends before running them.
+        self._submit_lock = Lock()
+        self._submitted: set[concurrent.futures.Future[Any]] = set()
 
         self.client_endpoint = _ClientEndpoint()
         self._res.endpoint = self.client_endpoint
+
+    @property
+    def connection_lost(self) -> bool:
+        """True if an established connection ended without the client closing it."""
+        if self.closed_by_client or self.library_token is None:
+            return False
+        peer = self._res.peer
+        return peer is None or not peer.running
+
+    def describe_disconnect(self) -> str:
+        # Let the worker finish closing the transport (and reaping a stdio server), so
+        # the description includes the final error and the server's exit code.
+        self.ended.wait(self._timeout)
+        reason = (
+            f"{type(self.last_error).__name__}: {self.last_error}"
+            if self.last_error is not None
+            else "the connection was closed by the server"
+        )
+        if self.process_returncode is not None:
+            reason += f" (server process exited with code {self.process_returncode})"
+        return reason
+
+    def submit(self, coro: Coroutine[Any, Any, T]) -> "concurrent.futures.Future[T]":
+        """Run ``coro`` on the session loop; fails with ConnectionError once the session has ended."""
+        with self._submit_lock:
+            loop = self._res.loop
+            if loop is None or self.ended.is_set():
+                coro.close()
+                raise ConnectionError(f"Connection to '{self._uri}' is closed")
+            try:
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+            except RuntimeError as e:  # loop closed in the meantime
+                coro.close()
+                raise ConnectionError(f"Connection to '{self._uri}' is closed") from e
+            self._submitted.add(future)
+        future.add_done_callback(self._submitted.discard)
+        return future
 
     @property
     def peer(self) -> JsonRpcPeer:
@@ -260,7 +313,18 @@ class _Session:
         return self._res.loop
 
     def _run(self) -> None:
-        asyncio.run(self._run_client())
+        try:
+            asyncio.run(self._run_client())
+        except Exception:
+            # Already recorded in last_error; the owning JsonRpcRemote reports it.
+            pass
+        finally:
+            with self._submit_lock:
+                self.ended.set()
+                stranded = [future for future in self._submitted if not future.done()]
+            for future in stranded:
+                with contextlib.suppress(concurrent.futures.InvalidStateError):
+                    future.set_exception(ConnectionError(f"Connection to '{self._uri}' is closed"))
 
     async def _run_client(self) -> None:
         self._res.loop = asyncio.get_event_loop()
@@ -271,6 +335,9 @@ class _Session:
                 await self._initialize_server()
             except Exception as e:
                 self.last_error = e
+                # Release the connection (and reap a spawned stdio server) before
+                # signalling the failure, so a failed attempt leaves nothing behind.
+                await self.close_connection()
                 raise
             finally:
                 self.initialized.set()
@@ -381,6 +448,7 @@ class _Session:
             if process.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     process.kill()
+            self.process_returncode = process.returncode
             self._res.process = None
 
     def start(self) -> None:
@@ -391,17 +459,25 @@ class _Session:
         self._res.thread.start()
 
     def stop(self) -> None:
+        self.closed_by_client = True
         _finalize_session(self._res, self._timeout)
 
     async def run_keyword(self, name: str, args: list[Any], named: dict[str, Any]) -> RunKeywordResult:
-        try:
-            if self.library_token is None:
-                raise RuntimeError("Library token is not initialized yet")
+        if self.library_token is None:
+            raise RuntimeError("Library token is not initialized yet")
 
-            return await self.client_endpoint.run_keyword(self.library_token, name, args, named)
-        except Exception as e:
-            self.last_error = e
-            raise
+        return await self.client_endpoint.run_keyword(self.library_token, name, args, named)
+
+
+def _time_option(name: str, value: float | str) -> float:
+    """Parse a client time option given as seconds or a Robot time string (e.g. ``"60s"``)."""
+    try:
+        seconds = float(timestr_to_secs(value, round_to=None))
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Invalid value for '{name}': {value!r}") from e
+    if seconds < 0:
+        raise ValueError(f"'{name}' must not be negative, got {value!r}.")
+    return seconds
 
 
 class SessionScope(Enum):
@@ -422,17 +498,24 @@ class JsonRpcRemote:
         *library_args: Any,
         rpc_timeout: float = 10.0,
         rpc_scope: SessionScope = SessionScope.SUITE,
+        reconnect_timeout: float | str = 0,
+        reconnect_interval: float | str = 1.0,
         **library_kw_args: Any,
     ) -> None:
+        # Set first: __del__ relies on it even if option validation below raises.
+        self.__session: _Session | None = None
+
         self._uri = uri
         self._timeout = rpc_timeout
         self._scope = rpc_scope
+        self._reconnect_timeout = _time_option("reconnect_timeout", reconnect_timeout)
+        self._reconnect_interval = _time_option("reconnect_interval", reconnect_interval)
+        if self._reconnect_timeout > 0 and self._reconnect_interval <= 0:
+            raise ValueError("reconnect_interval must be greater than 0 when reconnect_timeout is set.")
 
         self._library_name = library_name
         self._library_args = library_args
         self._library_kw_args = library_kw_args or None
-
-        self.__session: _Session | None = None
 
         self.ROBOT_LIBRARY_LISTENER = self
 
@@ -442,24 +525,72 @@ class JsonRpcRemote:
         self._stop_session()
 
     def _start_session(self) -> _Session:
-        if self.__session is None:
-            self.__session = _Session(
-                self._uri, self._library_name, self._library_args, self._library_kw_args, self._timeout
+        session = self.__session
+        if session is not None and session.connection_lost:
+            if self._reconnect_timeout <= 0:
+                raise ConnectionError(
+                    f"Connection to '{self._uri}' was lost: {session.describe_disconnect()}. "
+                    "Automatic reconnect is disabled (reconnect_timeout=0)."
+                )
+            # Drop the dead session first: if reconnecting fails, the next call starts a
+            # normal connection attempt instead of failing on this session forever.
+            self.__session = None
+            self.__session = self._reconnect(session)
+            return self.__session
+
+        if session is None:
+            session = self.__session = self._connect()
+        return session
+
+    def _connect(self) -> _Session:
+        """Open a session and run the handshake; a failed attempt is cleaned up and raises."""
+        session = _Session(self._uri, self._library_name, self._library_args, self._library_kw_args, self._timeout)
+        session.start()
+
+        if not session.initialized.wait(self._timeout):
+            session.stop()
+            raise TimeoutError("Timeout waiting for JsonRpcRemote session to initialize") from session.last_error
+
+        if session.last_error is not None:
+            raise session.last_error
+        return session
+
+    def _reconnect(self, lost: _Session) -> _Session:
+        reason = lost.describe_disconnect()
+        started = time.monotonic()
+        deadline = started + self._reconnect_timeout
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                session = self._connect()
+            except Exception as e:
+                last_error = e
+            else:
+                break
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ConnectionError(
+                    f"Connection to '{self._uri}' was lost ({reason}) and could not be re-established "
+                    f"within {self._reconnect_timeout:g}s ({attempts} attempt(s)). "
+                    f"Last error: {type(last_error).__name__}: {last_error}"
+                ) from last_error
+            time.sleep(min(self._reconnect_interval, remaining))
+
+        logger.warn(
+            f"Connection to '{self._uri}' was lost ({reason}). Reconnected after "
+            f"{time.monotonic() - started:.1f}s ({attempts} attempt(s)); the remote library was imported "
+            "again, so its server-side state was reset."
+        )
+        old = {kw.name for kw in lost.library_definition.keywords} if lost.library_definition else set()
+        new = {kw.name for kw in session.library_definition.keywords} if session.library_definition else set()
+        if old != new:
+            logger.warn(
+                "The keywords of the remote library changed after reconnecting "
+                f"(added: {', '.join(sorted(new - old)) or '-'}; removed: {', '.join(sorted(old - new)) or '-'})."
             )
-
-            self.__session.start()
-
-            if not self.__session.initialized.wait(self._timeout):
-                if self.__session.last_error is not None:
-                    raise TimeoutError(
-                        "Timeout waiting for JsonRpcRemote session to initialize"
-                    ) from self.__session.last_error
-
-                raise TimeoutError("Timeout waiting for JsonRpcRemote session to initialize")
-
-        if self.__session.last_error is not None:
-            raise self.__session.last_error
-        return self.__session
+        return session
 
     @property
     def _session(self) -> _Session:
@@ -542,22 +673,32 @@ class JsonRpcRemote:
         return self._get_keyword_definition(name).source
 
     async def run_keyword(self, name: str, args: Sequence[Any], named: Mapping[str, Any]) -> Any:
-        self._session.client_endpoint.callback_loop = asyncio.get_event_loop()
+        session = self._session
+        session.client_endpoint.callback_loop = asyncio.get_event_loop()
         try:
-            result = await asyncio.wrap_future(
-                asyncio.run_coroutine_threadsafe(
-                    self._session.run_keyword(
-                        name,
-                        [value_to_jsonable(arg) for arg in args],
-                        {key: value_to_jsonable(value) for key, value in named.items()},
-                    ),
-                    self._session.loop,
+            try:
+                result = await asyncio.wrap_future(
+                    session.submit(
+                        session.run_keyword(
+                            name,
+                            [value_to_jsonable(arg) for arg in args],
+                            {key: value_to_jsonable(value) for key, value in named.items()},
+                        )
+                    )
                 )
-            )
+            except (ConnectionError, asyncio.CancelledError) as e:
+                # A cancellation only means a lost connection if the session died;
+                # otherwise it is Robot cancelling the keyword (e.g. a timeout).
+                if isinstance(e, asyncio.CancelledError) and not session.connection_lost:
+                    raise
+                raise ConnectionError(
+                    f"Connection to '{self._uri}' was lost while running keyword '{name}' "
+                    f"({session.describe_disconnect()}). The keyword is not retried."
+                ) from e
 
             if result.error is not None:
                 raise RuntimeError(f"Error executing keyword '{name}': {result.error}")
 
             return jsonable_to_value(result.result)
         finally:
-            self._session.client_endpoint.callback_loop = None
+            session.client_endpoint.callback_loop = None

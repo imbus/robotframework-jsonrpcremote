@@ -1,3 +1,4 @@
+from .peer import JsonRpcConnectionClosedError as JsonRpcConnectionClosedError
 from .peer import JsonRpcEndpointProtocol as JsonRpcEndpointProtocol
 from .peer import JsonRpcInvalidRequestError as JsonRpcInvalidRequestError
 from .peer import JsonRpcPeer as JsonRpcPeer

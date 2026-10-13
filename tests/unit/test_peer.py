@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 
-from jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer import JsonRpcConnectionClosedError, JsonRpcPeer
 from jsonrpcpeer.peer import (
     JsonRpcErrorCode,
     JsonRpcErrorResponse,
@@ -268,3 +268,47 @@ async def test_io_loop_suppresses_wait_closed_errors() -> None:
     await asyncio.wait_for(peer._read_task, 2)
     assert peer._read_task.exception() is None
     assert writer.closed
+
+
+# --- pending requests on connection loss ------------------------------------
+
+
+async def _never_answer(params: Any) -> None:
+    await asyncio.Event().wait()
+
+
+async def test_pending_request_fails_when_remote_closes(peer_pair: tuple[JsonRpcPeer, JsonRpcPeer]) -> None:
+    client, server = peer_pair
+    server.register_request_handler("hang", _never_answer)
+
+    request = asyncio.create_task(client.send_request("hang"))
+    await asyncio.sleep(0.05)
+    server.writer.close()
+
+    with pytest.raises(JsonRpcConnectionClosedError):
+        await asyncio.wait_for(request, 2)
+    assert not client._pending_requests
+
+
+async def test_pending_request_fails_when_peer_stops(peer_pair: tuple[JsonRpcPeer, JsonRpcPeer]) -> None:
+    client, server = peer_pair
+    server.register_request_handler("hang", _never_answer)
+
+    request = asyncio.create_task(client.send_request("hang"))
+    await asyncio.sleep(0.05)
+    await client.stop()
+
+    with pytest.raises(JsonRpcConnectionClosedError):
+        await asyncio.wait_for(request, 2)
+
+
+async def test_request_after_close_fails_immediately() -> None:
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = MagicMock()
+    peer = JsonRpcPeer(reader, writer, auto_close=False)
+    await asyncio.wait_for(peer.run(), 2)
+
+    with pytest.raises(JsonRpcConnectionClosedError, match="'ping'"):
+        await peer.send_request("ping")
+    writer.write.assert_not_called()
