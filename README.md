@@ -64,6 +64,8 @@ Example Test
 *   `library_name`: The name of the library to initialize on the remote server (optional).
 *   `rpc_timeout`: Connection timeout in seconds (default: `10.0`).
 *   `rpc_scope`: The scope of the remote session (`TEST`, `SUITE`, `GLOBAL`). Default is `SUITE`.
+*   `reconnect_timeout`: How long to keep trying to reconnect after the connection was lost unexpectedly (default: `0`, disabled). See [Automatic reconnect](#automatic-reconnect).
+*   `reconnect_interval`: Pause between reconnect attempts (default: `1s`).
 *   `*args`: Positional arguments passed to the remote library initialization.
 *   `**kwargs`: Keyword arguments for the remote library initialization (sent as Robot `name=value` arguments and converted server-side via the library's `__init__` signature).
 
@@ -83,7 +85,7 @@ Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
 
 Argument types are preserved end-to-end: positional values keep their (JSON-serializable) Robot types, and named values are converted **server-side** according to the remote library's `__init__` type hints (so `int`, `float`, `bool`, `Decimal`, `date`, `Enum`, `list`, `dict`, ... all work; without type hints they arrive as strings).
 
-The client's own options — `rpc_timeout` and `rpc_scope` — are consumed by `JsonRpcRemote` itself and are **not** forwarded to the remote library, so you can mix them freely with the library's named init arguments:
+The client's own options — `rpc_timeout`, `rpc_scope`, `reconnect_timeout`, and `reconnect_interval` — are consumed by `JsonRpcRemote` itself and are **not** forwarded to the remote library, so you can mix them freely with the library's named init arguments:
 
 ```robot
 *** Settings ***
@@ -98,6 +100,30 @@ Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
 *   `TEST`: a fresh session is started and torn down for each test case.
 *   `SUITE` (default): one session per suite.
 *   `GLOBAL`: a single session is shared across the entire run.
+
+### Automatic reconnect
+
+If the server can restart during a run (a container restart, a redeployment, a crashed server that is brought back up), let the client reconnect on its own:
+
+```robot
+*** Settings ***
+Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
+...            reconnect_timeout=60s    reconnect_interval=2s
+```
+
+Both options accept seconds (`60`, `1.5`) or Robot Framework time strings (`60s`, `1 minute`).
+
+*   **When:** only after a connection was lost that the client did not close itself. Closing a session at the end of a test or suite (`rpc_scope`) never triggers a reconnect. The client cannot tell a restart from a final shutdown, so `reconnect_timeout` is the only limit.
+*   **How:** the next keyword call tries to connect every `reconnect_interval` until `reconnect_timeout` has passed. Each attempt runs the full handshake (including importing the remote library again) and is limited by `rpc_timeout`. Calls made while the server is down wait for the reconnect and then run normally.
+*   **Running keywords are never retried:** a keyword that is running when the connection drops fails with a `ConnectionError`. It is not sent again, since keywords are generally not idempotent (clicks, typing, ...).
+*   **Giving up:** if the server is not back within `reconnect_timeout`, the call fails with a `ConnectionError` naming the URI, the timeout, and the last error. The next call starts a single fresh connection attempt, so the library works again once the server is back.
+*   **Logging:** a successful reconnect is logged as a warning with the cause of the lost connection, the duration, and the number of attempts; a changed keyword list after reconnecting is logged as a warning, too. Errors raised because of a lost connection include its cause.
+*   **stdio:** with a `stdio:` URI, a reconnect spawns a new server process; the warning includes the exit code of the old one.
+
+Without `reconnect_timeout` (the default), a lost connection makes every following call fail with a `ConnectionError` saying that automatic reconnect is disabled, until the session ends according to `rpc_scope`.
+
+> [!NOTE]
+> A reconnect imports the remote library again, so any server-side state of the library (open applications, sessions, ...) is lost.
 
 ### Log forwarding and error handling
 
