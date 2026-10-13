@@ -4,6 +4,7 @@ Never writes to stdout, so it also works with the stdio transport.
 """
 
 import os
+import tempfile
 
 
 class ReconnectProbeLib:
@@ -13,11 +14,15 @@ class ReconnectProbeLib:
         """Returns the given message prefixed with 'echo: '."""
         return f"echo: {message}"
 
-    def exit_server_after_recording(self, path: str, exit_code: int = 3) -> None:
-        """Appends a line to ``path`` and terminates the server process immediately.
+    def exit_server(self, record_file: str = "", exit_code: int = 3) -> None:
+        """Terminates the server process immediately, while this keyword call is running.
 
-        The line lets a test count how often the keyword actually reached the server.
+        If ``record_file`` is given, a line is appended to that file in the temp directory
+        first, so a test can count how often the keyword actually reached the server. It is
+        a file name rather than a path, so no backslashes of a Windows path are sent as a
+        keyword argument.
         """
-        with open(path, "a", encoding="utf-8") as file:
-            file.write("called\n")
+        if record_file:
+            with open(os.path.join(tempfile.gettempdir(), record_file), "a", encoding="utf-8") as file:
+                file.write("called\n")
         os._exit(exit_code)

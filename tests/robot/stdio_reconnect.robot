@@ -11,13 +11,13 @@ Test Tags         posix
 
 *** Test Cases ***
 Server Process Is Respawned After It Exited
-    VAR    ${record}    ${TEMPDIR}${/}jsonrpcremote-stdio-reconnect-calls.txt
-    Remove File    ${record}
+    VAR    ${record}    jsonrpcremote-stdio-reconnect-calls.txt
+    Remove File    ${TEMPDIR}${/}${record}
     Run Keyword And Expect Error    ConnectionError: *lost while running keyword*exited with code 3*
-    ...    Exit Server After Recording    ${record}    exit_code=${3}
+    ...    Exit Server    ${record}    exit_code=${3}
     ${result}=    Echo    respawned
     Should Be Equal    ${result}    echo: respawned
     ${logs}=    Get Captured Log Messages
     Should Contain Match    ${logs}    *server process exited with code 3*
-    ${calls}=    Get File    ${record}
+    ${calls}=    Get File    ${TEMPDIR}${/}${record}
     Should Be Equal    ${calls}    called\n

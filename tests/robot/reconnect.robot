@@ -46,26 +46,27 @@ Call Made While The Server Is Down Waits For It
     Should Be Equal    ${result}    echo: while down
 
 Running Call Fails And Is Not Sent Again
-    VAR    ${record}    ${TEMPDIR}${/}jsonrpcremote-reconnect-calls.txt
-    Remove File    ${record}
+    VAR    ${record}    jsonrpcremote-reconnect-calls.txt
+    Remove File    ${TEMPDIR}${/}${record}
     Import Library    JsonRpcRemote    ${URI}    ReconnectProbeLib    rpc_scope=TEST
     ...    reconnect_timeout=20s    reconnect_interval=0.2s    AS    Running
     Run Keyword And Expect Error    ConnectionError: *lost while running keyword*not retried*
-    ...    Running.Exit Server After Recording    ${record}
+    ...    Running.Exit Server    ${record}
     Restart Server
     ${result}=    Running.Echo    after
     Should Be Equal    ${result}    echo: after
-    ${calls}=    Get File    ${record}
+    ${calls}=    Get File    ${TEMPDIR}${/}${record}
     Should Be Equal    ${calls}    called\n
 
 Gives Up After The Timeout And Recovers Later
     Import Library    JsonRpcRemote    ${URI}    ReconnectProbeLib    rpc_scope=TEST
     ...    reconnect_timeout=1s    reconnect_interval=0.2s    AS    GivingUp
-    GivingUp.Echo    before
-    Kill Jsonrpc Server
+    # The server ends during this call, so the client has seen the loss before the next one.
+    Run Keyword And Expect Error    ConnectionError: *lost while running keyword*
+    ...    GivingUp.Exit Server
     Run Keyword And Expect Error    ConnectionError: *could not be re-established within 1s*
     ...    GivingUp.Echo    while down
-    Start Server
+    Restart Server
     ${result}=    GivingUp.Echo    after
     Should Be Equal    ${result}    echo: after
 
