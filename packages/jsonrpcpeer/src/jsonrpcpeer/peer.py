@@ -85,6 +85,10 @@ class JsonRpcInvalidRequestError(Exception):
     error_code = JsonRpcErrorCode.INVALID_REQUEST
 
 
+class JsonRpcConnectionClosedError(ConnectionError):
+    """Raised for a request that cannot complete because the connection is closed."""
+
+
 class JsonRpcMethodAlreadyRegisteredError(ValueError):
     """Raised when a handler for a method is already registered."""
 
@@ -145,6 +149,8 @@ class JsonRpcPeer:
         self._id_counter = 1
 
         self.running = False
+        # Set once the read loop has ended; no response can arrive after that.
+        self._closed = False
         self._completion_future: asyncio.Future[bool] = asyncio.Future()
         self._read_task: asyncio.Task[None] | None = None
         self._inflight: set[asyncio.Future[Any]] = set()
@@ -279,6 +285,9 @@ class JsonRpcPeer:
         method: str,
         params: Optional[Any] = None,
     ) -> T:
+        if self._closed:
+            raise JsonRpcConnectionClosedError(f"Cannot send request '{method}': the connection is closed")
+
         tcs: asyncio.Future[Any] = asyncio.Future()
 
         id_str = str(self._id_counter)
@@ -362,6 +371,8 @@ class JsonRpcPeer:
                 self._completion_future.set_exception(e)
         finally:
             self.running = False
+            self._closed = True
+            self._fail_pending_requests()
 
             if not self._completion_future.done():
                 self._completion_future.set_result(True)
@@ -372,6 +383,14 @@ class JsonRpcPeer:
                 # completion future is already set, so ignore cleanup errors here.
                 with contextlib.suppress(Exception):
                     await self.writer.wait_closed()
+
+    def _fail_pending_requests(self) -> None:
+        """Resolve every outstanding request with a connection error instead of leaving it hanging."""
+        pending = list(self._pending_requests.values())
+        self._pending_requests.clear()
+        for tcs in pending:
+            if not tcs.done():
+                tcs.set_exception(JsonRpcConnectionClosedError("Connection closed before a response was received"))
 
     async def handle_message(self, json_str: str) -> None:
         response_id: str | int | None = None
