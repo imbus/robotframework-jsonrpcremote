@@ -8,6 +8,9 @@ schema: spec-driven
 #   context: |
 #     Designs and tasks must cover Windows, macOS, and Linux
 #     Write all artifacts in Spanish
+context: |
+  Follow the repository guidelines in AGENTS.md. English is the project
+  language: write every artifact in English.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

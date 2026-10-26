@@ -14,6 +14,10 @@ robotframework-jsonrpcremote is a [uv](https://github.com/astral-sh/uv) workspac
 - Unit tests (pytest): `tests/unit/`
 - Robot Framework integration tests: `tests/robot/`
 
+## Project Language
+
+English is the project language. Write everything that goes into the repository or onto GitHub in English: code, comments and docstrings, documentation, commit messages, pull requests and issues, and the OpenSpec artifacts under `openspec/`. This holds regardless of the language you use in conversation.
+
 ## Task Routing
 
 - Client library:
