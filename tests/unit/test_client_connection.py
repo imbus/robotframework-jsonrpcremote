@@ -73,7 +73,7 @@ def test_stdio_session_spawns_and_reaps_server() -> None:
     session = _Session(f"stdio:{_stdio_server_command('StdioEchoLib')}", "StdioEchoLib", (), None, 20.0)
     session.start()
     assert session.initialized.wait(20)
-    assert session.last_error is None
+    assert session.start_error is None
 
     process = session._res.process
     assert process is not None

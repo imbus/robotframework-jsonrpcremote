@@ -240,7 +240,8 @@ class _Session:
         self.server_info: ServerInfo | None = None
         self.library_definition: LibraryDefinition | None = None
         self.library_token: str | None = None
-        self.last_error: BaseException | None = None
+        # Why the session failed to start (connecting or the handshake); nothing else.
+        self.start_error: BaseException | None = None
 
         self.client_endpoint = _ClientEndpoint()
         self._res.endpoint = self.client_endpoint
@@ -270,7 +271,7 @@ class _Session:
 
                 await self._initialize_server()
             except Exception as e:
-                self.last_error = e
+                self.start_error = e
                 raise
             finally:
                 self.initialized.set()
@@ -278,9 +279,6 @@ class _Session:
             try:
                 if self._res.peer is not None:
                     await self._res.peer.completion
-            except Exception as e:
-                self.last_error = e
-                raise
             finally:
                 await self.close_connection()
         finally:
@@ -394,14 +392,10 @@ class _Session:
         _finalize_session(self._res, self._timeout)
 
     async def run_keyword(self, name: str, args: list[Any], named: dict[str, Any]) -> RunKeywordResult:
-        try:
-            if self.library_token is None:
-                raise RuntimeError("Library token is not initialized yet")
+        if self.library_token is None:
+            raise RuntimeError("Library token is not initialized yet")
 
-            return await self.client_endpoint.run_keyword(self.library_token, name, args, named)
-        except Exception as e:
-            self.last_error = e
-            raise
+        return await self.client_endpoint.run_keyword(self.library_token, name, args, named)
 
 
 class SessionScope(Enum):
@@ -443,23 +437,28 @@ class JsonRpcRemote:
 
     def _start_session(self) -> _Session:
         if self.__session is None:
-            self.__session = _Session(
-                self._uri, self._library_name, self._library_args, self._library_kw_args, self._timeout
-            )
+            self.__session = self._connect()
 
-            self.__session.start()
-
-            if not self.__session.initialized.wait(self._timeout):
-                if self.__session.last_error is not None:
-                    raise TimeoutError(
-                        "Timeout waiting for JsonRpcRemote session to initialize"
-                    ) from self.__session.last_error
-
-                raise TimeoutError("Timeout waiting for JsonRpcRemote session to initialize")
-
-        if self.__session.last_error is not None:
-            raise self.__session.last_error
         return self.__session
+
+    def _connect(self) -> _Session:
+        """Start a new session; return it only once it has started, otherwise raise why it did not."""
+        session = _Session(self._uri, self._library_name, self._library_args, self._library_kw_args, self._timeout)
+        session.start()
+
+        if not session.initialized.wait(self._timeout):
+            # Read the cause before stopping: stopping fails the pending handshake on its own.
+            cause = session.start_error
+            # Leave no worker thread or half-open connection behind. Stopping is best effort:
+            # the timeout is the error that matters here.
+            with contextlib.suppress(Exception):
+                session.stop()
+            raise TimeoutError("Timeout waiting for JsonRpcRemote session to initialize") from cause
+
+        if session.start_error is not None:
+            raise session.start_error
+
+        return session
 
     @property
     def _session(self) -> _Session:
