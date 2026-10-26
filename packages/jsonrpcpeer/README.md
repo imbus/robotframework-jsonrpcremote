@@ -99,6 +99,17 @@ Exceptions raised within your request handlers are automatically caught and tran
 *   **Standard Exceptions:** Any unhandled exception results in an `Internal Error` (-32603) with the exception message.
 *   **Custom Errors:** You can raise `JsonRpcError` (or subclasses) to return specific error codes and data to the client.
 
+Requests you send fail with `JsonRpcConnectionClosedError`, a subclass of `ConnectionError`, once the connection closes, whether the remote side closed it, reading from it failed, or the peer was stopped. This applies to requests still waiting for a response and to requests sent afterwards, which fail immediately without being written. If reading from the connection failed, that error is attached as the exception's `__cause__`:
+
+```python
+from jsonrpcpeer import JsonRpcConnectionClosedError
+
+try:
+    result = await peer.send_request("add", {"a": 1, "b": 2})
+except JsonRpcConnectionClosedError as e:
+    print(f"Connection lost: {e.__cause__ or 'closed by the remote side'}")
+```
+
 ### Bidirectional Communication
 
 JSON-RPC 2.0 is a peer-to-peer protocol. Although we often use the terms "Client" and "Server":

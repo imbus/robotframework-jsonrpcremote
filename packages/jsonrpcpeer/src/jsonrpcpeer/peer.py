@@ -85,6 +85,10 @@ class JsonRpcInvalidRequestError(Exception):
     error_code = JsonRpcErrorCode.INVALID_REQUEST
 
 
+class JsonRpcConnectionClosedError(ConnectionError):
+    """Raised for a request that cannot complete because the connection is closed."""
+
+
 class JsonRpcMethodAlreadyRegisteredError(ValueError):
     """Raised when a handler for a method is already registered."""
 
@@ -145,6 +149,8 @@ class JsonRpcPeer:
         self._id_counter = 1
 
         self.running = False
+        # Set once the read loop has ended: no response can arrive after that.
+        self._closed = False
         self._completion_future: asyncio.Future[bool] = asyncio.Future()
         self._read_task: asyncio.Task[None] | None = None
         self._inflight: set[asyncio.Future[Any]] = set()
@@ -279,6 +285,9 @@ class JsonRpcPeer:
         method: str,
         params: Optional[Any] = None,
     ) -> T:
+        if self._closed:
+            raise JsonRpcConnectionClosedError(f"Cannot send request '{method}': the connection is closed")
+
         tcs: asyncio.Future[Any] = asyncio.Future()
 
         id_str = str(self._id_counter)
@@ -293,7 +302,16 @@ class JsonRpcPeer:
             message.params = {}
 
         try:
-            await self._send_message(message)
+            try:
+                await self._send_message(message)
+            except Exception:
+                # If the connection closed while the request was being written, the closure has
+                # already failed it: report that instead of the write error. Reading the exception
+                # also keeps asyncio from logging it as never retrieved.
+                closed_error = tcs.exception() if tcs.done() and not tcs.cancelled() else None
+                if isinstance(closed_error, JsonRpcConnectionClosedError):
+                    raise closed_error
+                raise
 
             if self.request_timeout is not None:
                 response = await asyncio.wait_for(tcs, timeout=self.request_timeout)
@@ -308,6 +326,8 @@ class JsonRpcPeer:
             self._pending_requests.pop(id_str, None)
 
     async def io_loop(self) -> None:
+        # The error that ended the loop, if any; it becomes the cause of the failed requests.
+        close_error: BaseException | None = None
         try:
             while self.running:
                 content_length = 0
@@ -353,15 +373,19 @@ class JsonRpcPeer:
 
         except asyncio.IncompleteReadError as e:
             if e.partial or not self.reader.at_eof():
+                close_error = e
                 if not self._completion_future.done():
                     self._completion_future.set_exception(e)
         except asyncio.CancelledError:
             raise
         except BaseException as e:
+            close_error = e
             if not self._completion_future.done():
                 self._completion_future.set_exception(e)
         finally:
             self.running = False
+            # Before anything awaits, so no request can be registered in between.
+            self._mark_closed(close_error)
 
             if not self._completion_future.done():
                 self._completion_future.set_result(True)
@@ -372,6 +396,17 @@ class JsonRpcPeer:
                 # completion future is already set, so ignore cleanup errors here.
                 with contextlib.suppress(Exception):
                     await self.writer.wait_closed()
+
+    def _mark_closed(self, cause: BaseException | None) -> None:
+        """Mark the connection closed and fail every request still waiting for a response."""
+        self._closed = True
+        pending = list(self._pending_requests.values())
+        self._pending_requests.clear()
+        for tcs in pending:
+            if not tcs.done():
+                error = JsonRpcConnectionClosedError("Connection closed before a response was received")
+                error.__cause__ = cause
+                tcs.set_exception(error)
 
     async def handle_message(self, json_str: str) -> None:
         response_id: str | int | None = None
