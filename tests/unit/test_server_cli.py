@@ -1,4 +1,10 @@
+import os
+import socket
+import subprocess
 import sys
+import time
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -58,3 +64,60 @@ def test_run_rejects_unsupported_mode(flag: str, monkeypatch: pytest.MonkeyPatch
     with pytest.raises(SystemExit) as excinfo:
         run()
     assert excinfo.value.code == 2
+
+
+# --- run() reports a failed start ------------------------------------------
+
+
+def _run_server(*args: str, **options: Any) -> tuple["subprocess.CompletedProcess[str]", float]:
+    """Run the real server as a subprocess until it exits; return its result and how long it ran."""
+    started = time.monotonic()
+    result = subprocess.run(
+        [sys.executable, "-m", "robot_jsonrpcremote_server", *args],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        **options,
+    )
+    return result, time.monotonic() - started
+
+
+def test_server_on_a_port_in_use_fails_to_start() -> None:
+    with socket.socket() as other:
+        other.bind(("127.0.0.1", 0))
+        other.listen()
+        port = other.getsockname()[1]
+
+        result, seconds = _run_server("--port", str(port), "SomeLib")
+
+    assert result.returncode == 1
+    assert seconds < 5, "the server waited for a start timeout"
+    assert "Server failed to start" in result.stderr
+    assert f"('127.0.0.1', {port})" in result.stderr
+    assert "up and running" not in result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
+@pytest.mark.parametrize("stdin", ["/dev/null", "regular file"])
+def test_stdio_server_with_a_stdin_that_cannot_be_watched_fails_to_start(stdin: str, tmp_path: Path) -> None:
+    path = Path(os.devnull)
+    if stdin == "regular file":
+        path = tmp_path / "stdin.txt"
+        path.write_text("")
+
+    with path.open() as file:
+        result, seconds = _run_server("--stdio", "SomeLib", stdin=file)
+
+    assert result.returncode == 1
+    assert seconds < 5, "the server waited instead of failing"
+    assert "Server failed to start: stdio mode needs a stdin that can be watched for input" in result.stderr
+    assert "up and running" not in result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
+def test_stdio_server_with_a_closed_pipe_on_stdin_ends_normally() -> None:
+    # `input` writes nothing and closes the pipe: the server starts and sees the end of its input.
+    result, _ = _run_server("--stdio", "SomeLib", input="")
+
+    assert result.returncode == 0
+    assert "Server failed to start" not in result.stderr

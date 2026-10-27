@@ -3,6 +3,8 @@ import asyncio
 import contextlib
 import logging
 import os
+import selectors
+import stat
 import sys
 import threading
 from typing import Any, Awaitable, Callable, Literal, Sequence
@@ -22,6 +24,8 @@ _server: asyncio.AbstractServer | None = None
 _server_lock = threading.RLock()
 _server_started_event = threading.Event()
 _server_stop_event = threading.Event()
+# Why the server thread ended before the server was up; read by run().
+_server_start_error: BaseException | None = None
 
 # Stop hook for transports without an asyncio.AbstractServer (e.g. stdio).
 _loop: asyncio.AbstractEventLoop | None = None
@@ -63,6 +67,11 @@ def set_server(value: asyncio.AbstractServer | None) -> None:
     with _server_lock:
         global _server
         _server = value
+
+
+def _server_has_been_up() -> bool:
+    """Whether the server has been up: a transport sets the stop event only when it ends after being up."""
+    return _server_started_event.is_set() or _server_stop_event.is_set()
 
 
 def set_transport_stop(loop: asyncio.AbstractEventLoop | None, stop: Callable[[], None] | None) -> None:
@@ -159,10 +168,43 @@ async def run_tcp_server(
             _server_stop_event.set()
 
 
+def _check_stdio_stdin() -> None:
+    """Raise unless stdin is open and the event loop can watch it for input, as stdio mode needs.
+
+    An unwatchable stdin such as /dev/null would otherwise never deliver data or EOF.
+    """
+    needs = "stdio mode needs a stdin that can be watched for input, such as a pipe"
+    if sys.stdin is None:
+        raise RuntimeError(f"{needs}, but stdin is closed")
+    try:
+        fd = sys.stdin.fileno()
+        mode = os.fstat(fd).st_mode
+    except (OSError, ValueError):
+        raise RuntimeError(f"{needs}, but stdin is closed") from None
+
+    # The type rule holds on every platform, whatever its selector would accept.
+    if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or os.isatty(fd)):
+        if stat.S_ISREG(mode):
+            found = "a regular file"
+        elif stat.S_ISCHR(mode):
+            found = "a character device such as /dev/null"
+        else:
+            found = "neither a pipe, a socket nor a terminal"
+        raise RuntimeError(f"{needs}, but stdin is {found}")
+
+    # Not every selector can watch every kind of stdin, for example a terminal on macOS.
+    with selectors.DefaultSelector() as probe:
+        try:
+            probe.register(fd, selectors.EVENT_READ)
+        except (OSError, ValueError) as error:
+            raise RuntimeError(f"{needs}, but the event loop cannot watch it: {error}") from error
+
+
 async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     """Wrap stdin/stdout as an asyncio reader/writer pair (POSIX only; binary buffers)."""
     if sys.platform == "win32":
         raise RuntimeError("stdio mode is not supported on Windows; use --tcp instead.")
+    _check_stdio_stdin()
 
     loop = asyncio.get_running_loop()
 
@@ -243,17 +285,24 @@ def run_server(
     libraries: Sequence[str] | None,
     verbose: bool,
 ) -> None:
-    asyncio.run(
-        run_server_async(
-            remote_context=remote_context,
-            mode=mode,
-            addresses=addresses,
-            port=port,
-            pipe_name=pipe_name,
-            libraries=libraries,
-            verbose=verbose,
+    global _server_start_error
+    try:
+        asyncio.run(
+            run_server_async(
+                remote_context=remote_context,
+                mode=mode,
+                addresses=addresses,
+                port=port,
+                pipe_name=pipe_name,
+                libraries=libraries,
+                verbose=verbose,
+            )
         )
-    )
+    except Exception as error:
+        if _server_has_been_up():
+            raise
+        # A failed start: run() reports it, so the thread does not print it as unhandled.
+        _server_start_error = error
 
 
 def stop_server() -> None:
@@ -421,12 +470,18 @@ def run() -> None:
     )
     server_thread.start()
 
-    _server_started_event.wait(5)
-    logger.info("Server is up and running. Press Ctrl+C to stop.")
+    # Wait until the server is up, or until its thread has ended because the start failed.
+    while server_thread.is_alive() and not _server_started_event.wait(0.1):
+        pass
 
-    if not _server_started_event.is_set():
-        logger.error("Server failed to start.")
-        return
+    if not _server_has_been_up():
+        reason = _server_start_error if _server_start_error is not None else "the server thread ended"
+        logger.error("Server failed to start: %s", reason)
+        if _server_start_error is not None:
+            logger.debug("Details of the failed start:", exc_info=_server_start_error)
+        raise SystemExit(1)
+
+    logger.info("Server is up and running. Press Ctrl+C to stop.")
 
     # Let SIGINT/SIGTERM stop the embedded Robot runner gracefully instead of Robot's
     # noisy "Second signal will force exit." abort. The hook loop ends normally and the

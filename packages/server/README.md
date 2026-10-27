@@ -34,6 +34,8 @@ Then point your client library to `tcp://<host>:8271`:
 Library    JsonRpcRemote    uri=tcp://127.0.0.1:8271    library_name=MyLibrary
 ```
 
+If the server cannot start, for example because the port is already in use, it logs `Server failed to start: <reason>` and exits with exit code 1.
+
 ## Quick start (stdio)
 
 In stdio mode the server serves a **single client** over its stdin/stdout, so the client
@@ -52,6 +54,10 @@ Library    JsonRpcRemote    uri=stdio:robot-jsonrpcremote-server --stdio MyLibra
 - **Keep stdout clean.** stdout carries the JSON-RPC frames. The server's own logs go to
   stderr, but a hosted keyword library that `print()`s to stdout will corrupt the stream --
   route such output to stderr (or use Robot's logging) instead.
+- **stdin must be a pipe.** stdio mode needs a pipe or socket on stdin, as a client that
+  launches the server provides. With `/dev/null` or a regular file on stdin, the server fails
+  to start with exit code 1 instead of waiting for input -- so start a Docker container that
+  runs the server in stdio mode with `-i`.
 
 ## CLI options
 

@@ -1,8 +1,12 @@
 """Unit tests for the server's stdio transport wiring."""
 
 import asyncio
+import contextlib
+import os
+import re
 import sys
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -138,6 +142,48 @@ async def test_stdio_streams_raises_on_windows(monkeypatch: pytest.MonkeyPatch) 
 async def test_stdio_streams_raises_on_windows_native() -> None:
     with pytest.raises(RuntimeError, match="not supported on Windows"):
         await server_main._stdio_streams()
+
+
+_POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
+_STDIN_ERROR = "stdio mode needs a stdin that can be watched for input, such as a pipe"
+
+
+@_POSIX_ONLY
+@pytest.mark.parametrize("stdin", ["/dev/null", "regular file", "closed"])
+async def test_stdio_streams_reject_a_stdin_that_cannot_be_watched(
+    stdin: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with contextlib.ExitStack() as files:
+        if stdin == "/dev/null":
+            monkeypatch.setattr(sys, "stdin", files.enter_context(open(os.devnull)))
+        elif stdin == "regular file":
+            path = tmp_path / "stdin.txt"
+            path.write_text("")
+            monkeypatch.setattr(sys, "stdin", files.enter_context(open(path)))
+        else:
+            monkeypatch.setattr(sys, "stdin", None)
+
+        with pytest.raises(RuntimeError, match=re.escape(_STDIN_ERROR)):
+            await server_main._stdio_streams()
+
+
+@_POSIX_ONLY
+async def test_stdio_streams_connect_a_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
+    stdin_read, stdin_write = os.pipe()
+    stdout_read, stdout_write = os.pipe()
+    # The transports close these files.
+    monkeypatch.setattr(sys, "stdin", open(stdin_read))
+    monkeypatch.setattr(sys, "stdout", open(stdout_write, "w"))
+
+    reader, writer = await server_main._stdio_streams()
+
+    # End the input, so the read transport closes itself at EOF.
+    os.close(stdin_write)
+    assert await asyncio.wait_for(reader.read(), 2) == b""
+    # Not wait_closed(): the pipe writer's protocol does not support it.
+    writer.close()
+    await asyncio.sleep(0)
+    os.close(stdout_read)
 
 
 async def test_run_server_async_dispatches_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
