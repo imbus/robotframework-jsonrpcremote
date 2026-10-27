@@ -1,11 +1,13 @@
 import asyncio
+import concurrent.futures
 import contextlib
+import logging
 import shlex
 import weakref
-from collections.abc import Mapping, Sequence
+from collections.abc import Coroutine, Mapping, Sequence
 from enum import Enum
-from threading import Event, Thread
-from typing import Any
+from threading import Event, Lock, Thread
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from robot import result, running
@@ -48,6 +50,11 @@ from robot_jsonrpcremote_protocol import (
 )
 
 from .__version__ import __version__
+
+_T = TypeVar("_T")
+
+# Standard logging: the session's worker thread runs outside Robot Framework's logging.
+_logger = logging.getLogger(__name__)
 
 
 class _ClientEndpoint:
@@ -188,22 +195,39 @@ class _SessionResources:
         self.process: asyncio.subprocess.Process | None = None
 
 
+def _run_on_loop(loop: asyncio.AbstractEventLoop, coro: Coroutine[Any, Any, Any], timeout: float | None) -> None:
+    """Run ``coro`` on ``loop`` from another thread and wait at most ``timeout`` for it. Never raises."""
+    try:
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+    except Exception:
+        # The loop is closed. Close the coroutine, too, so that it is not reported as never awaited.
+        coro.close()
+        return
+    with contextlib.suppress(Exception):
+        future.result(timeout)
+
+
 def _finalize_session(resources: _SessionResources, timeout: float | None) -> None:
-    """Stop the peer and join the worker thread. Idempotent and self-free."""
+    """Stop the peer and join the worker thread. Idempotent, self-free and never raises.
+
+    Each step is bounded by ``timeout``, since the worker may not process the teardown.
+    The stdio backstop and the release of the resources always run.
+    """
     peer = resources.peer
     loop = resources.loop
-    if peer is None or loop is None:
-        return
+    thread = resources.thread
     try:
-        # Best-effort graceful protocol teardown (finalize/shutdown/exit) while the
-        # connection is still alive, before tearing down the transport.
-        endpoint = resources.endpoint
-        if endpoint is not None:
+        if peer is not None and loop is not None:
+            # Best-effort graceful protocol teardown (finalize/shutdown/exit) while the
+            # connection is still alive, before tearing down the transport.
+            endpoint = resources.endpoint
+            if endpoint is not None:
+                _run_on_loop(loop, endpoint.graceful_shutdown(timeout), timeout)
+            _run_on_loop(loop, peer.stop(), timeout)
+        if thread is not None:
+            # join() raises if the worker thread itself ends the session.
             with contextlib.suppress(Exception):
-                asyncio.run_coroutine_threadsafe(endpoint.graceful_shutdown(timeout), loop).result(timeout)
-        asyncio.run_coroutine_threadsafe(peer.stop(), loop).result(timeout)
-        if resources.thread is not None:
-            resources.thread.join(timeout)
+                thread.join(timeout)
     finally:
         # Backstop in case close_connection never reaped the stdio subprocess.
         process = resources.process
@@ -234,6 +258,11 @@ class _Session:
 
         self._res = _SessionResources()
         self.initialized = Event()
+        # Set once the worker has ended; from then on, the session runs no more calls.
+        self.ended = Event()
+        # Calls handed to the worker that are not done yet; guarded by _calls_lock.
+        self._calls: set[concurrent.futures.Future[Any]] = set()
+        self._calls_lock = Lock()
         self._finalizer = weakref.finalize(self, _finalize_session, self._res, self._timeout)
 
         self.server_capabilities: ServerCapabilities | None = None
@@ -263,7 +292,24 @@ class _Session:
         return self._res.loop
 
     def _run(self) -> None:
-        asyncio.run(self._run_client())
+        try:
+            asyncio.run(self._run_client())
+        except Exception:
+            # Raising it would only make the thread print it: the error has already reached
+            # the caller it concerns, as start_error or as the error of the failed call.
+            _logger.debug("Session for '%s' ended with an error", self._uri, exc_info=True)
+        finally:
+            self._end()
+
+    def _end(self) -> None:
+        """Mark the session as ended and fail the calls that its worker will never run."""
+        with self._calls_lock:
+            self.ended.set()
+            stranded = [call for call in self._calls if not call.done()]
+        # Outside the lock: failing a call runs its done-callback, which takes the lock.
+        for call in stranded:
+            with contextlib.suppress(concurrent.futures.InvalidStateError):
+                call.set_exception(self._closed_error())
 
     async def _run_client(self) -> None:
         self._res.loop = asyncio.get_event_loop()
@@ -400,6 +446,35 @@ class _Session:
 
     def stop(self) -> None:
         _finalize_session(self._res, self._timeout)
+
+    def submit(self, coro: Coroutine[Any, Any, _T]) -> concurrent.futures.Future[_T]:
+        """Run ``coro`` on the session's event loop.
+
+        Raises ``ConnectionError`` if the session has not started or has ended. A call
+        that the worker never runs, because it ends first, fails with it, too.
+        """
+        call: concurrent.futures.Future[_T] | None = None
+        with self._calls_lock:
+            loop = self._res.loop
+            if loop is not None and not self.ended.is_set():
+                # Scheduling raises RuntimeError if the loop has been closed meanwhile.
+                with contextlib.suppress(RuntimeError):
+                    call = asyncio.run_coroutine_threadsafe(coro, loop)
+                    self._calls.add(call)
+        if call is None:
+            # Closed, so that it is not reported as never awaited.
+            coro.close()
+            raise self._closed_error()
+        # Outside the lock: the callback runs right here if the call is already done.
+        call.add_done_callback(self._call_done)
+        return call
+
+    def _call_done(self, call: concurrent.futures.Future[Any]) -> None:
+        with self._calls_lock:
+            self._calls.discard(call)
+
+    def _closed_error(self) -> ConnectionError:
+        return ConnectionError(f"Connection to '{self._uri}' is closed")
 
     async def run_keyword(self, name: str, args: list[Any], named: dict[str, Any]) -> RunKeywordResult:
         if self.library_token is None:
@@ -551,16 +626,17 @@ class JsonRpcRemote:
         return self._get_keyword_definition(name).source
 
     async def run_keyword(self, name: str, args: Sequence[Any], named: Mapping[str, Any]) -> Any:
-        self._session.client_endpoint.callback_loop = asyncio.get_event_loop()
+        # Read once: the call stays with this session, and the `finally` cannot start a new one.
+        session = self._session
+        session.client_endpoint.callback_loop = asyncio.get_event_loop()
         try:
             result = await asyncio.wrap_future(
-                asyncio.run_coroutine_threadsafe(
-                    self._session.run_keyword(
+                session.submit(
+                    session.run_keyword(
                         name,
                         [value_to_jsonable(arg) for arg in args],
                         {key: value_to_jsonable(value) for key, value in named.items()},
-                    ),
-                    self._session.loop,
+                    )
                 )
             )
 
@@ -569,4 +645,4 @@ class JsonRpcRemote:
 
             return jsonable_to_value(result.result)
         finally:
-            self._session.client_endpoint.callback_loop = None
+            session.client_endpoint.callback_loop = None

@@ -1,13 +1,23 @@
-"""Unit tests for the JsonRpcRemote client's session handling, against an in-process fake server."""
+"""Unit tests for the JsonRpcRemote client's session handling, against an in-process fake server
+and fakes for the session's event loop."""
 
 import asyncio
-from collections.abc import Iterator
+import contextlib
+import gc
+import logging
+import re
+import threading
+import time
+import warnings
+from collections.abc import Generator, Iterator
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from fake_server import NEVER_ANSWER, FakeServer
 
-from JsonRpcRemote import JsonRpcRemote, _Session
+from jsonrpcpeer import JsonRpcPeer
+from JsonRpcRemote import JsonRpcRemote, _ClientEndpoint, _finalize_session, _Session, _SessionResources
 from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
@@ -148,3 +158,161 @@ def test_failed_handshake_closes_the_connection_before_it_is_reported(
     assert session.initialized.wait(5)
     assert session.start_error is not None
     assert closed_when_reported == [True]
+
+
+# --- a call never waits on an ended session --------------------------------------
+
+
+@pytest.fixture
+def closed_uri(server: FakeServer) -> str:
+    """A URI that nothing listens on: the fake server's, after it stopped."""
+    server.stop()
+    return server.uri
+
+
+async def _noop() -> None:
+    pass
+
+
+@contextlib.contextmanager
+def _no_coroutine_left_unawaited() -> Generator[None, None, None]:
+    gc.collect()  # so that only coroutines created inside the block are counted
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        yield
+        gc.collect()
+    assert not [warning for warning in caught if "was never awaited" in str(warning.message)]
+
+
+def test_submit_to_a_session_that_has_not_started_fails(closed_uri: str) -> None:
+    session = _Session(closed_uri, "FakeLib", None, None, 5)
+
+    with _no_coroutine_left_unawaited(), pytest.raises(ConnectionError, match=r"is closed$"):
+        session.submit(_noop())
+
+
+def test_submit_to_a_session_that_has_ended_fails(closed_uri: str) -> None:
+    session = _Session(closed_uri, "FakeLib", None, None, 5)
+    session.start()
+    assert session.ended.wait(5)
+
+    with _no_coroutine_left_unawaited(), pytest.raises(ConnectionError, match=r"is closed$"):
+        session.submit(_noop())
+
+
+def test_call_stranded_by_the_end_of_the_session_fails(closed_uri: str) -> None:
+    session = _Session(closed_uri, "FakeLib", None, None, 5)
+    # A loop that never runs the call, as when the worker stops right after the call was handed over.
+    idle_loop = asyncio.new_event_loop()
+    session._res.loop = idle_loop
+    call = _noop()
+    try:
+        future = session.submit(call)
+        session.start()  # the worker fails to connect and ends
+
+        assert session.ended.wait(5)
+        assert isinstance(future.exception(timeout=1), ConnectionError)
+    finally:
+        call.close()
+        idle_loop.close()
+
+
+def test_call_after_the_server_closed_the_connection_fails(server: FakeServer, remote: JsonRpcRemote) -> None:
+    session = _session(remote)
+    server.stop()
+    assert session.ended.wait(5)
+
+    with pytest.raises(ConnectionError, match=f"^Connection to '{re.escape(server.uri)}' is closed$"):
+        _call(remote, "after close")
+
+
+# --- the worker thread does not print session errors -----------------------------
+
+
+def test_failed_start_is_not_an_unhandled_thread_exception(
+    closed_uri: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    unhandled: list[threading.ExceptHookArgs] = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+    caplog.set_level(logging.DEBUG, logger="JsonRpcRemote")
+    session = _Session(closed_uri, "FakeLib", None, None, 5)
+
+    # The session's worker body, in a thread the test can join: the session drops its own
+    # reference to the thread when the worker ends.
+    worker = threading.Thread(target=session._run)
+    worker.start()
+    worker.join(5)
+
+    assert isinstance(session.start_error, ConnectionRefusedError)
+    assert unhandled == []
+    logged = [
+        record.exc_info[1]
+        for record in caplog.records
+        if record.name == "JsonRpcRemote" and record.levelno == logging.DEBUG and record.exc_info
+    ]
+    assert logged == [session.start_error]
+
+
+# --- ending a session never raises -----------------------------------------------
+
+
+@contextlib.contextmanager
+def _unresponsive_worker() -> Generator[tuple[asyncio.AbstractEventLoop, threading.Thread], None, None]:
+    """A worker thread whose event loop is blocked, so it does not process scheduled work."""
+    loop = asyncio.new_event_loop()
+    release = threading.Event()
+    worker = threading.Thread(target=loop.run_forever, daemon=True)
+    worker.start()
+    loop.call_soon_threadsafe(release.wait)
+    try:
+        yield loop, worker
+    finally:
+        release.set()
+        # Let the loop run what was scheduled meanwhile, so that no coroutine is left unawaited.
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(5)
+        loop.call_soon_threadsafe(loop.stop)
+        worker.join(5)
+        loop.close()
+
+
+def _resources(loop: asyncio.AbstractEventLoop, thread: threading.Thread | None = None) -> _SessionResources:
+    """The resources of a started session, with a fake peer."""
+    resources = _SessionResources()
+    resources.loop = loop
+    resources.peer = MagicMock(spec=JsonRpcPeer)
+    resources.endpoint = _ClientEndpoint()
+    resources.thread = thread
+    return resources
+
+
+def test_ending_a_session_whose_worker_does_not_respond_returns_in_bounded_time() -> None:
+    with _unresponsive_worker() as (loop, worker):
+        resources = _resources(loop, worker)
+
+        started = time.monotonic()
+        _finalize_session(resources, 0.5)
+
+        assert time.monotonic() - started < 2
+    assert (resources.loop, resources.peer, resources.thread, resources.endpoint) == (None, None, None, None)
+
+
+def test_ending_a_session_whose_event_loop_is_closed_does_not_raise() -> None:
+    loop = asyncio.new_event_loop()
+    loop.close()
+    resources = _resources(loop)
+
+    with _no_coroutine_left_unawaited():
+        _finalize_session(resources, 0.5)
+
+    assert (resources.loop, resources.peer) == (None, None)
+
+
+def test_ending_a_session_without_a_peer_kills_the_recorded_server_process() -> None:
+    resources = _SessionResources()
+    process = MagicMock(returncode=None)
+    resources.process = process
+
+    _finalize_session(resources, 0.5)
+
+    process.kill.assert_called_once_with()
+    assert resources.process is None
