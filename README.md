@@ -108,6 +108,26 @@ Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
     Run Keyword And Expect Error    *boom*    Fail With    boom
     ```
 
+### Lost connections
+
+If the connection of a session ends without the client closing it, for example because the server crashed, was stopped or its container restarted, the client detects it. Every following keyword call in that session fails with:
+
+```text
+ConnectionError: Connection to 'tcp://127.0.0.1:8271' was lost: the connection was closed by the server
+```
+
+The cause is "the connection was closed by the server" when the server closed the connection cleanly. Otherwise it is the type and message of the error that ended the connection, for example `ConnectionResetError: [Errno 104] Connection reset by peer`. For a `stdio:` URI, the exit code of the server process is added, for example `(server process exited with code 3)`.
+
+A keyword that is running when the connection is lost fails with:
+
+```text
+ConnectionError: Connection to 'tcp://127.0.0.1:8271' was lost while running keyword 'My Keyword': the connection was closed by the server
+```
+
+The client does not send that keyword again, since the server may already have run it.
+
+The client does not reconnect on its own. The lost session is kept until it ends according to `rpc_scope`, and the first keyword call after that starts a new session, which connects again and imports the remote library anew. With `rpc_scope=TEST`, only the rest of the current test fails; with `GLOBAL`, every later call of the run fails. Ending a session on the client side, at the end of its `rpc_scope`, is never reported as a lost connection.
+
 ### Server
 
 The simplest option is the ready-made server package, which hosts your existing Robot Framework libraries without code changes:

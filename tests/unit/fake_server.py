@@ -7,6 +7,9 @@ answered by a default handler, unless a test scripted the next answers for its m
 
 import asyncio
 import contextlib
+import socket
+import struct
+import sys
 import threading
 import time
 from collections import defaultdict, deque
@@ -70,7 +73,8 @@ class FakeServer:
     """A scriptable JSON-RPC server speaking the robot protocol, on 127.0.0.1.
 
     Use it as a context manager. ``stop()`` closes the listener and every connection;
-    ``start()`` listens again on the same port.
+    ``start()`` listens again on the same port. ``close_connections()`` closes only the
+    connections and keeps listening.
     """
 
     def __init__(self, keywords: Iterable[str] = ("Echo",)) -> None:
@@ -116,6 +120,10 @@ class FakeServer:
     def stop(self) -> None:
         self._run(self._stop())
 
+    def close_connections(self, reset: bool = False) -> None:
+        """Close every connection and keep listening; ``reset`` aborts them with a TCP reset."""
+        self._run(self._close_connections(reset))
+
     def close(self) -> None:
         """Stop the server and end its thread."""
         self.stop()
@@ -134,12 +142,21 @@ class FakeServer:
         server, self._server = self._server, None
         if server is not None:
             server.close()
-        for peer in list(self._peers):
-            peer.writer.close()
-        if self._clients:
-            await asyncio.wait(list(self._clients), timeout=5)
+        await self._close_connections(reset=False)
         if server is not None:
             await asyncio.wait_for(server.wait_closed(), 5)
+
+    async def _close_connections(self, reset: bool) -> None:
+        for peer in list(self._peers):
+            if reset:
+                # With a zero linger time, closing the socket sends a reset instead of a FIN.
+                linger = struct.pack("HH" if sys.platform == "win32" else "ii", 1, 0)
+                peer.writer.get_extra_info("socket").setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
+                peer.writer.transport.abort()
+            else:
+                peer.writer.close()
+        if self._clients:
+            await asyncio.wait(list(self._clients), timeout=5)
 
     async def _on_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()

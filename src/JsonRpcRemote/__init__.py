@@ -271,8 +271,12 @@ class _Session:
         self.library_token: str | None = None
         # Why the session failed to start (connecting or the handshake); nothing else.
         self.start_error: BaseException | None = None
+        # Why the connection of the started session ended, unless it closed cleanly.
+        self.connection_error: BaseException | None = None
         # Exit code of the spawned stdio server, once close_connection() has released it.
         self.process_returncode: int | None = None
+        # Set when the client ends the session itself; the end of its connection is then no loss.
+        self.closed_by_client = False
 
         self.client_endpoint = _ClientEndpoint()
         self._res.endpoint = self.client_endpoint
@@ -330,7 +334,11 @@ class _Session:
 
             try:
                 if self._res.peer is not None:
-                    await self._res.peer.completion
+                    try:
+                        await self._res.peer.completion
+                    except Exception as e:
+                        self.connection_error = e
+                        raise
             finally:
                 await self.close_connection()
         finally:
@@ -445,7 +453,36 @@ class _Session:
         self._res.thread.start()
 
     def stop(self) -> None:
+        # First: the connection ends during the teardown, and that is no loss.
+        self.closed_by_client = True
         _finalize_session(self._res, self._timeout)
+
+    @property
+    def lost(self) -> bool:
+        """Whether the connection of this started session ended without the client closing it."""
+        if self.library_token is None or self.closed_by_client:
+            return False
+        # The read loop stops as soon as the connection ends, before the worker has cleaned up.
+        peer = self._res.peer
+        return self.ended.is_set() or peer is None or not peer.running
+
+    def loss_cause(self) -> str:
+        """Describe why the connection of this lost session ended."""
+        # Wait for the worker to finish, bounded: close_connection() records a stdio server's exit code.
+        self.ended.wait(self._timeout)
+        error = self.connection_error
+        if error is None:
+            cause = "the connection was closed by the server"
+        else:
+            cause = f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
+        if self.process_returncode is not None:
+            cause += f" (server process exited with code {self.process_returncode})"
+        return cause
+
+    def lost_error(self, keyword: str | None = None) -> ConnectionError:
+        """The error for a call on this lost session, or for ``keyword``, running when it was lost."""
+        running = f" while running keyword '{keyword}'" if keyword is not None else ""
+        return ConnectionError(f"Connection to '{self._uri}' was lost{running}: {self.loss_cause()}")
 
     def submit(self, coro: Coroutine[Any, Any, _T]) -> concurrent.futures.Future[_T]:
         """Run ``coro`` on the session's event loop.
@@ -523,6 +560,9 @@ class JsonRpcRemote:
     def _start_session(self) -> _Session:
         if self.__session is None:
             self.__session = self._connect()
+        elif self.__session.lost:
+            # Kept until it ends with its rpc_scope, so every call until then fails the same way.
+            raise self.__session.lost_error()
 
         return self.__session
 
@@ -644,5 +684,12 @@ class JsonRpcRemote:
                 raise RuntimeError(f"Error executing keyword '{name}': {result.error}")
 
             return jsonable_to_value(result.result)
+        except (ConnectionError, asyncio.CancelledError) as error:
+            # On a healthy session, raise it unchanged: a CancelledError then means that Robot
+            # cancelled the keyword, for example on a timeout.
+            if not session.lost:
+                raise
+            # Not sent again: the server may have run it.
+            raise session.lost_error(name) from error
         finally:
             session.client_endpoint.callback_loop = None

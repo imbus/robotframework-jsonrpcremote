@@ -9,3 +9,4 @@ _BASE = f"{sys.executable} -m robot_jsonrpcremote_server --stdio --pythonpath {_
 
 SERVER_COMMAND = f"{_BASE} StdioEchoLib"
 PROBE_SERVER_COMMAND = f"{_BASE} ServerProbeLib"
+LOSS_SERVER_COMMAND = f"{_BASE} ConnectionLossLib"

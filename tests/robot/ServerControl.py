@@ -59,6 +59,21 @@ class ServerControl:
         finally:
             self._process = None
 
+    def kill_jsonrpc_server(self) -> None:
+        """Kill the server subprocess without letting it shut down, like a crash or a container restart.
+
+        Records the exit code like ``stop_jsonrpc_server``.
+        """
+        if self._process is None:
+            return
+
+        self._killed = True
+        self._process.kill()
+        try:
+            self._last_returncode = self._process.wait(timeout=10)
+        finally:
+            self._process = None
+
     def get_server_exit_code(self) -> int:
         """Return the exit code recorded by the last ``stop_jsonrpc_server`` call."""
         if self._last_returncode is None:

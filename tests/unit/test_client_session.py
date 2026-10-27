@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from fake_server import NEVER_ANSWER, FakeServer
+from fake_server import NEVER_ANSWER, FakeServer, wait_until
 
 from jsonrpcpeer import JsonRpcPeer
 from JsonRpcRemote import JsonRpcRemote, _ClientEndpoint, _finalize_session, _Session, _SessionResources
@@ -217,13 +217,86 @@ def test_call_stranded_by_the_end_of_the_session_fails(closed_uri: str) -> None:
         idle_loop.close()
 
 
-def test_call_after_the_server_closed_the_connection_fails(server: FakeServer, remote: JsonRpcRemote) -> None:
-    session = _session(remote)
-    server.stop()
-    assert session.ended.wait(5)
+# --- a lost connection fails every later call of its session ---------------------
 
-    with pytest.raises(ConnectionError, match=f"^Connection to '{re.escape(server.uri)}' is closed$"):
-        _call(remote, "after close")
+
+def _lost(server: FakeServer) -> str:
+    """The pattern of the error for a call on a session whose connection ``server`` closed."""
+    return f"^Connection to '{re.escape(server.uri)}' was lost: the connection was closed by the server$"
+
+
+def test_connection_closed_by_the_server_is_a_loss(server: FakeServer, remote: JsonRpcRemote) -> None:
+    session = _session(remote)
+    server.close_connections()
+
+    wait_until(lambda: session.lost)
+    assert session.loss_cause() == "the connection was closed by the server"
+
+
+def test_reset_connection_is_a_loss_caused_by_the_reset(server: FakeServer, remote: JsonRpcRemote) -> None:
+    session = _session(remote)
+    server.close_connections(reset=True)
+
+    wait_until(lambda: session.lost)
+    assert session.loss_cause().startswith("ConnectionResetError: ")
+
+
+def test_session_stopped_by_the_client_is_not_a_loss(remote: JsonRpcRemote) -> None:
+    session = _session(remote)
+    session.stop()
+
+    assert session.ended.wait(5)
+    assert not session.lost
+
+
+def test_calls_after_a_loss_fail_without_connecting_again(server: FakeServer, remote: JsonRpcRemote) -> None:
+    session = _session(remote)
+    server.close_connections()
+    wait_until(lambda: session.lost)
+    connections = len(server.connections)
+
+    for message in ("first", "second"):
+        with pytest.raises(ConnectionError, match=_lost(server)):
+            _call(remote, message)
+    assert len(server.connections) == connections
+
+
+def test_call_after_the_lost_session_ended_connects_again(server: FakeServer, remote: JsonRpcRemote) -> None:
+    session = _session(remote)
+    server.close_connections()
+    wait_until(lambda: session.lost)
+    remote._stop_session()  # as at the end of the session's rpc_scope
+    connections = len(server.connections)
+
+    assert _call(remote, "again") == "echo: again"
+    assert len(server.connections) == connections + 1
+
+
+async def test_keyword_running_when_the_connection_is_lost_fails_and_is_not_sent_again(
+    server: FakeServer, remote: JsonRpcRemote
+) -> None:
+    server.script(RUN_KEYWORD_REQUEST, NEVER_ANSWER)
+    call = asyncio.ensure_future(remote.run_keyword("Echo", ["pending"], {}))
+    await asyncio.to_thread(wait_until, lambda: RUN_KEYWORD_REQUEST in server.requests)
+
+    server.close_connections()
+
+    running = "while running keyword 'Echo': the connection was closed by the server"
+    with pytest.raises(ConnectionError, match=f"^Connection to '{re.escape(server.uri)}' was lost {running}$"):
+        await call
+    assert server.requests.count(RUN_KEYWORD_REQUEST) == 1
+
+
+async def test_cancelled_keyword_on_a_healthy_session_is_cancelled(server: FakeServer, remote: JsonRpcRemote) -> None:
+    server.script(RUN_KEYWORD_REQUEST, NEVER_ANSWER)
+    call = asyncio.ensure_future(remote.run_keyword("Echo", ["pending"], {}))
+    await asyncio.to_thread(wait_until, lambda: RUN_KEYWORD_REQUEST in server.requests)
+
+    call.cancel()  # as Robot Framework does when the keyword times out
+
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    assert not _session(remote).lost
 
 
 # --- the worker thread does not print session errors -----------------------------
