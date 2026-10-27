@@ -1,9 +1,10 @@
 import asyncio
 import datetime
+import functools
 import logging
 import uuid
-from collections.abc import Generator, Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from typing import Any, TypeVar, cast
 
 from jsonrpcpeer import JsonRpcPeer, rpc_notification, rpc_request
 from robot_jsonrpcremote_protocol import (
@@ -39,12 +40,34 @@ from ._runner import RobotRemoteContext
 
 logger = logging.getLogger("robot_jsonrpcremote_server.endpoint")
 
+_Handler = TypeVar("_Handler", bound=Callable[..., Awaitable[Any]])
+
 
 def _library_token_id() -> Generator[str, Any, Any]:
     i = 0
     while True:
         yield f"jsonrpc_{i}"
         i += 1
+
+
+def end_connection(peer: JsonRpcPeer) -> None:
+    """End a client connection: the peer's read loop ends, and the peer closes the writer."""
+    peer.running = False
+    peer.reader.feed_eof()
+
+
+def _counted(handler: _Handler) -> _Handler:
+    """Count a request handler as running while it runs, for ``wait_idle()``."""
+
+    @functools.wraps(handler)
+    async def counted(self: "RobotServerEndpoint", *args: Any, **kwargs: Any) -> Any:
+        self._request_started()
+        try:
+            return await handler(self, *args, **kwargs)
+        finally:
+            self._request_finished()
+
+    return cast(_Handler, counted)
 
 
 def _robot_log_level_to_protocol_level(level: str) -> LogLevel:
@@ -81,6 +104,33 @@ class RobotServerEndpoint:
         self._shutdown_received: bool = False
         self._registered = True
         self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
+        # Request handlers in progress; `_idle` is set while there are none.
+        self._requests_in_progress = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    def _request_started(self) -> None:
+        self._requests_in_progress += 1
+        self._idle.clear()
+
+    def _request_finished(self) -> None:
+        self._requests_in_progress -= 1
+        if self._requests_in_progress == 0:
+            self._idle.set()
+
+    async def wait_idle(self, timeout: float | None) -> bool:
+        """Wait until no request handler runs; return ``False`` if one still runs after ``timeout``.
+
+        The peer writes a handler's response in the same step as the handler returns, so once
+        the endpoint is idle, every response has been written.
+        """
+        if self._idle.is_set():
+            return True
+        try:
+            await asyncio.wait_for(self._idle.wait(), timeout)
+        except asyncio.TimeoutError:
+            return False
+        return True
 
     def cleanup(self) -> None:
         self._registered = False
@@ -112,6 +162,7 @@ class RobotServerEndpoint:
             )
 
     @rpc_request(INITIALIZE_REQUEST)
+    @_counted
     async def initialize(self, params: InitializeParams) -> InitializeResult:
         logger.debug("Initializing client: %s", params)
         self.initialize_received = True
@@ -127,6 +178,7 @@ class RobotServerEndpoint:
         self.initialized_received = True
 
     @rpc_request(IMPORT_LIBRARY_REQUEST)
+    @_counted
     async def import_library(self, params: ImportLibraryParams) -> ImportLibraryResult:
         if not self.initialize_received or not self.initialized_received:
             raise RuntimeError("Initialize and Initialized must be received before ImportLibrary.")
@@ -160,6 +212,7 @@ class RobotServerEndpoint:
         )
 
     @rpc_request(RUN_KEYWORD_REQUEST)
+    @_counted
     async def run_keyword(self, params: RunKeywordParams) -> RunKeywordResult:
         if not self.initialize_received or not self.initialized_received:
             raise RuntimeError("Initialize and Initialized must be received before RunKeyword.")
@@ -175,6 +228,7 @@ class RobotServerEndpoint:
             return RunKeywordResult(error=RunKeywordError(message=str(e)))
 
     @rpc_request(FINALIZE_LIBRARY_REQUEST)
+    @_counted
     async def finalize_library(self, params: FinalizeLibraryParams) -> FinalizeLibraryResult:
         logger.debug("Finalizing library token: %s", params.token)
         await self.remote_context.finalize_library(params.token, subscriber=self)
@@ -182,6 +236,7 @@ class RobotServerEndpoint:
         return FinalizeLibraryResult()
 
     @rpc_request(SHUTDOWN_REQUEST)
+    @_counted
     async def shutdown(self, params: ShutdownParams) -> ShutdownResult:
         # Graceful shutdown handshake: the client signals it is about to close.
         # The `exit` notification follows to actually close the connection.
@@ -195,10 +250,8 @@ class RobotServerEndpoint:
         # peer's read loop finish cleanly. We deliberately do NOT call peer.stop()
         # here, since that would cancel this very handler task.
         logger.debug("Exit notification received; closing connection.")
-        peer = self.rpc_peer
-        if peer is not None:
-            peer.running = False
-            peer.reader.feed_eof()
+        if self.rpc_peer is not None:
+            end_connection(self.rpc_peer)
 
     async def finalize_all(self) -> None:
         """Finalize every library still imported on this connection (called on disconnect)."""

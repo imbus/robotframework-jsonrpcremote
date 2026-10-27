@@ -4,6 +4,7 @@ A stub stands in for ``RobotRemoteContext`` so the handlers can be exercised wit
 running Robot suite.
 """
 
+import asyncio
 from typing import Any, cast
 
 from robot_jsonrpcremote_protocol import (
@@ -13,6 +14,7 @@ from robot_jsonrpcremote_protocol import (
     InitializedParams,
     InitializeParams,
     LibraryDefinition,
+    RunKeywordParams,
     ShutdownParams,
 )
 from robot_jsonrpcremote_server._endpoint import RobotServerEndpoint
@@ -95,3 +97,44 @@ async def test_exit_closes_connection() -> None:
 
     assert peer.running is False
     assert peer.reader.eof is True
+
+
+class _BlockingContext(_StubContext):
+    """A stub whose keyword calls run until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+
+    async def run_keyword(self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None) -> str:
+        await self.release.wait()
+        return "done"
+
+
+async def test_wait_idle_returns_once_the_running_handler_finished() -> None:
+    context = _BlockingContext()
+    endpoint = await _initialized_endpoint(context)
+    assert await endpoint.wait_idle(0) is True
+
+    call = asyncio.ensure_future(endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword")))
+    idle = asyncio.ensure_future(endpoint.wait_idle(5))
+    await asyncio.sleep(0.05)
+    assert not idle.done()
+
+    context.release.set()
+
+    assert await idle is True
+    assert call.done()
+    assert call.result().result == "done"
+
+
+async def test_wait_idle_returns_false_while_a_handler_still_runs() -> None:
+    context = _BlockingContext()
+    endpoint = await _initialized_endpoint(context)
+    call = asyncio.ensure_future(endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword")))
+    await asyncio.sleep(0)
+
+    assert await endpoint.wait_idle(0.1) is False
+
+    context.release.set()
+    await call

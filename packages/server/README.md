@@ -79,6 +79,19 @@ robot-jsonrpcremote-server [options] LIBRARY [LIBRARY ...]
 - `ROBOT_JSONRPC_PORT`: Default port.
 - `ROBOT_JSONRPC_PIPE_NAME`: Default pipe name placeholder.
 
+## Stopping the server
+
+Stop the server with SIGTERM or SIGINT (Ctrl+C), for example when a container is stopped. It then:
+
+1. stops accepting connections;
+2. lets the keyword that is running finish and delivers its result to the client;
+3. answers requests that need the Robot runner (importing or finalizing a library, running a keyword) and are still waiting or arrive now with the error `server is shutting down`, without running them;
+4. closes every client connection and exits with code 0.
+
+The server waits up to 5 seconds for the responses still being sent before it closes the connections. A keyword that does not return delays the stop, since Robot Framework runs it synchronously and the server cannot interrupt it; such a server has to be killed, as Kubernetes does after the pod's termination grace period.
+
+The client reports the closed connection as a lost connection for the rest of its session. In stdio mode, the server also stops when the client closes the server's stdin.
+
 ## License
 
 Apache-2.0

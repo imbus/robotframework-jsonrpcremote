@@ -74,6 +74,26 @@ class ServerControl:
         finally:
             self._process = None
 
+    def wait_for_jsonrpc_server_to_exit(self, timeout: float = 10.0) -> int:
+        """Wait until the server process exits on its own and return its exit code.
+
+        Records the exit code like ``stop_jsonrpc_server``. A server that does not exit
+        within ``timeout`` is killed, which ``server_was_killed`` reports.
+        """
+        if self._process is None:
+            raise RuntimeError("JSON-RPC server is not running")
+
+        self._killed = False
+        try:
+            self._last_returncode = self._process.wait(timeout=float(timeout))
+        except subprocess.TimeoutExpired:
+            self._killed = True
+            self._process.kill()
+            self._last_returncode = self._process.wait(timeout=10)
+        finally:
+            self._process = None
+        return self._last_returncode
+
     def get_server_exit_code(self) -> int:
         """Return the exit code recorded by the last ``stop_jsonrpc_server`` call."""
         if self._last_returncode is None:

@@ -4,10 +4,10 @@ import datetime
 import io
 import sys
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Callable, ClassVar, Protocol, Sequence, cast
+from typing import Any, Callable, ClassVar, Protocol, Sequence, TypeVar, cast
 
 from robot import result, running
 from robot.api import TestSuite, get_model
@@ -19,6 +19,14 @@ from robot.utils import NotSet
 
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from robot_jsonrpcremote_protocol import AnyType, ArgumentDefinition, ArgumentKind, KeywordDefinition, LibraryDefinition
+
+_T = TypeVar("_T")
+
+
+def _shutting_down() -> RuntimeError:
+    """The error for a command that the stopping server no longer runs."""
+    return RuntimeError("server is shutting down")
+
 
 REPL_SUITE = """\
 *** Settings ***
@@ -171,6 +179,11 @@ class RobotRemoteContext:
         self.log = log
 
         self._stopped = threading.Event()
+        # Guards submitting a command against the drain at the end of the hook loop, so a
+        # command is either run by the loop, failed by the drain, or rejected on submit.
+        self._lock = threading.Lock()
+        # Set once the hook loop has ended; no command is run after that.
+        self._closed = False
         self._runner_thread = threading.current_thread()
         self._command_queue: Queue[tuple[Callable[[], Any], Future[Any], LogMessageSubscriber | None]] = Queue()
         # The subscriber whose command is currently executing on the runner thread.
@@ -179,19 +192,45 @@ class RobotRemoteContext:
         self._active_subscriber: LogMessageSubscriber | None = None
 
     def _hook_loop(self) -> None:
-        while not self._stopped.is_set():
-            try:
-                command, future, subscriber = self._command_queue.get(timeout=0.1)
-            except Empty:
-                continue
-            self._active_subscriber = subscriber
-            try:
-                result = command()
-                future.set_result(result)
-            except Exception as e:
-                future.set_exception(e)
-            finally:
-                self._active_subscriber = None
+        try:
+            while not self._stopped.is_set():
+                try:
+                    command, future, subscriber = self._command_queue.get(timeout=0.1)
+                except Empty:
+                    continue
+                self._active_subscriber = subscriber
+                try:
+                    result = command()
+                    future.set_result(result)
+                except Exception as e:
+                    future.set_exception(e)
+                finally:
+                    self._active_subscriber = None
+        finally:
+            self._close()
+
+    def _close(self) -> None:
+        """Reject further commands and fail the queued ones: no loop will run them anymore."""
+        queued: list[Future[Any]] = []
+        with self._lock:
+            self._closed = True
+            while True:
+                try:
+                    queued.append(self._command_queue.get_nowait()[1])
+                except Empty:
+                    break
+        # Outside the lock: failing a future runs its callbacks.
+        for future in queued:
+            with contextlib.suppress(InvalidStateError):
+                future.set_exception(_shutting_down())
+
+    def _submit(self, command: Callable[[], _T], subscriber: LogMessageSubscriber | None) -> Future[_T]:
+        future: Future[_T] = Future()
+        with self._lock:
+            if self._closed or self._stopped.is_set():
+                raise _shutting_down()
+            self._command_queue.put((command, future, subscriber))
+        return future
 
     def _log_message(self, message: result.Message) -> None:
         subscriber = self._active_subscriber
@@ -238,6 +277,8 @@ class RobotRemoteContext:
             writer.write_results(settings.get_rebot_settings())
 
     def stop(self) -> None:
+        # Without the lock: a signal handler calls this on the runner thread, which may
+        # hold the lock at that moment.
         self._stopped.set()
 
     async def import_library(
@@ -246,8 +287,7 @@ class RobotRemoteContext:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("import_library cannot be called from the runner thread.")
 
-        future: Future[LibraryDefinition] = Future()
-        self._command_queue.put((lambda: _robot_import_library(library_token, name, args), future, subscriber))
+        future = self._submit(lambda: _robot_import_library(library_token, name, args), subscriber)
 
         return await asyncio.wrap_future(future)
 
@@ -262,8 +302,7 @@ class RobotRemoteContext:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("run_keyword cannot be called from the runner thread.")
 
-        future: Future[AnyType] = Future()
-        self._command_queue.put((lambda: _robot_run_keyword(library_token, name, args, kwargs), future, subscriber))
+        future = self._submit(lambda: _robot_run_keyword(library_token, name, args, kwargs), subscriber)
 
         return await asyncio.wrap_future(future)
 
@@ -271,7 +310,6 @@ class RobotRemoteContext:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("finalize_library cannot be called from the runner thread.")
 
-        future: Future[None] = Future()
-        self._command_queue.put((lambda: _robot_finalize_library(library_token), future, subscriber))
+        future = self._submit(lambda: _robot_finalize_library(library_token), subscriber)
 
         await asyncio.wrap_future(future)

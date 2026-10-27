@@ -5,12 +5,12 @@ import logging
 import os
 import sys
 import threading
-from typing import Awaitable, Callable, Literal, Sequence
+from typing import Any, Awaitable, Callable, Literal, Sequence
 
 from jsonrpcpeer import JsonRpcPeer
 
 from .__version__ import __version__
-from ._endpoint import RobotServerEndpoint
+from ._endpoint import RobotServerEndpoint, end_connection
 from ._runner import RobotRemoteContext
 from ._signals import patch_robot_signal_handling
 
@@ -26,6 +26,12 @@ _server_stop_event = threading.Event()
 # Stop hook for transports without an asyncio.AbstractServer (e.g. stdio).
 _loop: asyncio.AbstractEventLoop | None = None
 _stop_callable: Callable[[], None] | None = None
+
+# The connected clients by the task that handles them; only used on the server's event loop.
+_clients: dict["asyncio.Task[Any]", tuple[JsonRpcPeer, RobotServerEndpoint]] = {}
+
+# How long a stopping server waits for the requests in progress, for all clients together.
+_STOP_GRACE_PERIOD = 5.0
 
 
 def _parse_addresses(value: str | None) -> list[str] | None:
@@ -80,6 +86,9 @@ async def handle_client(
     peer = JsonRpcPeer(reader, writer)
     endpoint = RobotServerEndpoint(remote_context=remote_context, libraries=libraries, verbose=verbose)
     peer.attach_endpoint(endpoint)
+    task = asyncio.current_task()
+    assert task is not None
+    _clients[task] = (peer, endpoint)
 
     try:
         await peer.run()
@@ -97,6 +106,19 @@ async def handle_client(
             writer.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
+        _clients.pop(task, None)
+
+
+async def close_clients() -> None:
+    """Let the requests in progress deliver their responses, then close every client connection."""
+    clients = dict(_clients)
+    if not clients:
+        return
+    logger.debug("Closing %d client connection(s).", len(clients))
+    await asyncio.gather(*(endpoint.wait_idle(_STOP_GRACE_PERIOD) for _, endpoint in clients.values()))
+    for peer, _ in clients.values():
+        end_connection(peer)
+    await asyncio.wait(list(clients), timeout=_STOP_GRACE_PERIOD)
 
 
 async def run_tcp_server(
@@ -113,18 +135,26 @@ async def run_tcp_server(
     bind_targets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
     logger.info("Robot JSON-RPC Remote Server listening on %s", bind_targets)
 
+    stop_requested = asyncio.Event()
     async with server:
         set_server(server)
-        set_transport_stop(asyncio.get_running_loop(), server.close)
+        set_transport_stop(asyncio.get_running_loop(), stop_requested.set)
         _server_started_event.set()
         _server_stop_event.clear()
         try:
-            await server.serve_forever()
+            # Not serve_forever(): once stopped, it waits for every client connection to close,
+            # which on Python >= 3.12.1 would block the client shutdown below. The server
+            # accepts connections since start_server().
+            await stop_requested.wait()
         except asyncio.CancelledError:
             logger.debug("Server task cancelled; shutting down.")
         finally:
             set_server(None)
             set_transport_stop(None, None)
+            # Accept no new connections, then close the ones there are before `async with`
+            # waits for them.
+            server.close()
+            await close_clients()
             _server_started_event.clear()
             _server_stop_event.set()
 
@@ -155,13 +185,19 @@ async def run_stdio_server(
     logger.info("Robot JSON-RPC Remote Server serving on stdio")
 
     client_task = asyncio.ensure_future(handle_client(remote_context, reader, writer, verbose, libraries))
+    stopping: set["asyncio.Task[None]"] = set()
 
-    def _stop() -> None:
-        # Called via stop_server() on SIGINT/SIGTERM: end the read loop, cancel as backstop.
-        if not reader.at_eof():
-            reader.feed_eof()
+    async def close_client() -> None:
+        await close_clients()
+        # Fallback, if the client did not end within the grace period.
         if not client_task.done():
             client_task.cancel()
+
+    def _stop() -> None:
+        # Called via stop_server() on SIGINT/SIGTERM. Keeps a reference to the task until it is done.
+        task = loop.create_task(close_client())
+        stopping.add(task)
+        task.add_done_callback(stopping.discard)
 
     set_transport_stop(loop, _stop)
     _server_started_event.set()

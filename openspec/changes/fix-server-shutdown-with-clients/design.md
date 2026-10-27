@@ -9,11 +9,11 @@ See proposal.md for the motivation and specs/server/spec.md for the requirements
 1. SIGTERM/SIGINT reaches Robot's signal monitor, which `_signals.py` patches to call `RobotRemoteContext.stop()`.
 2. `stop()` sets `_stopped`. The hook loop runs on the main thread, as a Robot keyword. It finishes the command it is executing and then exits, leaving any queued commands unprocessed.
 3. `remote_context.run()` returns. `run()` calls `stop_server()`, which schedules `server.close` on the server thread's loop.
-4. `serve_forever()` ends. `async with server` then calls `wait_closed()`.
+4. `server.close` cancels `serve_forever()`, which then calls `close()` and awaits `wait_closed()` itself before it ends. `async with server` calls `wait_closed()` again.
 
 **Why it hangs**, depending on the Python version:
 
-- **Python ≥ 3.12.1:** `wait_closed()` waits for all client connections. Nobody closes them, so the non-daemon server thread blocks forever and the process never exits. Requests that arrive meanwhile are queued for a runner that is gone and are never answered.
+- **Python ≥ 3.12.1:** `wait_closed()` waits for all client connections. Nobody closes them, so `serve_forever()` never ends, the non-daemon server thread blocks forever and the process never exits. Requests that arrive meanwhile are queued for a runner that is gone and are never answered.
 - **Python 3.10:** `wait_closed()` returns immediately. `asyncio.run` then cancels the `handle_client` tasks. Their `finally` calls `endpoint.finalize_all()`, which queues commands for the stopped runner and waits forever. Same result.
 
 **Two existing mechanisms to reuse:**
@@ -57,14 +57,14 @@ See proposal.md for the motivation and specs/server/spec.md for the requirements
 
 ### 4. Client shutdown runs inside `run_tcp_server`, before `async with` ends
 
-After `serve_forever()` has ended through `server.close()`, and before leaving `async with server`, `run_tcp_server` awaits a coroutine that runs for all registered clients:
+`run_tcp_server` no longer waits in `serve_forever()`. Once it is cancelled, `serve_forever()` awaits `wait_closed()` itself, which on ≥ 3.12.1 waits for every client connection, so nothing after it would run while a client is connected. Instead, the TCP stop hook sets an `asyncio.Event`, and `run_tcp_server` waits for it; the server already accepts connections after `start_server()`. Once the event is set, and before leaving `async with server`, `run_tcp_server` closes the listener with `server.close()`, so no new connections are accepted, and awaits a coroutine that runs for all registered clients:
 
 1. Wait until the endpoint is idle, bounded by a fixed grace period of 5 seconds for all clients together.
 2. End the connection as the `exit` handler does: `peer.running = False` and `peer.reader.feed_eof()`.
 3. Wait for the client tasks to finish, bounded.
 
 - **Why there:** On 3.10 the clients are closed before `asyncio.run` starts cancelling tasks. On ≥ 3.12.1 `wait_closed()` returns because no connection is left.
-- **Alternative:** a separate task started from the stop hook. On 3.10 `asyncio.run` would cancel it together with the clients, which cuts the drain short.
+- **Alternative:** keep `serve_forever()` and let the stop hook start the client shutdown as a task, which `run_tcp_server` awaits once `serve_forever()` has ended. That also works on both versions, but the task then runs alongside the `wait_closed()` inside `serve_forever()`, which has more moving parts. A task that `run_tcp_server` does not await would be cancelled on 3.10 by `asyncio.run` together with the clients, which cuts the drain short.
 
 ### 5. stdio uses the same sequence for its single client
 
