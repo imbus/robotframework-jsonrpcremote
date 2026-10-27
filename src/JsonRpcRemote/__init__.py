@@ -3,8 +3,10 @@ import concurrent.futures
 import contextlib
 import logging
 import shlex
+import time
 import weakref
 from collections.abc import Coroutine, Mapping, Sequence
+from dataclasses import dataclass, fields
 from enum import Enum
 from threading import Event, Lock, Thread
 from typing import Any, TypeVar
@@ -13,6 +15,7 @@ from urllib.parse import urlparse
 from robot import result, running
 from robot.api import logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
+from robot.utils import secs_to_timestr, timestr_to_secs
 
 from jsonrpcpeer import JsonRpcPeer
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
@@ -55,6 +58,57 @@ _T = TypeVar("_T")
 
 # Standard logging: the session's worker thread runs outside Robot Framework's logging.
 _logger = logging.getLogger(__name__)
+
+
+def _time_option(name: str, value: float | str) -> float:
+    """Parse the option ``name``, given in seconds or as a Robot Framework time string such as ``1 minute``."""
+    try:
+        seconds: float = timestr_to_secs(value, round_to=None)
+    except ValueError as error:
+        raise ValueError(f"Invalid value for {name}: {error}") from None
+    if seconds < 0:
+        raise ValueError(f"Invalid value for {name}: {value!r} is negative.")
+    return seconds
+
+
+def _describe_error(error: BaseException) -> str:
+    return f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
+
+
+def _attempts(count: int) -> str:
+    return f"{count} attempt" if count == 1 else f"{count} attempts"
+
+
+def _definition_changes(registered: LibraryDefinition | None, current: LibraryDefinition | None) -> str:
+    """Describe how ``current`` differs from ``registered``; empty if they are equal.
+
+    The names are not compared: the server names each imported instance of a library differently.
+    """
+    if registered is None or current is None:
+        return "" if registered is current else "the definition is missing"
+    old = {keyword.name: keyword for keyword in registered.keywords}
+    new = {keyword.name: keyword for keyword in current.keywords}
+    changes = [
+        f"{label}: {', '.join(names)}"
+        for label, names in (
+            ("keywords added", [name for name in new if name not in old]),
+            ("keywords removed", [name for name in old if name not in new]),
+            ("keywords changed", [name for name in new if name in old and new[name] != old[name]]),
+            (
+                "library attributes changed",
+                [
+                    field.name
+                    for field in fields(registered)
+                    if field.name not in ("name", "keywords")
+                    and getattr(registered, field.name) != getattr(current, field.name)
+                ],
+            ),
+        )
+        if names
+    ]
+    if changes:
+        return "; ".join(changes)
+    return "" if registered.keywords == current.keywords else "the order of the keywords changed"
 
 
 class _ClientEndpoint:
@@ -471,10 +525,7 @@ class _Session:
         # Wait for the worker to finish, bounded: close_connection() records a stdio server's exit code.
         self.ended.wait(self._timeout)
         error = self.connection_error
-        if error is None:
-            cause = "the connection was closed by the server"
-        else:
-            cause = f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
+        cause = "the connection was closed by the server" if error is None else _describe_error(error)
         if self.process_returncode is not None:
             cause += f" (server process exited with code {self.process_returncode})"
         return cause
@@ -526,6 +577,19 @@ class SessionScope(Enum):
     GLOBAL = "GLOBAL"
 
 
+@dataclass
+class _Outage:
+    """From a lost connection or a failed connection attempt to the next successful connection."""
+
+    # time.monotonic() when the client began to connect again.
+    since: float
+    # Why the connection of the last session was lost, until a new session replaces it or its scope ends.
+    loss: str | None = None
+    failed_attempts: int = 0
+    # Set when the connect retry window passed without a connection; from then on, each call tries once.
+    window_spent: bool = False
+
+
 class JsonRpcRemote:
     ROBOT_LIBRARY_VERSION = __version__
     ROBOT_LIBRARY_SCOPE = "GLOBAL"
@@ -536,35 +600,110 @@ class JsonRpcRemote:
         uri: str = "tcp://127.0.0.1:8271",
         library_name: str | None = None,
         *library_args: Any,
-        rpc_timeout: float = 10.0,
+        rpc_timeout: float | str = 10.0,
         rpc_scope: SessionScope = SessionScope.SUITE,
+        rpc_connect_retry_timeout: float | str = 0,
+        rpc_connect_retry_interval: float | str = 1.0,
         **library_kw_args: Any,
     ) -> None:
+        # First: __del__ runs even if the options below are rejected.
+        self.__session: _Session | None = None
+        self._outage: _Outage | None = None
+        # The error for every call after the library definition changed, until the session's scope ends.
+        self._incompatible: str | None = None
+
         self._uri = uri
-        self._timeout = rpc_timeout
+        self._timeout = _time_option("rpc_timeout", rpc_timeout)
         self._scope = rpc_scope
+        self._retry_timeout = _time_option("rpc_connect_retry_timeout", rpc_connect_retry_timeout)
+        self._retry_interval = _time_option("rpc_connect_retry_interval", rpc_connect_retry_interval)
+        if self._retry_timeout > 0 and self._retry_interval <= 0:
+            raise ValueError("Invalid value for rpc_connect_retry_interval: must be greater than 0 with connect retry.")
 
         self._library_name = library_name
         self._library_args = library_args
         self._library_kw_args = library_kw_args or None
 
-        self.__session: _Session | None = None
-
         self.ROBOT_LIBRARY_LISTENER = self
 
-        self._start_session()
+        # Robot Framework registers the keywords from this definition and never asks again.
+        self._registered_definition: LibraryDefinition | None = None
+        self._registered_definition = self._start_session().library_definition
 
     def __del__(self) -> None:
         self._stop_session()
 
     def _start_session(self) -> _Session:
+        if self._incompatible is not None:
+            raise ConnectionError(self._incompatible)
+
+        if self.__session is not None and self.__session.lost:
+            if self._retry_timeout <= 0:
+                # Kept until it ends with its rpc_scope, so every call until then fails the same way.
+                raise self.__session.lost_error()
+            # Replaced right away; the cause is kept for the warning after the reconnect.
+            lost, self.__session = self.__session, None
+            self._outage = _Outage(time.monotonic(), loss=lost.loss_cause())
+            lost.stop()
+
         if self.__session is None:
-            self.__session = self._connect()
-        elif self.__session.lost:
-            # Kept until it ends with its rpc_scope, so every call until then fails the same way.
-            raise self.__session.lost_error()
+            session = self._connect_with_retry()
+            outage, self._outage = self._outage, None
+            if outage is not None and outage.loss is not None:
+                self._check_definition(session)
+                logger.warn(
+                    f"Connection to '{self._uri}' was lost: {outage.loss}. Reconnected after "
+                    f"{time.monotonic() - outage.since:.1f}s ({_attempts(outage.failed_attempts + 1)}); "
+                    "the remote library was imported again, so its server-side state was reset."
+                )
+            elif outage is not None and self._retry_timeout > 0:
+                logger.info(
+                    f"Connected to '{self._uri}' after {time.monotonic() - outage.since:.1f}s "
+                    f"({_attempts(outage.failed_attempts + 1)})."
+                )
+            self.__session = session
 
         return self.__session
+
+    def _check_definition(self, session: _Session) -> None:
+        """Stop ``session`` and raise if its library definition is not the one Robot Framework registered."""
+        changes = _definition_changes(self._registered_definition, session.library_definition)
+        if changes:
+            session.stop()
+            self._incompatible = (
+                f"Reconnected to '{self._uri}', but the library definition changed since the library was "
+                f"imported ({changes}); the library cannot be used until its session ends according to rpc_scope."
+            )
+            raise ConnectionError(self._incompatible)
+
+    def _connect_with_retry(self) -> _Session:
+        """Connect; with connect retry, try again every interval until the window has passed.
+
+        Once a window has passed without a connection, every call makes one attempt until a
+        connection succeeds again.
+        """
+        started = time.monotonic()
+        retry = self._retry_timeout > 0 and not (self._outage is not None and self._outage.window_spent)
+        deadline = started + self._retry_timeout
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                return self._connect()
+            except Exception as error:
+                if self._outage is None:
+                    self._outage = _Outage(started)
+                self._outage.failed_attempts += 1
+                if not retry:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._outage.window_spent = True
+                    raise ConnectionError(
+                        f"Could not connect to '{self._uri}' within {secs_to_timestr(self._retry_timeout)} "
+                        f"({_attempts(attempts)}): {_describe_error(error)}"
+                    ) from error
+            time.sleep(min(self._retry_interval, remaining))
 
     def _connect(self) -> _Session:
         """Start a new session; return it only once it has started, otherwise raise why it did not."""
@@ -590,17 +729,23 @@ class JsonRpcRemote:
         return self._start_session()
 
     def _stop_session(self) -> None:
+        # The session ends: the next one is no reconnect, and its library definition is not checked.
+        self._incompatible = None
+        if self._outage is not None:
+            self._outage.loss = None
+
         if self.__session is not None:
             self.__session.stop()
 
             self.__session = None
 
+    # Also without a stored session: a lost connection or a changed library definition ends with the scope.
     def _end_test(self, data: running.TestCase, result: result.TestCase) -> None:
-        if self._scope == SessionScope.TEST and self.__session is not None:
+        if self._scope == SessionScope.TEST:
             self._stop_session()
 
     def _end_suite(self, data: running.TestSuite, result: result.TestSuite) -> None:
-        if self._scope == SessionScope.SUITE and self.__session is not None:
+        if self._scope == SessionScope.SUITE:
             self._stop_session()
 
     @property

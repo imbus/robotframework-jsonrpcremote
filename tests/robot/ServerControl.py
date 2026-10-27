@@ -21,10 +21,12 @@ class ServerControl:
         pythonpath: str = "",
         variables: str = "",
         timeout: float = 20.0,
+        wait: bool = True,
     ) -> None:
         """Start the real server as a subprocess and wait until it accepts connections.
 
         ``libraries`` and ``variables`` (``name:value``) are whitespace-separated lists.
+        With ``wait`` false, it returns at once, so that calls can be made while the server starts.
         """
         if self._process is not None:
             raise RuntimeError("JSON-RPC server is already running")
@@ -37,7 +39,8 @@ class ServerControl:
         command += libraries.split()
 
         self._process = subprocess.Popen(command)
-        self._wait_for_port("127.0.0.1", int(port), float(timeout))
+        if wait:
+            self._wait_for_port("127.0.0.1", int(port), float(timeout))
 
     def stop_jsonrpc_server(self) -> None:
         """Terminate the server subprocess, killing it if it does not stop in time.

@@ -82,6 +82,8 @@ class FakeServer:
         self.keywords = list(keywords)
         self.connections: list[FakeConnection] = []
         self.requests: list[str] = []
+        # The params of each request in ``requests``.
+        self.params: list[Any] = []
         self._scripts: defaultdict[str, deque[Any]] = defaultdict(deque)
         self._server: asyncio.AbstractServer | None = None
         self._peers: set[JsonRpcPeer] = set()
@@ -185,6 +187,7 @@ class FakeServer:
     def _handler(self, method: str) -> Callable[[Any], Coroutine[Any, Any, Any]]:
         async def handle(params: Any) -> Any:
             self.requests.append(method)
+            self.params.append(params)
             scripted = self._scripts[method]
             answer = scripted.popleft() if scripted else _DEFAULT
             if answer is NEVER_ANSWER:
@@ -206,8 +209,9 @@ class FakeServer:
         if method == IMPORT_LIBRARY_REQUEST:
             message = ArgumentDefinition(name="message", kind=ArgumentKind.POSITIONAL_OR_NAMED)
             keywords = [KeywordDefinition(name=name, args=[message]) for name in self.keywords]
-            definition = LibraryDefinition(name=params.get("name") or "FakeLib", keywords=keywords)
-            return ImportLibraryResult(token=f"token-{len(self.requests)}", definition=definition)
+            token = f"{params.get('name') or 'FakeLib'}_{len(self.requests)}"
+            # Like the real server: the library is named after the token of its import.
+            return ImportLibraryResult(token=token, definition=LibraryDefinition(name=token, keywords=keywords))
         if method == RUN_KEYWORD_REQUEST:
             args = params.get("args") or []
             return RunKeywordResult(result=f"echo: {args[0]}" if args else "echo")

@@ -110,7 +110,13 @@ When connect retry is enabled, the next call after a lost connection SHALL repla
 
 ### Requirement: A changed library definition after a reconnect makes the library unusable until the session ends
 
-After reconnecting following a lost connection, the client SHALL compare the full definition of the remote library with the one registered when the library was imported. If they differ, it SHALL close the new session and fail the call with a `ConnectionError` stating that the library definition changed. Every further call SHALL fail the same way, without connecting, until the session ends according to `rpc_scope`.
+After reconnecting following a lost connection, the client SHALL compare the definition of the remote library with the one registered when the library was imported. If they differ, it SHALL close the new session and fail the call with a `ConnectionError` stating that the library definition changed. Every further call SHALL fail the same way, without connecting, until the session ends according to `rpc_scope`.
+
+#### Scenario: Server comes back with the same library
+
+- **WHEN** connect retry is enabled
+- **AND** the server restarts with the same library, which it imports as a new instance with a new name
+- **THEN** the next call returns its result
 
 #### Scenario: Server comes back with a different library version
 

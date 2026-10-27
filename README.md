@@ -62,8 +62,10 @@ Example Test
 **Arguments:**
 *   `uri`: The address of the remote server (default: `tcp://127.0.0.1:8271`).
 *   `library_name`: The name of the library to initialize on the remote server (optional).
-*   `rpc_timeout`: Connection timeout in seconds (default: `10.0`).
+*   `rpc_timeout`: Connection timeout in seconds or as a Robot Framework time string such as `15s` (default: `10.0`).
 *   `rpc_scope`: The scope of the remote session (`TEST`, `SUITE`, `GLOBAL`). Default is `SUITE`.
+*   `rpc_connect_retry_timeout`: How long to keep trying to connect when the server is not reachable, in seconds or as a time string such as `1 minute` (default: `0`, no retry). See [Lost connections](#lost-connections).
+*   `rpc_connect_retry_interval`: How long to wait between two connection attempts while retrying, in seconds or as a time string (default: `1.0`). Must be greater than 0 when retry is enabled.
 *   `*args`: Positional arguments passed to the remote library initialization.
 *   `**kwargs`: Keyword arguments for the remote library initialization (sent as Robot `name=value` arguments and converted server-side via the library's `__init__` signature).
 
@@ -83,13 +85,16 @@ Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
 
 Argument types are preserved end-to-end: positional values keep their (JSON-serializable) Robot types, and named values are converted **server-side** according to the remote library's `__init__` type hints (so `int`, `float`, `bool`, `Decimal`, `date`, `Enum`, `list`, `dict`, ... all work; without type hints they arrive as strings).
 
-The client's own options — `rpc_timeout` and `rpc_scope` — are consumed by `JsonRpcRemote` itself and are **not** forwarded to the remote library, so you can mix them freely with the library's named init arguments:
+The client's own options — `rpc_timeout`, `rpc_scope`, `rpc_connect_retry_timeout` and `rpc_connect_retry_interval` — are consumed by `JsonRpcRemote` itself and are **not** forwarded to the remote library, so you can mix them freely with the library's named init arguments:
 
 ```robot
 *** Settings ***
 Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
 ...            greeting=hello    rpc_timeout=20    rpc_scope=TEST
+...            rpc_connect_retry_timeout=1 minute    rpc_connect_retry_interval=2s
 ```
+
+An option value that is not a number of seconds or a time string, or that is negative, makes the library import fail with an error that names the option.
 
 ### Session scope (`rpc_scope`)
 
@@ -126,7 +131,43 @@ ConnectionError: Connection to 'tcp://127.0.0.1:8271' was lost while running key
 
 The client does not send that keyword again, since the server may already have run it.
 
-The client does not reconnect on its own. The lost session is kept until it ends according to `rpc_scope`, and the first keyword call after that starts a new session, which connects again and imports the remote library anew. With `rpc_scope=TEST`, only the rest of the current test fails; with `GLOBAL`, every later call of the run fails. Ending a session on the client side, at the end of its `rpc_scope`, is never reported as a lost connection.
+Without connect retry, the client does not reconnect on its own. The lost session is kept until it ends according to `rpc_scope`, and the first keyword call after that starts a new session, which connects again and imports the remote library anew. With `rpc_scope=TEST`, only the rest of the current test fails; with `GLOBAL`, every later call of the run fails. Ending a session on the client side, at the end of its `rpc_scope`, is never reported as a lost connection.
+
+#### Connect retry
+
+Connect retry lets the client wait for a server that is not reachable yet, for example while its container restarts. It is off by default; enable it with `rpc_connect_retry_timeout`:
+
+```robot
+*** Settings ***
+Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
+...            rpc_connect_retry_timeout=1 minute    rpc_connect_retry_interval=2s
+```
+
+With connect retry, a failed connection attempt is repeated every `rpc_connect_retry_interval` until it succeeds or `rpc_connect_retry_timeout` has passed. This applies to every connection: at the library import, when a new session starts, and when the client replaces a lost session. Each attempt is still limited by `rpc_timeout`.
+
+If the time passes without a connection, the call fails with an error such as:
+
+```text
+ConnectionError: Could not connect to 'tcp://127.0.0.1:8271' within 1 minute (31 attempts): ConnectionRefusedError: [Errno 111] Connect call failed ('127.0.0.1', 8271)
+```
+
+The client waits like that only once per outage: until a connection succeeds again, every further call makes a single attempt and fails right away if the server is still unreachable. After the next successful connection, a new outage gets the full time again. A connection that needed more than one attempt is logged at INFO level.
+
+After a lost connection, the next keyword call replaces the session: it connects again and imports the remote library anew. The client then logs a warning such as:
+
+```text
+Connection to 'tcp://127.0.0.1:8271' was lost: the connection was closed by the server. Reconnected after 12.4s (7 attempts); the remote library was imported again, so its server-side state was reset.
+```
+
+As the warning says, the new session starts with a new instance of the remote library on the server: whatever the library kept in memory, such as an open application or a login, is gone. A keyword that was running when the connection was lost still fails and is not sent again.
+
+Robot Framework registers the remote library's keywords once, at the library import. After a reconnect, the client therefore compares the library definition, its keywords and their arguments, documentation and sources, with the one from the import. If the server came back with a different definition, for example after an update of the library, the call fails with:
+
+```text
+ConnectionError: Reconnected to 'tcp://127.0.0.1:8271', but the library definition changed since the library was imported (keywords added: New Keyword); the library cannot be used until its session ends according to rpc_scope.
+```
+
+Every further call fails the same way, without connecting, until the session ends according to `rpc_scope`. A new session after that is not compared.
 
 ### Server
 

@@ -74,7 +74,7 @@ When the window passes, it marks the window spent and raises `ConnectionError` w
 
 With retry on, `_start_session()` turns a stored lost session into "pending loss": it records the cause as built by `fix-client-lost-connection`, drops the session and connects through the retry loop. If the next successful connection follows a pending loss:
 
-- **Definition check:** It compares `session.library_definition` with the definition registered at import, using full dataclass equality. If they differ, it stops the new session and stores an "incompatible" error. This call and every further call raise that error without connecting, until `_stop_session()`.
+- **Definition check:** It compares `session.library_definition` with the definition registered at import, field by field, except `name`. The server imports every instance of a library under the token of that import and reports it as the name, so the name differs on every import; the client does not use it. The error names what changed: added, removed or changed keywords and changed library attributes. If they differ, it stops the new session and stores an "incompatible" error. This call and every further call raise that error without connecting, until `_stop_session()`.
 - **Warning:** Otherwise it logs a warning with Robot's logger. We are on Robot's thread, inside the keyword call, so that works. Example: "Connection to '<uri>' was lost (<cause>). Reconnected after 3.2s (4 attempt(s)); the remote library was imported again, so its server-side state was reset." The cause already includes a `stdio` exit code.
 
 ### 5. The registered definition is captured at import
@@ -99,4 +99,4 @@ The README argument list gets the two options and notes that `rpc_timeout` accep
 - **[Blocking the Robot thread]** Waiting for the server blocks the keyword call for up to the window plus one attempt, as connecting already blocks today. → That is intended; the window bounds it.
 - **[Window spent across scopes]** If an outage outlasts the window, later tests fail fast until the server is back, even with a new scope. → That is the agreed "one window per outage". The first successful connection resets it.
 - **[Definition compared only after a loss]** A new session at a scope boundary against an updated server is not checked, so keyword registrations may be stale. → Decided explicitly; same behavior as today.
-- **[Strict comparison]** Equal libraries can still differ in `source` paths, for example a different install location after a redeploy. → Accepted as decided; the error message names the change, so such cases stay understandable.
+- **[Strict comparison]** Equal libraries can still differ in `source` paths, for example a different install location after a redeploy. → Accepted as decided; the error message names the change, so such cases stay understandable. Only `name` is left out, because the server sets it per import (found during apply).
