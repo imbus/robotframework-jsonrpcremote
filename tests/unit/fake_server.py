@@ -88,7 +88,9 @@ class FakeServer:
         self._server: asyncio.AbstractServer | None = None
         self._peers: set[JsonRpcPeer] = set()
         self._clients: set[asyncio.Task[None]] = set()
-        self._loop = asyncio.new_event_loop()
+        # A selector loop on every platform: Windows' default proactor loop shuts a socket down before
+        # closing it, so the client would see a clean close instead of the reset of close_connections().
+        self._loop = asyncio.SelectorEventLoop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="FakeServer", daemon=True)
         self._thread.start()
 
