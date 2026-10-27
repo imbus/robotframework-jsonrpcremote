@@ -83,3 +83,27 @@ def test_stdio_session_spawns_and_reaps_server() -> None:
 
     assert process.returncode is not None
     assert _wait_pid_gone(pid), f"server subprocess {pid} still alive after teardown"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stdio server transport is POSIX-only")
+def test_failed_stdio_handshake_reaps_the_server_before_it_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The server only allows StdioEchoLib, so importing another library fails the handshake.
+    session = _Session(f"stdio:{_stdio_server_command('StdioEchoLib')}", "NotAllowedLib", (), None, 20.0)
+    pids: list[int] = []
+    close_connection = session.close_connection
+
+    async def remember_pid_and_close() -> None:
+        if session._res.process is not None:
+            pids.append(session._res.process.pid)
+        await close_connection()
+
+    monkeypatch.setattr(session, "close_connection", remember_pid_and_close)
+    session.start()
+
+    assert session.initialized.wait(20)
+    assert "not available" in str(session.start_error)
+    # Both hold as soon as the failure is reported, without waiting any longer.
+    assert session.process_returncode is not None
+    assert pids, "the spawned server was never released"
+    with pytest.raises(ProcessLookupError):
+        os.kill(pids[0], 0)

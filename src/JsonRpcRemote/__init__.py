@@ -242,6 +242,8 @@ class _Session:
         self.library_token: str | None = None
         # Why the session failed to start (connecting or the handshake); nothing else.
         self.start_error: BaseException | None = None
+        # Exit code of the spawned stdio server, once close_connection() has released it.
+        self.process_returncode: int | None = None
 
         self.client_endpoint = _ClientEndpoint()
         self._res.endpoint = self.client_endpoint
@@ -272,6 +274,10 @@ class _Session:
                 await self._initialize_server()
             except Exception as e:
                 self.start_error = e
+                # Release the connection and a spawned stdio server before the failure is
+                # reported, so a failed start leaves nothing behind.
+                with contextlib.suppress(Exception):
+                    await self.close_connection()
                 raise
             finally:
                 self.initialized.set()
@@ -379,6 +385,10 @@ class _Session:
             if process.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     process.kill()
+                # Wait for the killed process too, so its exit code is known.
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(process.wait(), self._timeout)
+            self.process_returncode = process.returncode
             self._res.process = None
 
     def start(self) -> None:

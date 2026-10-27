@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from fake_server import NEVER_ANSWER, FakeServer
 
-from JsonRpcRemote import JsonRpcRemote
+from JsonRpcRemote import JsonRpcRemote, _Session
 from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
@@ -114,3 +114,37 @@ def test_timed_out_start_is_stopped(server: FakeServer) -> None:
         assert server.connections[-1] is not timed_out
     finally:
         remote._stop_session()
+
+
+# --- a failed start releases its resources ----------------------------------------
+
+
+def test_failed_handshake_closes_the_connection(server: FakeServer, remote: JsonRpcRemote) -> None:
+    remote._stop_session()
+    server.script(IMPORT_LIBRARY_REQUEST, RuntimeError("library not allowed"))
+
+    with pytest.raises(Exception, match="library not allowed"):
+        _call(remote, "rejected")
+    assert server.connections[-1].closed.wait(2), "the client did not close the rejected connection"
+
+
+def test_failed_handshake_closes_the_connection_before_it_is_reported(
+    server: FakeServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server.script(IMPORT_LIBRARY_REQUEST, RuntimeError("library not allowed"))
+    session = _Session(server.uri, "FakeLib", None, None, 5)
+    closed_when_reported: list[bool] = []
+    report = session.initialized.set
+
+    def check_and_report() -> None:
+        # Setting `initialized` is what hands the failure to the caller.
+        peer = session._res.peer
+        closed_when_reported.append(peer is not None and peer.writer.is_closing())
+        report()
+
+    monkeypatch.setattr(session.initialized, "set", check_and_report)
+    session.start()
+
+    assert session.initialized.wait(5)
+    assert session.start_error is not None
+    assert closed_when_reported == [True]
