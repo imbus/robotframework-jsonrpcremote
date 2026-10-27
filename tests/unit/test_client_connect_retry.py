@@ -174,19 +174,32 @@ def test_connect_retry_options_are_not_forwarded(server: FakeServer) -> None:
 
 
 def test_import_waits_for_a_server_that_comes_up_within_the_window(
-    server: FakeServer, connect: Callable[..., JsonRpcRemote], monkeypatch: pytest.MonkeyPatch
+    server: FakeServer, connect: Callable[..., JsonRpcRemote]
 ) -> None:
     server.stop()
-    attempts = _record_attempts(monkeypatch)
 
+    # How many attempts that takes depends on the platform: on Windows, an attempt to connect to a
+    # port that nobody listens on stays pending for a while, so it can succeed once the server is up.
     with _listening_after(server, 1.0):
         remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
 
-    assert len(attempts) > 1
-    # Spaced by the interval (with some slack for coarse clocks).
-    assert all(later - earlier >= 0.05 for earlier, later in itertools.pairwise(attempts))
     assert remote.get_keyword_names() == ["Echo"]
     assert _call(remote, "up") == "echo: up"
+
+
+def test_failed_attempts_are_repeated_every_interval(
+    server: FakeServer, connect: Callable[..., JsonRpcRemote], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.2)
+    remote._stop_session()  # as at the end of the session's rpc_scope
+    server.script(IMPORT_LIBRARY_REQUEST, RuntimeError("not ready"), RuntimeError("not ready"))
+    attempts = _record_attempts(monkeypatch)
+
+    assert _call(remote, "up") == "echo: up"
+
+    assert len(attempts) == 3
+    # Spaced by the interval (with some slack for coarse clocks).
+    assert all(later - earlier >= 0.15 for earlier, later in itertools.pairwise(attempts))
 
 
 def test_connect_retry_gives_up_once_per_outage(
@@ -235,16 +248,14 @@ def test_connection_that_needed_several_attempts_is_logged_as_info(
 ) -> None:
     remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
     remote._stop_session()  # as at the end of the session's rpc_scope
-    server.stop()
+    server.script(IMPORT_LIBRARY_REQUEST, RuntimeError("not ready"), RuntimeError("not ready"))
     attempts = _record_attempts(monkeypatch)
     caplog.set_level(logging.INFO, logger="RobotFramework")
 
-    # A new session starts while the server is still down.
-    with _listening_after(server, 0.5):
-        assert _call(remote, "up") == "echo: up"
+    assert _call(remote, "up") == "echo: up"
 
-    assert len(attempts) > 1
-    connected = rf"Connected to '{re.escape(server.uri)}' after \d+\.\ds \({len(attempts)} attempts\)\."
+    assert len(attempts) == 3
+    connected = rf"Connected to '{re.escape(server.uri)}' after \d+\.\ds \(3 attempts\)\."
     [(level, message)] = _robot_log(caplog)
     assert level == logging.INFO
     assert re.fullmatch(connected, message)
@@ -281,10 +292,11 @@ def test_call_after_a_lost_connection_reconnects_and_logs_a_warning(
 
     assert _session(remote) is not lost
     assert server.requests.count(IMPORT_LIBRARY_REQUEST) == 2
-    assert len(attempts) > 1
+    # One attempt or several, depending on the platform (see the test of the import above).
+    count = f"{len(attempts)} attempt" if len(attempts) == 1 else f"{len(attempts)} attempts"
     reconnected = (
         rf"Connection to '{re.escape(server.uri)}' was lost: the connection was closed by the server\. "
-        rf"Reconnected after (\d+\.\d)s \({len(attempts)} attempts\); "
+        rf"Reconnected after (\d+\.\d)s \({count}\); "
         r"the remote library was imported again, so its server-side state was reset\."
     )
     [(level, message)] = _robot_log(caplog)
@@ -292,6 +304,22 @@ def test_call_after_a_lost_connection_reconnects_and_logs_a_warning(
     match = re.fullmatch(reconnected, message)
     assert match is not None, message
     assert float(match.group(1)) >= 0.4, "the time until it reconnected includes the wait for the server"
+
+
+def test_reconnect_warning_counts_the_failed_attempts(
+    server: FakeServer, connect: Callable[..., JsonRpcRemote], caplog: pytest.LogCaptureFixture
+) -> None:
+    remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
+    lost = _session(remote)
+    server.close_connections()
+    wait_until(lambda: lost.lost)
+    server.script(IMPORT_LIBRARY_REQUEST, RuntimeError("not ready"))
+    caplog.set_level(logging.WARNING, logger="RobotFramework")
+
+    assert _call(remote, "again") == "echo: again"
+
+    [(_, message)] = _robot_log(caplog)
+    assert " (2 attempts); " in message
 
 
 async def test_keyword_running_at_the_loss_is_not_sent_again_and_the_next_call_reconnects(
