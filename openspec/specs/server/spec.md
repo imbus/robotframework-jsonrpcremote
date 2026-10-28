@@ -83,3 +83,15 @@ In stdio mode, the server SHALL check at start that its stdin is open and can be
 
 - **WHEN** the server is started in stdio mode with a pipe on stdin whose writing end is already closed
 - **THEN** the server starts, sees the end of its input and exits with exit code 0
+
+### Requirement: The server works with every supported Robot Framework version
+
+The server SHALL start, import libraries and run their keywords with every Robot Framework version from the minimum that its package declares.
+
+#### Scenario: Oldest supported Robot Framework version
+
+- **WHEN** the server runs with the oldest Robot Framework version that its package declares
+- **AND** a client imports a library whose keywords have arguments with and without default values
+- **THEN** the server starts and the import succeeds
+- **AND** the library definition marks exactly the arguments that have a default value as having one
+- **AND** the client can run the library's keywords
