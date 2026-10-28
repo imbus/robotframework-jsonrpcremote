@@ -17,7 +17,7 @@ A **Robot Framework Remote Server** powered by **JSON-RPC 2.0**. It hosts your e
 pip install robotframework-jsonrpcremote-server
 ```
 
-Requires **Python >= 3.10** and **Robot Framework >= 7.2**.
+Requires **Python >= 3.12** and **Robot Framework >= 7.2**.
 
 ## Quick start (TCP)
 

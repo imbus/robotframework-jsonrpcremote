@@ -137,7 +137,7 @@ Welcome to your first code contribution! Here's how to set up your development e
 This project is a [uv](https://github.com/astral-sh/uv) workspace (monorepo). All you need is a recent Python and `uv` — `uv` manages the virtual environment and all dependencies for you.
 
 1. **Prerequisites** (see each tool's site for install instructions):
-   - [Python](https://www.python.org/) >= 3.10
+   - [Python](https://www.python.org/) >= 3.12
    - [uv](https://docs.astral.sh/uv/getting-started/installation/)
    - [Git](https://git-scm.com/)
 

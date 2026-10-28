@@ -12,6 +12,7 @@ Raising the minimum costs no code: there are no version checks and no backports,
 ## What Changes
 
 - **Minimum version:** Python 3.12 in `requires-python` of the five `pyproject.toml` files (the client, `jsonrpcpeer`, the protocol, the server, the example); the classifiers for 3.10 and 3.11 are removed.
+- **Python 3.15:** the four packages with classifiers gain the one for 3.15, after the unit tests and Robot suites passed on 3.15.0. This takes over that item from `add-ci-version-matrix`.
 - **Development and CI:** `.python-version` pins 3.12, so the project environment and CI run on 3.12; `ruff` targets `py312` and `mypy` checks against 3.12.
 - **Lock file:** `uv.lock` is regenerated and loses the entries and markers for Python before 3.12.
 - **Documentation:** the requirement in `README.md`, `packages/server/README.md` and the prerequisites in `CONTRIBUTING.md`.
@@ -34,5 +35,5 @@ _None._ The change sets `skip_specs: true`.
 - **CI:** no file change; `.github/workflows/ci.yml` follows `.python-version`.
 - **Docs:** `README.md`, `packages/server/README.md`, `CONTRIBUTING.md`.
 - **Users:** Python 3.10 and 3.11 are no longer supported by new releases.
-- **Other changes of the series:** the proposals of `fix-peer-lifecycle` (planned, not yet committed), `add-ci-version-matrix` and `fix-json-helpers` state facts about 3.10 and 3.11, such as the CI version and the matrix. Each is corrected when it is planned or updated; `fix-peer-lifecycle` right after this change.
+- **Other changes of the series:** the plan of `fix-peer-lifecycle` and the proposals of `add-ci-version-matrix` and `fix-json-helpers` state facts about 3.10 and 3.11, such as the CI version and the matrix; `add-ci-version-matrix` also still plans the classifier for 3.15. Each is corrected when it is planned or updated; `fix-peer-lifecycle` right after this change.
 - **Order:** inserted after `fix-robot-framework-compatibility` and before `fix-peer-lifecycle`, whose tests then run on 3.12 by default; before `add-ci-version-matrix`, which builds its matrix on the minimum.
