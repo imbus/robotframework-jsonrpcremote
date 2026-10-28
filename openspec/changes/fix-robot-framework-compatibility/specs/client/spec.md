@@ -32,21 +32,21 @@ When the server marks a log message for the console, the client SHALL write it t
 
 The client SHALL NOT drop a log message that the server sends while no keyword call is running. It SHALL hand the message to Robot Framework from the thread that runs the tests as soon as control returns there, keeping the order in which the messages arrived. Robot Framework then treats it like a message that a local library logs at the same moment.
 
-#### Scenario: Remote library logs a warning while it is imported
+#### Scenario: Server sends a warning while the library is imported
 
-- **WHEN** the remote library logs a warning while it is imported, for example in its constructor
+- **WHEN** the server sends a warning while the remote library is imported
 - **THEN** the warning appears among Robot Framework's execution errors, as a warning that a local library logs during its import does
 
-#### Scenario: Remote library logs an info message while it is imported
+#### Scenario: Server sends an info message while the library is imported
 
 - **WHEN** Robot Framework's syslog is enabled
-- **AND** the remote library logs an info message while it is imported
+- **AND** the server sends an info message while the remote library is imported
 - **THEN** the message appears in the syslog, as an info message that a local library logs during its import does
 
 #### Scenario: A keyword call starts a new session
 
 - **WHEN** a keyword call starts a new session, for example in the next test with `rpc_scope=TEST`
-- **AND** the remote library logs a message while it is imported again
+- **AND** the server sends a log message while the remote library is imported again
 - **THEN** the message appears in Robot Framework's log of that keyword call
 
 #### Scenario: Remote library logs a warning when its session ends with its scope

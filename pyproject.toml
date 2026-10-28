@@ -36,7 +36,7 @@ classifiers = [
     "Framework :: Robot Framework :: Library",
 ]
 dependencies = [
-    "robotframework>=7.0",
+    "robotframework>=7.2",
     "jsonrpcpeer",
 ]
 

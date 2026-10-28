@@ -44,6 +44,10 @@ class ServerProbeLib:
         """Joins two (possibly named) arguments, for keyword-call kwargs tests."""
         return f"{first}/{second}"
 
+    def greet(self, name: str, greeting: str = "Hello") -> str:
+        """Greets ``name``; ``greeting`` is optional, to check that defaults reach the client."""
+        return f"{greeting}, {name}"
+
     def fail_with(self, message: str) -> None:
         """Raises an error, to check that failures propagate back to the client."""
         raise RuntimeError(message)

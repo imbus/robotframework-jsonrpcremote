@@ -39,3 +39,11 @@ Dict Round Trips
 Keyword Named Arguments Are Passed
     ${result}=    Format Pair    first=left    second=right
     Should Be Equal    ${result}    left/right
+
+Optional Argument Can Be Omitted
+    ${result}=    Greet    World
+    Should Be Equal    ${result}    Hello, World
+
+Optional Argument Can Be Given
+    ${result}=    Greet    World    Hi
+    Should Be Equal    ${result}    Hi, World

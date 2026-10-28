@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import contextlib
+import inspect
 import logging
 import shlex
 import time
@@ -59,6 +60,66 @@ _T = TypeVar("_T")
 # Standard logging: the session's worker thread runs outside Robot Framework's logging.
 _logger = logging.getLogger(__name__)
 
+# `logger.write` accepts `console` only since Robot Framework 7.4.
+_LOGGER_WRITE_HAS_CONSOLE = "console" in inspect.signature(logger.write).parameters
+
+
+def _write_log(message: str, level: str, html: bool, console: bool) -> None:
+    """Write a log message forwarded by the server, on every supported Robot Framework version."""
+    if _LOGGER_WRITE_HAS_CONSOLE:
+        logger.write(message, level, html, console)  # type: ignore[arg-type]
+        return
+    logger.write(message, level, html)  # type: ignore[arg-type]
+    if console:
+        logger.console(message)
+
+
+class _LogSink:
+    """Hands the server's log messages to Robot Framework on a thread it accepts messages from.
+
+    Messages arrive on a session's worker thread, where Robot Framework drops them. While a keyword call
+    runs, they are written on Robot Framework's event loop; otherwise they wait until the test thread
+    drains them. One sink serves all sessions of a library instance, so the messages of a session that
+    failed to start are not lost with it. The lock keeps the order in which the messages arrived.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._pending: list[tuple[str, str, bool, bool]] = []
+
+    def submit(self, message: str, level: str, html: bool, console: bool) -> None:
+        with self._lock:
+            if self._loop is not None:
+                try:
+                    self._loop.call_soon_threadsafe(_write_log, message, level, html, console)
+                    return
+                except RuntimeError:
+                    # The loop is closed already; the message waits for the next drain instead.
+                    pass
+            self._pending.append((message, level, html, console))
+
+    def attach(self, loop: asyncio.AbstractEventLoop) -> None:
+        """On the test thread when a keyword call starts: write the pending messages, then use `loop`."""
+        with self._lock:
+            self._drain_locked()
+            self._loop = loop
+
+    def detach(self) -> None:
+        with self._lock:
+            self._loop = None
+
+    def drain(self) -> None:
+        """Write the pending messages on the calling thread. Never raises."""
+        with self._lock:
+            self._drain_locked()
+
+    def _drain_locked(self) -> None:
+        pending, self._pending = self._pending, []
+        for message in pending:
+            with contextlib.suppress(Exception):
+                _write_log(*message)
+
 
 def _time_option(name: str, value: float | str) -> float:
     """Parse the option ``name``, given in seconds or as a Robot Framework time string such as ``1 minute``."""
@@ -112,8 +173,8 @@ def _definition_changes(registered: LibraryDefinition | None, current: LibraryDe
 
 
 class _ClientEndpoint:
-    def __init__(self) -> None:
-        self.callback_loop: asyncio.AbstractEventLoop | None = None
+    def __init__(self, log_sink: _LogSink | None = None) -> None:
+        self.log_sink = log_sink if log_sink is not None else _LogSink()
         self.rpc_peer: JsonRpcPeer | None = None
         # Set after initialize/import so the graceful teardown can finalize the
         # library and decide whether the server supports the exit notification.
@@ -122,22 +183,8 @@ class _ClientEndpoint:
 
     @rpc_notification(LOG_NOTIFICATION)
     async def _log_notification(self, params: LogParams) -> None:
-        if self.callback_loop is not None:
-            self.callback_loop.call_soon_threadsafe(
-                logger.write,
-                params.message,
-                params.level.value if params.level is not None else "INFO",
-                params.html or False,
-                params.console or False,
-            )
-        else:
-            # TODO: maybe we should use normal print here instead of logger?
-            logger.write(
-                params.message,
-                params.level.value if params.level is not None else "INFO",
-                params.html or False,
-                params.console or False,
-            )
+        level = params.level.value if params.level is not None else "INFO"
+        self.log_sink.submit(params.message, level, params.html or False, params.console or False)
 
     async def initialize(self) -> InitializeResult:
         if self.rpc_peer is None:
@@ -303,6 +350,7 @@ class _Session:
         library_args: Sequence[Any] | None,
         library_kw_args: dict[str, Any] | None,
         timeout: float | None = 30.0,
+        log_sink: _LogSink | None = None,
     ) -> None:
         self._uri = uri
         self._library_name = library_name
@@ -332,7 +380,7 @@ class _Session:
         # Set when the client ends the session itself; the end of its connection is then no loss.
         self.closed_by_client = False
 
-        self.client_endpoint = _ClientEndpoint()
+        self.client_endpoint = _ClientEndpoint(log_sink)
         self._res.endpoint = self.client_endpoint
 
     @property
@@ -608,6 +656,7 @@ class JsonRpcRemote:
     ) -> None:
         # First: __del__ runs even if the options below are rejected.
         self.__session: _Session | None = None
+        self._log_sink = _LogSink()
         self._outage: _Outage | None = None
         # The error for every call after the library definition changed, until the session's scope ends.
         self._incompatible: str | None = None
@@ -634,6 +683,13 @@ class JsonRpcRemote:
         self._stop_session()
 
     def _start_session(self) -> _Session:
+        try:
+            return self._ensure_session()
+        finally:
+            # Back on the test thread: log messages that arrived meanwhile, e.g. from the import, reach Robot.
+            self._log_sink.drain()
+
+    def _ensure_session(self) -> _Session:
         if self._incompatible is not None:
             raise ConnectionError(self._incompatible)
 
@@ -707,7 +763,9 @@ class JsonRpcRemote:
 
     def _connect(self) -> _Session:
         """Start a new session; return it only once it has started, otherwise raise why it did not."""
-        session = _Session(self._uri, self._library_name, self._library_args, self._library_kw_args, self._timeout)
+        session = _Session(
+            self._uri, self._library_name, self._library_args, self._library_kw_args, self._timeout, self._log_sink
+        )
         session.start()
 
         if not session.initialized.wait(self._timeout):
@@ -734,10 +792,14 @@ class JsonRpcRemote:
         if self._outage is not None:
             self._outage.loss = None
 
-        if self.__session is not None:
-            self.__session.stop()
+        try:
+            if self.__session is not None:
+                self.__session.stop()
 
-            self.__session = None
+                self.__session = None
+        finally:
+            # Log messages from the end of the session, e.g. while the server finalized the library.
+            self._log_sink.drain()
 
     # Also without a stored session: a lost connection or a changed library definition ends with the scope.
     def _end_test(self, data: running.TestCase, result: result.TestCase) -> None:
@@ -813,7 +875,7 @@ class JsonRpcRemote:
     async def run_keyword(self, name: str, args: Sequence[Any], named: Mapping[str, Any]) -> Any:
         # Read once: the call stays with this session, and the `finally` cannot start a new one.
         session = self._session
-        session.client_endpoint.callback_loop = asyncio.get_event_loop()
+        self._log_sink.attach(asyncio.get_event_loop())
         try:
             result = await asyncio.wrap_future(
                 session.submit(
@@ -837,4 +899,4 @@ class JsonRpcRemote:
             # Not sent again: the server may have run it.
             raise session.lost_error(name) from error
         finally:
-            session.client_endpoint.callback_loop = None
+            self._log_sink.detach()

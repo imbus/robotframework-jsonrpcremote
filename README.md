@@ -33,7 +33,7 @@ The project is organized as a monorepo managed by [uv](https://github.com/astral
 ## Requirements
 
 *   Python >= 3.10
-*   Robot Framework >= 7.0
+*   Robot Framework >= 7.2
 
 ## Installation
 

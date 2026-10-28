@@ -25,6 +25,7 @@ from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
+    LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
     SHUTDOWN_REQUEST,
     ArgumentDefinition,
@@ -34,6 +35,8 @@ from robot_jsonrpcremote_protocol import (
     InitializeResult,
     KeywordDefinition,
     LibraryDefinition,
+    LogLevel,
+    LogParams,
     RunKeywordResult,
     ServerCapabilities,
     ServerInfo,
@@ -44,6 +47,18 @@ NEVER_ANSWER = object()
 """A scripted answer that leaves the request unanswered."""
 
 _DEFAULT = object()
+
+
+@dataclass
+class LogFirst:
+    """A scripted answer that first sends ``messages`` to the client as INFO log notifications.
+
+    The request is then answered with ``answer``, or by the default handler if none is given.
+    """
+
+    messages: tuple[str, ...]
+    answer: Any = _DEFAULT
+
 
 _REQUESTS = (
     INITIALIZE_REQUEST,
@@ -171,7 +186,7 @@ class FakeServer:
 
         peer = JsonRpcPeer(reader, writer)
         for method in _REQUESTS:
-            peer.register_request_handler(method, self._handler(method))
+            peer.register_request_handler(method, self._handler(method, peer))
         peer.register_notification_handler(INITIALIZED_NOTIFICATION, self._ignore)
         peer.register_notification_handler(EXIT_NOTIFICATION, self._exit_handler(peer))
         self._peers.add(peer)
@@ -186,12 +201,16 @@ class FakeServer:
             connection.closed.set()
             self._clients.discard(task)
 
-    def _handler(self, method: str) -> Callable[[Any], Coroutine[Any, Any, Any]]:
+    def _handler(self, method: str, peer: JsonRpcPeer) -> Callable[[Any], Coroutine[Any, Any, Any]]:
         async def handle(params: Any) -> Any:
             self.requests.append(method)
             self.params.append(params)
             scripted = self._scripts[method]
             answer = scripted.popleft() if scripted else _DEFAULT
+            if isinstance(answer, LogFirst):
+                for message in answer.messages:
+                    await peer.send_notification(LOG_NOTIFICATION, LogParams(message=message, level=LogLevel.INFO))
+                answer = answer.answer
             if answer is NEVER_ANSWER:
                 await asyncio.Event().wait()
             if isinstance(answer, BaseException):

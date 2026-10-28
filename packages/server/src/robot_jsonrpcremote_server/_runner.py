@@ -15,7 +15,7 @@ from robot.api.interfaces import ListenerV3
 from robot.conf import RobotSettings
 from robot.output import LOGGER
 from robot.reporting import ResultWriter
-from robot.utils import NotSet
+from robot.utils import NOT_SET
 
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from robot_jsonrpcremote_protocol import AnyType, ArgumentDefinition, ArgumentKind, KeywordDefinition, LibraryDefinition
@@ -75,8 +75,8 @@ def _robot_import_library(library_token: str | None, name: str, args: Sequence[A
                 ArgumentDefinition(
                     name=arg.name,
                     type=str(arg.type),
-                    has_default=not isinstance(arg.default, NotSet),
-                    default=value_to_jsonable(arg.default) if not isinstance(arg.default, NotSet) else None,
+                    has_default=arg.default is not NOT_SET,
+                    default=value_to_jsonable(arg.default) if arg.default is not NOT_SET else None,
                     kind=ArgumentKind.from_value(arg.kind),
                 )
             )

@@ -19,14 +19,16 @@ See proposal.md for the motivation and specs/ for the requirements.
 - Later sessions start inside `_start_session()`, reached through `_session` from `run_keyword` and the other dynamic API methods: after the end of an `rpc_scope`, when a lost session is replaced, and once per attempt of connect retry. Every attempt creates its own `_Session` with its own `_ClientEndpoint`.
 - Sessions end in `_stop_session()`, called from the listener methods at the end of a test or suite and from `__del__`.
 
+**What this project's server forwards** (checked on 2026-10-28): only the messages that Robot Framework passes to the `log_message` listener hook. Messages that a library logs while it is imported go to the server's syslog and execution errors instead and never reach the client. Messages logged while the server finalizes a library, for example from a library listener's `close`, are forwarded.
+
 **What Robot Framework does with messages a local library logs during its import or from its listener when a test or suite ends** (checked on 2026-10-28 with 7.0 and 7.5): info messages go only to the syslog, except that 7.5 puts messages from the end of a test into that test; warnings and errors always also appear among the execution errors.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- The server works on Robot Framework 7.0 and later.
-- The client forwards log messages, including console messages, on Robot Framework 7.0 and later.
+- The server works on Robot Framework 7.2 and later, the new minimum (see the result in proposal.md).
+- The client forwards log messages, including console messages, on Robot Framework 7.2 and later.
 - No log message is dropped because it arrived on the wrong thread; Robot Framework receives every message from a thread it accepts, in arrival order.
 
 **Non-Goals:**
@@ -34,7 +36,7 @@ See proposal.md for the motivation and specs/ for the requirements.
 - Timestamps: a message handed over later carries the time it reached Robot Framework, as the protocol sends no timestamp.
 - Messages that arrive while the library instance is garbage collected or the interpreter exits; there is no Robot Framework thread left to take them.
 - Error responses to failed notifications (`fix-peer-message-handling`); once `logger.write` no longer raises, the known cause is gone.
-- Changes to the protocol or to what the server forwards.
+- Changes to the protocol or to what the server forwards. Forwarding the messages that a library logs while it is imported is left to a separate change; the client already handles them, since other servers may send them.
 
 ## Decisions
 
@@ -43,6 +45,7 @@ See proposal.md for the motivation and specs/ for the requirements.
 `_robot_import_library` checks `arg.default is NOT_SET`. The singleton exists and is the marker in every Robot Framework 7 release.
 
 - **Alternative:** import `NotSet` with a fallback for 7.0. Two code paths for the same check, and the fallback would still have to know the 7.0 marker.
+- With the minimum at 7.2, `NotSet` alone would work too; `NOT_SET` stays because the identity check is simpler.
 
 ### 2. The client detects the `console` parameter of `logger.write` once
 
@@ -83,12 +86,12 @@ Draining never raises. Drained from `__del__` on another thread, Robot Framework
   - the sink's order and thread handling;
   - the console helper with the detection result patched to "unsupported";
   - the whole path through the fake server, which gains the ability to send log notifications while it imports. That covers order, the main thread, and messages of a failed import.
-- **Robot test:** runs a small suite in a nested Robot process with the syslog enabled, against a server whose library logs a warning and an info message in its constructor. The outer test reads the execution errors from the output file and the syslog. A second test with `rpc_scope=TEST` checks that the messages of a re-import appear in the log of the keyword that started the session. A third test checks that a warning the library logs while the server finalizes it at the end of its scope appears among the execution errors.
+- **Robot test:** runs a small suite in a nested Robot process against a server whose library logs a warning from its listener's `close`, which the server calls when it finalizes the library at the end of the session's scope. The outer test reads the execution errors from the inner output file. Messages sent while the library is imported are covered by the fake-server tests only, because this project's server does not send them.
 - **Version runs:** unit tests and Robot suites in one local environment per Robot Framework version, 7.0 to 7.5.
 
 ## Risks / Trade-offs
 
-- **[Info messages from the import stay out of the log file]** Users may expect the remote library's constructor messages in `log.html`. → This is Robot Framework's rule for local libraries too; the documentation site from `add-documentation-site` describes it.
-- **[7.0 breaks at runtime in a way the API check did not show]** → The version runs find it; the proposal's fallback raises the minimum to the oldest version that passes.
+- **[The remote library's constructor messages still do not reach the client]** This project's server does not forward them. → A separate change; the client part is ready for them. Even then, info messages from an import stay out of `log.html`, as for local libraries; the documentation site from `add-documentation-site` describes it.
+- **[7.0 breaks at runtime in a way the API check did not show]** → The version runs find it; the proposal's fallback raises the minimum to the oldest version that passes. This happened: 7.0 and 7.1 failed, and the minimum is now 7.2.
 - **[A later Robot Framework changes `logger.write` again]** → Decision 2 reads the actual signature, so a renamed or removed parameter falls back to the separate console write instead of failing.
-- **[More messages reach the execution errors]** Warnings from the remote library's constructor were silently lost before and are now visible. → Intended; it matches a local library.
+- **[More messages reach the execution errors]** Warnings logged while the server finalizes the library were silently lost before and are now visible. → Intended; it matches a local library.
