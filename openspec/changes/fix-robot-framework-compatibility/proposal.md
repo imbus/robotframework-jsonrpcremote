@@ -16,14 +16,14 @@ Found in the project review of 2026-10-27 (items BUILD-1 and CLIENT-4).
 ## What Changes
 
 - **Server:** recognizes an argument without a default by `robot.utils.NOT_SET`, which every Robot Framework 7 release has and uses as that marker, instead of by the class `NotSet`.
-- **Client:** passes `console` to `logger.write()` only on Robot Framework versions that support it, and writes a console message separately on older versions.
-- **Log messages outside a keyword call** are written to Robot Framework's log instead of being dropped.
+- **Client:** passes `console` to `logger.write()` only on Robot Framework versions that support it, and writes a console message separately on older versions. The server of this project never sets `console`; the separate path is for other server implementations.
+- **Log messages outside a keyword call** are no longer dropped. The client hands them to Robot Framework from the thread that runs the tests, so they are treated like messages that a local library logs at the same moment: while the library is imported, Robot Framework writes info messages only to its syslog and shows warnings and errors; when a keyword call starts a new session, they appear in that keyword's log.
 - **Verification:** the unit tests and Robot suites run locally against Robot Framework 7.0, 7.1, 7.2, 7.3, 7.4 and 7.5. The CI job that keeps the minimum version tested follows in `add-ci-version-matrix`.
 
 Assumptions recorded for review:
 
-- Robot Framework 7.0 stays the minimum. If 7.0 shows further incompatibilities that are not as cheap to fix, the minimum is raised to the oldest version that passes, in the `pyproject.toml` files and both READMEs.
-- A log message that arrives outside a keyword call is written from Robot Framework's main thread at the next opportunity, for example when the import of the library returns, and messages keep the order in which they arrived.
+- Robot Framework 7.0 stays the minimum. Every other Robot Framework API that the client and the server use already exists in 7.0, including support for asynchronous keywords (checked on 2026-10-28). If 7.0 still shows incompatibilities that are not as cheap to fix, the minimum is raised to the oldest version that passes, in the `pyproject.toml` files and both READMEs.
+- A log message that arrives outside a keyword call is handed to Robot Framework from its main thread at the next opportunity, for example when the import of the library returns, and messages keep the order in which they arrived.
 
 ## Capabilities
 
@@ -40,6 +40,6 @@ _None._
 
 - **Code:** `packages/server/src/robot_jsonrpcremote_server/_runner.py` (`_robot_import_library`), `src/JsonRpcRemote/__init__.py` (`_ClientEndpoint._log_notification` and the handling of `callback_loop`).
 - **Dependencies:** `robotframework>=7.0` stays, unless the first assumption does not hold.
-- **Behavior:** unchanged on Robot Framework 7.4 and later, except that log messages outside a keyword call now reach the log.
+- **Behavior:** unchanged on Robot Framework 7.4 and later, except that log messages outside a keyword call now reach Robot Framework like those of a local library.
 - **Tests:** unit tests for both paths of the log handler; the local runs against the versions above, each in its own environment.
 - **Order:** first change of the series from the review; `add-ci-version-matrix` builds on it.
