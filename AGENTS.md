@@ -11,8 +11,8 @@ robotframework-jsonrpcremote is a [uv](https://github.com/astral-sh/uv) workspac
 - JSON-RPC peer (asyncio): `packages/jsonrpcpeer/src/jsonrpcpeer/`
 - Server runtime (`robot-jsonrpcremote-server` CLI): `packages/server/src/robot_jsonrpcremote_server/`
 - Examples: `examples/simple-robot-jsonrpcserver/`
-- Unit tests (pytest): `tests/unit/`
-- Robot Framework integration tests: `tests/robot/`
+- Unit tests (pytest): `tests/`
+- Robot Framework integration tests: `atests/`
 
 ## Project Language
 
@@ -31,8 +31,9 @@ English is the project language. Write everything that goes into the repository 
 - Examples:
 	- Owning path: `examples/`.
 - Tests:
-	- Unit tests live in `tests/unit/` (pytest), organized by component (`test_peer.py`, `test_endpoint.py`, `test_protocol.py`, ...). Add or update them for any Python change.
-	- End-to-end behavior is covered by Robot Framework suites in `tests/robot/`; each suite starts and stops its own server.
+	- Unit tests live in `tests/` (pytest), organized by component (`test_peer.py`, `test_endpoint.py`, `test_protocol.py`, ...). Add or update them for any Python change.
+	- End-to-end behavior is covered by Robot Framework suites in `atests/`; each suite starts and stops its own server.
+	- Add or change a Robot test when the changed behavior can be observed from Robot Framework: keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files. When such a change adds none, say why. Behavior that only shows inside a package is covered by unit tests; the Robot suites still run as a regression check.
 - Generated or ignored outputs (do not commit by hand):
 	- Build artifacts in `dist/`, Robot output in `results/`, and the various caches are gitignored.
 
@@ -43,9 +44,9 @@ All commands run inside the project environment via `uv run` (or after activatin
 - `uv sync --all-extras --all-packages --dev`
 	- One-time setup: create `.venv` and install the client, all workspace packages, and the dev tools.
 - `uv run --all-packages pytest`
-	- Unit tests (collected from `tests/unit`). Run on every change. `--all-packages` is required: `uv run` targets the workspace root and re-syncs exactly, so the server package would otherwise be pruned (`ModuleNotFoundError`).
+	- Unit tests (collected from `tests/`). Run on every change. `--all-packages` is required: `uv run` targets the workspace root and re-syncs exactly, so the server package would otherwise be pruned (`ModuleNotFoundError`).
 - `uv run --all-packages robotcode run`
-	- Robot Framework integration tests under `tests/robot/`. Output is written to `results/` by default.
+	- Robot Framework integration tests under `atests/`. Output is written to `results/` by default.
 - `uv run ruff check .`
 	- Lint.
 - `uv run ruff format .` / `uv run ruff format --check .`
@@ -53,7 +54,7 @@ All commands run inside the project environment via `uv run` (or after activatin
 - `uv run mypy`
 	- Type checking (strict). Targets are configured via `files` in `[tool.mypy]`, so no arguments are needed. This is the authoritative type-check gate.
 - `uv run robocop check` / `uv run robocop format`
-	- Lint / format the `.robot` files in `tests/robot/` (optional).
+	- Lint / format the `.robot` files in `atests/` (optional).
 - `uv build --all-packages`
 	- Build wheels and sdists for all packages into `dist/`.
 

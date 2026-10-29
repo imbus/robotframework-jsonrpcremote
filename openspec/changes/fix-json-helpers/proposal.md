@@ -41,5 +41,5 @@ _None._
 
 - **Code:** `packages/jsonrpcpeer/src/jsonrpcpeer/json_helpers.py`.
 - **Public API:** stricter `from_dict` (see above); otherwise unchanged.
-- **Tests:** `tests/unit/test_json_helpers.py`, aiming at full branch coverage of the module.
+- **Tests:** `tests/test_json_helpers.py`, aiming at full branch coverage of the module.
 - **Order:** before `encode-json-values-natively`, which changes `value_to_jsonable` and relies on these tests.

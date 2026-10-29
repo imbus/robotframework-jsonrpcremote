@@ -21,6 +21,11 @@ context: |
 #       - Always state what is out of scope
 #     tasks:
 #       - Break tasks into chunks of max 2 hours
+rules:
+  tasks:
+    - Name in each task the unit tests (pytest, tests/) and the Robot Framework tests (atests/) that verify it, and cover every spec scenario with at least one of them.
+    - Add or change a Robot test when the changed behavior can be observed from Robot Framework, such as keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files. When such a task adds none, state why.
+    - Run the unit tests and all Robot suites in the integration checks, also when the change adds no Robot test.
 
 # Per-operation guidance (optional)
 # Add advisory guidance for how apply and archive work should be conducted.

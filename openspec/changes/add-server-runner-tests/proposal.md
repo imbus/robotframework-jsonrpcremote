@@ -31,6 +31,6 @@ _None._ The change sets `skip_specs: true`.
 
 ## Impact
 
-- **Tests:** a fixture module and new tests in `tests/unit/`; tests in `test_endpoint.py` that use the stub context move to the fixture where it covers the same ground.
+- **Tests:** a fixture module and new tests in `tests/`; tests in `test_endpoint.py` that use the stub context move to the fixture where it covers the same ground.
 - **Code:** none.
 - **Order:** after `fix-rpc-error-responses`, which fixes the unknown-keyword path these tests cover; before `fix-server-library-import` and `clarify-global-library-scope`.

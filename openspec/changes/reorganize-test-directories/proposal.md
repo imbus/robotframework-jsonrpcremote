@@ -29,7 +29,7 @@ _None._ The change sets `skip_specs: true`.
 
 ## Impact
 
-- **Tests:** every file in `tests/unit/` and `tests/robot/` moves; no test changes.
+- **Tests:** every file in `tests/unit/` and `tests/robot/` moves; no test changes, except the path from `tests/test_client_connection.py` to the Robot helper libraries that its stdio tests use.
 - **Configuration:** `pyproject.toml`, `robot.toml`.
 - **Docs and rules:** `AGENTS.md`, `CONTRIBUTING.md`, `README.md`, `openspec/config.yaml`.
 - **Plans:** the proposals of the active changes that name test paths, and proposal, design and tasks of `fix-peer-lifecycle`.

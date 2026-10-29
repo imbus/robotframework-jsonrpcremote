@@ -43,5 +43,5 @@ _None._
 - **Client and server:** no code change; both stop keeping one peer per connection or session alive, and the client no longer gets a `CancelledError` from the peer when its session ends. A defense against such an error in the client itself follows in `fix-client-session-end`.
 - **Not in this change:** the `asyncio.get_event_loop()` calls in the client and in the server endpoint. They always run inside a running loop and return it.
 - **Docs:** `packages/jsonrpcpeer/README.md`.
-- **Tests:** `tests/unit/test_peer.py`, plus one test each in `tests/unit/test_server_stdio.py` and `tests/unit/test_client_session.py`; locally also on Python 3.14 and 3.15, because the project environment and CI run only 3.12 until `add-ci-version-matrix`.
+- **Tests:** `tests/test_peer.py`, plus one test each in `tests/test_server_stdio.py` and `tests/test_client_session.py`; locally also on Python 3.14 and 3.15, because the project environment and CI run only 3.12 until `add-ci-version-matrix`.
 - **Order:** independent; it comes before `fix-peer-message-handling` and `fix-rpc-error-responses`, which change the same file.

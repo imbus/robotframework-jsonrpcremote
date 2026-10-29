@@ -43,5 +43,5 @@ _None._
 - **Code:** `packages/server/src/robot_jsonrpcremote_server/_endpoint.py` (`run_keyword`), `_runner.py` (`_robot_run_keyword`), `src/JsonRpcRemote/__init__.py` (`JsonRpcRemote.run_keyword`).
 - **Protocol:** unchanged; the existing fields `type`, `traceback` and `mode` of `RunKeywordError` are now filled.
 - **Compatibility:** an older server leaves the new fields empty; the client then reports a normal failure with the message alone.
-- **Tests:** unit tests for the server's error and for the client's mapping; `tests/robot/errors.robot` and a library that skips, fails continuably and fails fatally.
+- **Tests:** unit tests for the server's error and for the client's mapping; `atests/errors.robot` and a library that skips, fails continuably and fails fatally.
 - **Order:** after `add-documentation-site`, so the new messages are documented on the site; before `fix-rpc-error-responses`, which changes how the client reports protocol-level errors in the same code path.

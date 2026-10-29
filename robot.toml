@@ -1,4 +1,4 @@
-paths = ["tests/robot"]
+paths = ["atests"]
 output-dir = "results"
 default-profiles = ["windows", "non_windows"]
 #log-level = "TRACE"

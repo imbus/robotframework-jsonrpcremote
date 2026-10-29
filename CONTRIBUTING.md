@@ -180,8 +180,8 @@ The repository is a uv workspace organized into a client library, several suppor
 - **[`packages/jsonrpcpeer`](packages/jsonrpcpeer)** — an asynchronous JSON-RPC 2.0 peer implementation built on `asyncio`.
 - **[`packages/server`](packages/server)** — the server runtime that hosts Robot Framework libraries (`robot-jsonrpcremote-server` CLI).
 - **[`examples/`](examples)** — runnable usage examples, e.g. a minimal hand-written server.
-- **[`tests/unit`](tests/unit)** — fast unit tests (pytest).
-- **[`tests/robot`](tests/robot)** — Robot Framework integration tests; each suite starts its own server.
+- **[`tests`](tests)** — fast unit tests (pytest).
+- **[`atests`](atests)** — Robot Framework integration tests; each suite starts its own server.
 
 #### Development Workflow
 
@@ -205,11 +205,11 @@ The repository is a uv workspace organized into a client library, several suppor
 uv run --all-packages pytest
 ```
 
-`pytest` is configured (in [`pyproject.toml`](pyproject.toml)) to collect from `tests/unit` and runs in asyncio auto mode. To run a single file or test:
+`pytest` is configured (in [`pyproject.toml`](pyproject.toml)) to collect from `tests` and runs in asyncio auto mode. To run a single file or test:
 
 ```bash
-uv run --all-packages pytest tests/unit/test_peer.py
-uv run --all-packages pytest tests/unit/test_peer.py::test_name -q
+uv run --all-packages pytest tests/test_peer.py
+uv run --all-packages pytest tests/test_peer.py::test_name -q
 ```
 
 **Integration tests (Robot Framework):**
@@ -218,9 +218,11 @@ uv run --all-packages pytest tests/unit/test_peer.py::test_name -q
 uv run --all-packages robotcode run
 ```
 
-This runs the Robot Framework suites under [`tests/robot`](tests/robot) (configured via [`robot.toml`](robot.toml)). Each suite starts and stops its own server, so no separate server process is required. `robotcode run` writes its `output.xml`, `log.html`, and `report.html` to the `results/` directory by default (gitignored).
+This runs the Robot Framework suites under [`atests`](atests) (configured via [`robot.toml`](robot.toml)). Each suite starts and stops its own server, so no separate server process is required. `robotcode run` writes its `output.xml`, `log.html`, and `report.html` to the `results/` directory by default (gitignored).
 
 Run the unit tests on every change; run the integration tests before opening or updating a pull request.
+
+**Which tests a change needs:** every Python change adds or updates unit tests. A change whose effect can be observed from Robot Framework — keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files — also adds or changes a Robot test; if it adds none, the pull request says why. Behavior that only shows inside a package, such as the lifecycle of the JSON-RPC peer, is covered by unit tests, and the Robot suites still run as a regression check.
 
 #### Linting and Type Checking
 
@@ -240,7 +242,7 @@ uv run mypy
 
 > The check targets are configured via `files` in `[tool.mypy]` (in [`pyproject.toml`](pyproject.toml)), so `uv run mypy` with no arguments checks the whole project. `pyright` is also available in the dev dependencies for editor integration, but mypy is the authoritative type-check gate.
 
-**Robot Framework style (optional, for `tests/robot`):**
+**Robot Framework style (optional, for `atests`):**
 ```bash
 uv run robocop check     # lint the .robot files
 uv run robocop format    # format the .robot files

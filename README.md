@@ -28,7 +28,8 @@ The project is organized as a monorepo managed by [uv](https://github.com/astral
 *   **`packages/server`**: Server runtime components to host library code.
 *   **`src/JsonRpcRemote`**: The Robot Framework Client Library (Proxy).
 *   **`examples/`**: Runnable usage examples (e.g. a minimal server).
-*   **`tests/`**: Unit tests (`tests/unit`, pytest) and Robot Framework integration tests (`tests/robot`).
+*   **`tests/`**: Unit tests (pytest).
+*   **`atests/`**: Robot Framework integration tests; each suite starts its own server.
 
 ## Requirements
 

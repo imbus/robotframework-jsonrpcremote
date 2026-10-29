@@ -42,5 +42,5 @@ _None._
 - **Code:** `packages/jsonrpcpeer/src/jsonrpcpeer/peer.py`: header parsing in the read loop, `handle_message`, the handling of notifications; removal of `JsonRpcEndpoint`.
 - **Public API:** `jsonrpcpeer.peer.JsonRpcEndpoint` is removed; the package never exported it.
 - **Interoperability:** peers that send header names in lower case now work.
-- **Tests:** `tests/unit/test_peer.py`.
+- **Tests:** `tests/test_peer.py`.
 - **Order:** after `fix-peer-lifecycle` and `fix-rpc-error-responses`, which change the same file.

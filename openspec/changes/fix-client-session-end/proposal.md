@@ -31,5 +31,5 @@ _None._
 - **Code:** `src/JsonRpcRemote/__init__.py` (`_run_on_loop()`, `_finalize_session()`, the handling of `rpc_scope` in `JsonRpcRemote.__init__`).
 - **API:** the type hint of `rpc_scope` also allows a string.
 - **Behavior:** a session that is lost or replaced ends without the stall; otherwise unchanged.
-- **Tests:** unit tests with the fake server in `tests/unit/test_client_session.py`.
+- **Tests:** unit tests with the fake server in `tests/test_client_session.py`.
 - **Order:** before `add-ci-version-matrix`, so the new jobs on Python 3.13 and later do not inherit the stall.

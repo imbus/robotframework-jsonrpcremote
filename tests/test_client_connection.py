@@ -1,5 +1,5 @@
 """Unit tests for the JsonRpcRemote client's transport selection (the stdio happy path
-is covered end-to-end by tests/robot/stdio_echo.robot)."""
+is covered end-to-end by atests/stdio_echo.robot)."""
 
 import asyncio
 import os
@@ -10,7 +10,7 @@ import pytest
 
 from JsonRpcRemote import _Session
 
-_ROBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "robot"))
+_ROBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "atests"))
 
 
 def _make_session(uri: str, timeout: float = 5.0) -> _Session:
