@@ -4,6 +4,7 @@ is covered end-to-end by atests/stdio_echo.robot)."""
 import asyncio
 import os
 import sys
+import threading
 import time
 
 import pytest
@@ -83,6 +84,26 @@ def test_stdio_session_spawns_and_reaps_server() -> None:
 
     assert process.returncode is not None
     assert _wait_pid_gone(pid), f"server subprocess {pid} still alive after teardown"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stdio server transport is POSIX-only")
+def test_cancelled_close_still_reaps_the_stdio_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    unhandled: list[threading.ExceptHookArgs] = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+    session = _Session(f"stdio:{_stdio_server_command('StdioEchoLib')}", "StdioEchoLib", (), None, 20.0)
+    session.start()
+    assert session.initialized.wait(20)
+    assert session.start_error is None
+
+    async def cancelled_close() -> None:
+        # As when another caller cancels the close future that all callers of wait_closed() share.
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(session.peer.writer, "wait_closed", cancelled_close)
+    session.stop()
+
+    assert session.process_returncode is not None
+    assert unhandled == []
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the stdio server transport is POSIX-only")

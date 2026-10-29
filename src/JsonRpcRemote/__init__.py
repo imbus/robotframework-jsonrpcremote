@@ -1,20 +1,21 @@
 import asyncio
 import concurrent.futures
 import contextlib
+import functools
 import inspect
 import logging
 import shlex
 import time
 import weakref
-from collections.abc import Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, fields
 from enum import Enum
 from threading import Event, Lock, Thread
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from urllib.parse import urlparse
 
 from robot import result, running
-from robot.api import logger
+from robot.api import TypeInfo, logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
 from robot.utils import secs_to_timestr, timestr_to_secs
 
@@ -62,6 +63,9 @@ _logger = logging.getLogger(__name__)
 
 # `logger.write` accepts `console` only since Robot Framework 7.4.
 _LOGGER_WRITE_HAS_CONSOLE = "console" in inspect.signature(logger.write).parameters
+
+# How often ending a session checks whether the worker has ended while it waits for a teardown step.
+_TEARDOWN_POLL_INTERVAL = 0.05
 
 
 def _write_log(message: str, level: str, html: bool, console: bool) -> None:
@@ -285,7 +289,7 @@ class _SessionResources:
     alive and prevent the finalizer from ever running on garbage collection.
     """
 
-    __slots__ = ("endpoint", "loop", "peer", "process", "thread")
+    __slots__ = ("ended", "endpoint", "loop", "peer", "process", "thread")
 
     def __init__(self) -> None:
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -294,18 +298,51 @@ class _SessionResources:
         self.endpoint: _ClientEndpoint | None = None
         # The spawned server subprocess (stdio transport only).
         self.process: asyncio.subprocess.Process | None = None
+        # Set once the session's worker has ended; its loop runs nothing more after that.
+        self.ended = Event()
 
 
-def _run_on_loop(loop: asyncio.AbstractEventLoop, coro: Coroutine[Any, Any, Any], timeout: float | None) -> None:
-    """Run ``coro`` on ``loop`` from another thread and wait at most ``timeout`` for it. Never raises."""
+def _run_on_loop(
+    resources: _SessionResources,
+    loop: asyncio.AbstractEventLoop,
+    make_coro: Callable[[], Coroutine[Any, Any, Any]],
+    timeout: float | None,
+) -> None:
+    """Run the coroutine ``make_coro`` creates on the worker's ``loop`` and wait for it. Never raises.
+
+    The coroutine is created on the loop, and only while the worker still runs its session there,
+    so a loop that is finishing or closed leaves none unawaited. Waiting ends when the coroutine is
+    done, when the worker has ended, or after ``timeout``.
+    """
+    done = Event()
+    # Keeps the task alive while it runs; asyncio holds only weak references to tasks.
+    tasks: list[asyncio.Task[Any]] = []
+
+    def finished(task: asyncio.Task[Any]) -> None:
+        if not task.cancelled():
+            # Retrieved: the teardown is best effort, its errors are of no use to anybody.
+            task.exception()
+        done.set()
+
+    def start() -> None:
+        # On the worker's loop: once the worker has finished its session, there is nothing to tear down.
+        if resources.loop is not loop:
+            done.set()
+            return
+        task = loop.create_task(make_coro())
+        tasks.append(task)
+        task.add_done_callback(finished)
+
     try:
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-    except Exception:
-        # The loop is closed. Close the coroutine, too, so that it is not reported as never awaited.
-        coro.close()
+        loop.call_soon_threadsafe(start)
+    except RuntimeError:
+        # The loop is closed.
         return
-    with contextlib.suppress(Exception):
-        future.result(timeout)
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while not done.wait(_TEARDOWN_POLL_INTERVAL):
+        # A worker that has ended runs nothing more: waiting longer cannot help.
+        if resources.ended.is_set() or (deadline is not None and time.monotonic() >= deadline):
+            return
 
 
 def _finalize_session(resources: _SessionResources, timeout: float | None) -> None:
@@ -323,8 +360,8 @@ def _finalize_session(resources: _SessionResources, timeout: float | None) -> No
             # connection is still alive, before tearing down the transport.
             endpoint = resources.endpoint
             if endpoint is not None:
-                _run_on_loop(loop, endpoint.graceful_shutdown(timeout), timeout)
-            _run_on_loop(loop, peer.stop(), timeout)
+                _run_on_loop(resources, loop, functools.partial(endpoint.graceful_shutdown, timeout), timeout)
+            _run_on_loop(resources, loop, peer.stop, timeout)
         if thread is not None:
             # join() raises if the worker thread itself ends the session.
             with contextlib.suppress(Exception):
@@ -360,8 +397,9 @@ class _Session:
 
         self._res = _SessionResources()
         self.initialized = Event()
-        # Set once the worker has ended; from then on, the session runs no more calls.
-        self.ended = Event()
+        # Set once the worker has ended; from then on, the session runs no more calls. Shared with
+        # the resources, so that ending the session stops waiting for a worker that has ended.
+        self.ended = self._res.ended
         # Calls handed to the worker that are not done yet; guarded by _calls_lock.
         self._calls: set[concurrent.futures.Future[Any]] = set()
         self._calls_lock = Lock()
@@ -400,9 +438,10 @@ class _Session:
     def _run(self) -> None:
         try:
             asyncio.run(self._run_client())
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             # Raising it would only make the thread print it: the error has already reached
-            # the caller it concerns, as start_error or as the error of the failed call.
+            # the caller it concerns, as start_error or as the error of the failed call, and a
+            # cancellation that ends the session concerns no caller.
             _logger.debug("Session for '%s' ended with an error", self._uri, exc_info=True)
         finally:
             self._end()
@@ -525,7 +564,15 @@ class _Session:
             self._res.peer.reader.feed_eof()
             self._res.peer.writer.close()
             with contextlib.suppress(Exception):
-                await self._res.peer.writer.wait_closed()
+                try:
+                    await self._res.peer.writer.wait_closed()
+                except asyncio.CancelledError:
+                    # All callers of wait_closed() share one close future, so another caller can
+                    # cancel this wait; the session still releases its server below. Only a
+                    # cancellation of the worker itself goes on.
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise
 
         # Closing the writer sent EOF to the server's stdin; reap it, escalating to
         # terminate/kill if it does not exit within the timeout.
@@ -625,6 +672,15 @@ class SessionScope(Enum):
     GLOBAL = "GLOBAL"
 
 
+def _scope_option(value: SessionScope | str) -> SessionScope:
+    """Convert ``rpc_scope`` the way Robot Framework converts an argument to ``SessionScope``.
+
+    Robot Framework passes a string through for the hint ``SessionScope | str``, and a library
+    built on the client may pass one from Python, so the client converts it itself.
+    """
+    return cast(SessionScope, TypeInfo.from_type_hint(SessionScope).convert(value, name="rpc_scope"))
+
+
 @dataclass
 class _Outage:
     """From a lost connection or a failed connection attempt to the next successful connection."""
@@ -649,7 +705,7 @@ class JsonRpcRemote:
         library_name: str | None = None,
         *library_args: Any,
         rpc_timeout: float | str = 10.0,
-        rpc_scope: SessionScope = SessionScope.SUITE,
+        rpc_scope: SessionScope | str = SessionScope.SUITE,
         rpc_connect_retry_timeout: float | str = 0,
         rpc_connect_retry_interval: float | str = 1.0,
         **library_kw_args: Any,
@@ -663,7 +719,7 @@ class JsonRpcRemote:
 
         self._uri = uri
         self._timeout = _time_option("rpc_timeout", rpc_timeout)
-        self._scope = rpc_scope
+        self._scope = _scope_option(rpc_scope)
         self._retry_timeout = _time_option("rpc_connect_retry_timeout", rpc_connect_retry_timeout)
         self._retry_interval = _time_option("rpc_connect_retry_interval", rpc_connect_retry_interval)
         if self._retry_timeout > 0 and self._retry_interval <= 0:

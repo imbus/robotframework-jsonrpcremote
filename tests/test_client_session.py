@@ -18,7 +18,14 @@ import pytest
 from fake_server import NEVER_ANSWER, FakeServer, wait_until
 
 from jsonrpcpeer import JsonRpcPeer
-from JsonRpcRemote import JsonRpcRemote, _ClientEndpoint, _finalize_session, _Session, _SessionResources
+from JsonRpcRemote import (
+    JsonRpcRemote,
+    _ClientEndpoint,
+    _finalize_session,
+    _run_on_loop,
+    _Session,
+    _SessionResources,
+)
 from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
@@ -56,6 +63,26 @@ def _session(remote: JsonRpcRemote) -> Any:
 def test_fake_server_serves_a_keyword(remote: JsonRpcRemote) -> None:
     assert remote.get_keyword_names() == ["Echo"]
     assert _call(remote, "hello") == "echo: hello"
+
+
+@pytest.mark.parametrize("scope", ["TEST", " te st "])
+def test_rpc_scope_given_as_a_name_ends_the_session_with_the_test(server: FakeServer, scope: str) -> None:
+    # As a library built on the client passes it from Python, without Robot Framework's conversion.
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5, rpc_scope=scope)
+    try:
+        session = _session(remote)
+
+        remote._end_test(MagicMock(), MagicMock())
+
+        assert _session(remote) is None
+        assert session.ended.wait(5)
+    finally:
+        remote._stop_session()
+
+
+def test_unknown_rpc_scope_fails_the_import_naming_the_valid_scopes(server: FakeServer) -> None:
+    with pytest.raises(ValueError, match=r"Available: 'GLOBAL', 'SUITE' and 'TEST'"):
+        JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5, rpc_scope="weekly")
 
 
 # --- a failed keyword call affects only that call --------------------------------
@@ -336,6 +363,35 @@ def test_failed_start_is_not_an_unhandled_thread_exception(
     assert logged == [session.start_error]
 
 
+def test_cancelled_session_end_is_not_an_unhandled_thread_exception(
+    server: FakeServer, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    unhandled: list[threading.ExceptHookArgs] = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+    caplog.set_level(logging.DEBUG, logger="JsonRpcRemote")
+    session = _Session(server.uri, "FakeLib", None, None, 5)
+
+    async def cancelled_close() -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(session, "close_connection", cancelled_close)
+    # The session's worker body, in a thread the test can join.
+    worker = threading.Thread(target=session._run)
+    worker.start()
+    assert session.initialized.wait(5)
+    server.close_connections()
+    worker.join(5)
+
+    assert session.ended.is_set()
+    assert unhandled == []
+    logged = [
+        record.exc_info[1]
+        for record in caplog.records
+        if record.name == "JsonRpcRemote" and record.levelno == logging.DEBUG and record.exc_info
+    ]
+    assert [type(error) for error in logged] == [asyncio.CancelledError]
+
+
 # --- ending a session never raises -----------------------------------------------
 
 
@@ -388,6 +444,47 @@ def test_ending_a_session_whose_event_loop_is_closed_does_not_raise() -> None:
         _finalize_session(resources, 0.5)
 
     assert (resources.loop, resources.peer) == (None, None)
+
+
+def test_ending_a_session_whose_worker_has_ended_returns_at_once() -> None:
+    # The worker has ended, but its loop is not closed yet, as while asyncio.run() finishes:
+    # the loop runs nothing more.
+    loop = asyncio.new_event_loop()
+    try:
+        resources = _resources(loop)
+        resources.ended.set()
+
+        with _no_coroutine_left_unawaited():
+            started = time.monotonic()
+            _finalize_session(resources, 5)
+
+            assert time.monotonic() - started < 1
+    finally:
+        loop.close()
+
+
+def test_teardown_does_not_start_once_the_worker_has_finished_its_session() -> None:
+    loop = asyncio.new_event_loop()
+    worker = threading.Thread(target=loop.run_forever, daemon=True)
+    worker.start()
+    try:
+        # The worker cleared the loop when its session finished, after the teardown read it.
+        resources = _resources(loop, worker)
+        resources.loop = None
+        started_teardowns: list[str] = []
+
+        async def teardown() -> None:
+            started_teardowns.append("teardown")
+
+        started = time.monotonic()
+        _run_on_loop(resources, loop, teardown, 5)
+
+        assert time.monotonic() - started < 1
+        assert started_teardowns == []
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        worker.join(5)
+        loop.close()
 
 
 def test_ending_a_session_without_a_peer_kills_the_recorded_server_process() -> None:
