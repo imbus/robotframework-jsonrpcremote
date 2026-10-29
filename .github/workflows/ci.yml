@@ -13,6 +13,7 @@ jobs:
   lint:
     name: lint (ruff + mypy)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
@@ -34,19 +35,23 @@ jobs:
         run: uv run mypy
 
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v6
 
+      # python-version sets UV_PYTHON, which every later uv command uses instead of .python-version.
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
+          python-version: ${{ matrix.python }}
 
       # The unit tests import the server package and the robot suites spawn it,
       # but uv sync/run target only the workspace root by default -- so operate on
@@ -66,5 +71,42 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: robot-results-${{ matrix.os }}
+          name: robot-results-${{ matrix.os }}-${{ matrix.python }}
+          path: results/
+
+  test-robot-framework-minimum:
+    name: test (${{ matrix.os }}, Robot Framework minimum)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      # Must match the robotframework>= requirement in pyproject.toml and packages/server/pyproject.toml.
+      ROBOT_FRAMEWORK_MINIMUM: "7.2"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      # Without python-version: the Python from .python-version, the minimum.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --all-packages
+
+      # --with layers the minimum over the locked version, also for the servers the suites start.
+      - name: Unit tests
+        run: uv run --all-packages --with "robotframework==${{ env.ROBOT_FRAMEWORK_MINIMUM }}" pytest
+
+      - name: Robot integration tests
+        run: uv run --all-packages --with "robotframework==${{ env.ROBOT_FRAMEWORK_MINIMUM }}" robotcode run
+
+      - name: Upload Robot results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: robot-results-${{ matrix.os }}-robot-framework-minimum
           path: results/

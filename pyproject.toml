@@ -76,7 +76,6 @@ dev = [
     "pytest-asyncio>=0.24",
     "robotcode[runner]>=2.1.0",
     "robotframework-robocop>=7.0.0",
-    "robotremoteserver>=1.1.1",
     "ruff>=0.14.9",
     "simple-robot-jsonrpcserver",
 ]

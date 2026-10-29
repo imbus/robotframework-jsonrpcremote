@@ -1062,7 +1062,6 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "robotcode", extra = ["runner"] },
     { name = "robotframework-robocop" },
-    { name = "robotremoteserver" },
     { name = "ruff" },
     { name = "simple-robot-jsonrpcserver" },
 ]
@@ -1085,7 +1084,6 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "robotcode", extras = ["runner"], specifier = ">=2.1.0" },
     { name = "robotframework-robocop", specifier = ">=7.0.0" },
-    { name = "robotremoteserver", specifier = ">=1.1.1" },
     { name = "ruff", specifier = ">=0.14.9" },
     { name = "simple-robot-jsonrpcserver", editable = "examples/simple-robot-jsonrpcserver" },
 ]
@@ -1131,15 +1129,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/24/90/248070b2def441f19f8f936024c62ebbdb90c1a610f5b5470f0ea1118d9c/robotframework_robocop-9.1.2.tar.gz", hash = "sha256:ce93c6a46434bd5e2a40f6fec81514cb9fe1c9ee4fa97db03d1d3bed541688b3", size = 1169927, upload-time = "2026-10-23T15:59:56.106Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b6/2f/55d337a1e1e2358e5746198a1b59727e5d83ce9523594f896ebf9cbe90b9/robotframework_robocop-9.1.2-py3-none-any.whl", hash = "sha256:152cd1a669f4e81539240ff3f5c54ffd93d18c9f8ec01260d210254bf9e69c2c", size = 426432, upload-time = "2026-10-23T15:59:54.883Z" },
-]
-
-[[package]]
-name = "robotremoteserver"
-version = "1.1.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ab/7f/ca08c86a23bf4ea260ba640855db95e6daf044942e2e51bda0d59ed81573/robotremoteserver-1.1.1.tar.gz", hash = "sha256:378c5a93275f1277369426aba3c9cdfafbed75f9e926ed7ba54c92c948b29411", size = 20205, upload-time = "2022-12-23T13:44:42.466Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/77/532abf69fe4107cf0dea47c84816cb4ed65e15f376cee93690fe89b0ec78/robotremoteserver-1.1.1-py2.py3-none-any.whl", hash = "sha256:a344051d4e2bf435e0970365d4051cda13100395e072ff88cb740f9c363206bf", size = 15218, upload-time = "2022-12-23T13:44:40.855Z" },
 ]
 
 [[package]]

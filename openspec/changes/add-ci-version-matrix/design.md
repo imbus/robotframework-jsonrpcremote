@@ -40,7 +40,7 @@ The `test` job gets a matrix `python: ["3.12", "3.13", "3.14", "3.15"]` next to 
 
 ### 2. The Robot Framework minimum is layered over the project with `uv run --with`
 
-A job `test-robot-framework-minimum` runs on the three operating systems with Python 3.12, syncs as the `test` job does, and runs the unit tests and the Robot suites with `uv run --all-packages --with "robotframework==${{ env.ROBOT_FRAMEWORK_MINIMUM }}"`. `ROBOT_FRAMEWORK_MINIMUM` is set once for the job, with a comment that it must match the `robotframework>=` requirement in `pyproject.toml` and `packages/server/pyproject.toml`. GitHub replaces the expression before any shell runs, so it works with PowerShell on Windows as well.
+A job `test-robot-framework-minimum` runs on the three operating systems with the Python from `.python-version`, 3.12, so that it follows a raised Python minimum on its own. It syncs as the `test` job does, and runs the unit tests and the Robot suites with `uv run --all-packages --with "robotframework==${{ env.ROBOT_FRAMEWORK_MINIMUM }}"`. `ROBOT_FRAMEWORK_MINIMUM` is set once for the job, with a comment that it must match the `robotframework>=` requirement in `pyproject.toml` and `packages/server/pyproject.toml`. GitHub replaces the expression before any shell runs, so it works with PowerShell on Windows as well.
 
 - **Alternative:** install the version into `.venv` with `uv pip install` and run with `uv run --no-sync`. More steps for the same result.
 - **Alternative:** read the minimum from `pyproject.toml` in the job. It would follow a raised minimum on its own, but needs a script per platform; a raise changes one more line instead.
