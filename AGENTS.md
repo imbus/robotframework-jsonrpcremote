@@ -34,6 +34,7 @@ English is the project language. Write everything that goes into the repository 
 	- Unit tests live in `tests/` (pytest), organized by component (`test_peer.py`, `test_endpoint.py`, `test_protocol.py`, ...). Add or update them for any Python change.
 	- End-to-end behavior is covered by Robot Framework suites in `atests/`; each suite starts and stops its own server.
 	- Add or change a Robot test when the changed behavior can be observed from Robot Framework: keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files. When such a change adds none, say why. Behavior that only shows inside a package is covered by unit tests; the Robot suites still run as a regression check.
+	- Run each new test against the code without the part of the change it covers and see it fail there; failing against the unchanged code alone does not show which part a test covers.
 - Generated or ignored outputs (do not commit by hand):
 	- Build artifacts in `dist/`, Robot output in `results/`, and the various caches are gitignored.
 
