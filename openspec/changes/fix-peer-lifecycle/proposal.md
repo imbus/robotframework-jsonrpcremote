@@ -11,18 +11,20 @@ Further lifecycle defects come with it:
 - `stop()` on a peer that was never started waits forever, because it waits for the end of a read loop that never ran.
 - The same happens when `stop()` follows `start()` before the read loop got to run once. Cancelling the read task at that point skips its cleanup, so the peer neither resolves `completion` nor fails waiting requests nor closes the writer.
 - The constructor creates an `asyncio.Future`, so creating a peer outside a running event loop fails on Python 3.14 and later (`RuntimeError: There is no current event loop`) and warns on 3.12 and 3.13.
+- When `stop()` cancels the read task while its cleanup waits for the writer to close, asyncio also cancels the close waiter that every caller of `writer.wait_closed()` shares. The client waits for the same close when its session ends, gets a `CancelledError`, and its worker thread prints it, against the client requirement that session errors are not printed by the worker thread. It showed in 3 of 9 runs of the unit tests on Python 3.15 and in 1 of 4 on 3.12; it depends on timing, not on the version.
 
 A probe against the current peer on 2026-10-28 confirmed each of these on Python 3.10, 3.12, 3.13, 3.14 and 3.15, within the version limits stated above. It also showed that removing the finalizer is enough for an ended peer to be garbage collected, with and without an attached endpoint.
 
-Found in the project review of 2026-10-27 (items PEER-4 and PEER-6); the second item of the list was found while planning this change.
+Found in the project review of 2026-10-27 (items PEER-4 and PEER-6); the second item of the list was found while planning this change, the fourth while testing `raise-python-minimum` (PEER-7).
 
 ## What Changes
 
 - **No more leak:** the peer no longer registers a finalizer that references it, so a peer that has ended can be garbage collected together with its connection objects.
 - **`stop()` when the read loop never ran:** whether the peer was never started or is stopped right after `start()`, `stop()` returns at once and ends the peer as the end of its read loop does: the connection counts as closed, so waiting requests fail and new ones are rejected; `completion` resolves; with `auto_close`, the writer is closed.
+- **Closing the writer:** when the peer is stopped while its cleanup waits for the writer to close, others who wait for that close are no longer cancelled; `stop()` still returns without waiting for the close.
 - **Construction:** a peer can be created without a running event loop; it binds to the running loop when it is first used.
 - **Documentation:** the `jsonrpcpeer` README describes the peer's lifecycle: creating, starting, stopping and `completion`.
-- **Tests:** a stopped peer, and a peer whose connection the remote side closed, are garbage collected, and so are the server's peer of a closed connection and the client's peer of an ended session. The leak measurement on the server is repeated before and after the fix.
+- **Tests:** a stopped peer, and a peer whose connection the remote side closed, are garbage collected, and so are the server's peer of a closed connection and the client's peer of an ended session; a peer stopped during its cleanup leaves the close to the other waiters. The leak measurement on the server is repeated before and after the fix.
 
 ## Capabilities
 
@@ -32,14 +34,14 @@ _None._
 
 ### Modified Capabilities
 
-- `jsonrpc-peer`: adds requirements that a peer that has ended can be garbage collected, that stopping a peer whose read loop never ran returns at once and ends the peer, and that a peer can be created outside a running event loop.
+- `jsonrpc-peer`: adds requirements that a peer that has ended can be garbage collected, that stopping a peer whose read loop never ran returns at once and ends the peer, that a peer can be created outside a running event loop, and that stopping a peer does not cancel the close of its writer for other callers.
 
 ## Impact
 
 - **Code:** `packages/jsonrpcpeer/src/jsonrpcpeer/peer.py` (`JsonRpcPeer.__init__`, `start()`, `stop()`, `completion`, the cleanup at the end of `io_loop`, `_on_finalize`).
 - **Public API:** unchanged; `completion` keeps its meaning.
-- **Client and server:** no code change; both stop keeping one peer per connection or session alive.
+- **Client and server:** no code change; both stop keeping one peer per connection or session alive, and the client no longer gets a `CancelledError` from the peer when its session ends. A defense against such an error in the client itself follows in `fix-client-session-end`.
 - **Not in this change:** the `asyncio.get_event_loop()` calls in the client and in the server endpoint. They always run inside a running loop and return it.
 - **Docs:** `packages/jsonrpcpeer/README.md`.
-- **Tests:** `tests/unit/test_peer.py`, plus one test each in `tests/unit/test_server_stdio.py` and `tests/unit/test_client_session.py`; locally also on Python 3.12 and 3.14, because CI runs only 3.10 until `add-ci-version-matrix`.
+- **Tests:** `tests/unit/test_peer.py`, plus one test each in `tests/unit/test_server_stdio.py` and `tests/unit/test_client_session.py`; locally also on Python 3.14 and 3.15, because the project environment and CI run only 3.12 until `add-ci-version-matrix`.
 - **Order:** independent; it comes before `fix-peer-message-handling` and `fix-rpc-error-responses`, which change the same file.

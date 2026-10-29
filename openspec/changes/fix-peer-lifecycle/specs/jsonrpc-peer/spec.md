@@ -75,3 +75,26 @@ Creating a peer SHALL NOT require a running event loop and SHALL NOT emit a warn
 - **WHEN** a peer is created while no event loop is running
 - **THEN** creating it succeeds without a warning
 - **AND** once an event loop runs, the peer can be started and exchanges requests with a remote peer
+
+### Requirement: Stopping a peer does not cancel the close of its writer for other callers
+
+When the peer is stopped while it waits for its writer to close, stopping SHALL NOT cancel that close for other callers that wait for the same writer to close, and SHALL return without waiting for the close to complete.
+
+#### Scenario: Another caller waits for the writer to close
+
+- **WHEN** the connection of a started peer has closed and the peer waits for its writer to close
+- **AND** another caller waits for the same writer to close
+- **AND** the peer is stopped
+- **THEN** the other caller's wait is not cancelled
+- **AND** it ends normally once the writer has closed
+
+#### Scenario: Stopping does not wait for the close
+
+- **WHEN** the peer is stopped while it waits for its writer to close
+- **THEN** stopping returns before the writer has closed
+
+#### Scenario: The close fails after the peer was stopped
+
+- **WHEN** the peer is stopped while it waits for its writer to close
+- **AND** waiting for the close then fails, as it does for some writers such as the stdio pipe
+- **THEN** asyncio reports no exception that was never retrieved
