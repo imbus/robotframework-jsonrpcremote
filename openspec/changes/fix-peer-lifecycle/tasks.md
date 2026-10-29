@@ -18,6 +18,7 @@
 - [ ] 2.2 In the cleanup method, wait for the writer to close through `asyncio.shield()`, with a done callback that retrieves the result of the shielded wait and does not reference the peer (design decision 3). Verify with new tests in `tests/test_peer.py` that use a writer stand-in whose `wait_closed()` awaits one future shared by all callers; run them against the unchanged peer first and see the first one fail:
   - the remote side closes the connection, the peer waits for the close, a second task waits for the same close, and the peer is stopped: the second wait is not cancelled and ends normally once the shared future is resolved;
   - `stop()` returns while the shared future is still open;
+  - a peer stopped before its read loop ran returns from `stop()` while the shared future is still open, and its writer has been closed;
   - when the shared future then fails, asyncio reports no exception that was never retrieved, checked through the loop's exception handler
 - [ ] 2.3 Add a section "Lifecycle" under "Advanced Topics" in `packages/jsonrpcpeer/README.md`: `start()` and `run()`, what `completion` reports, that `stop()` ends the peer at any time, also before or right after `start()`, and returns without waiting for the writer to close, what `auto_close` closes, and that a peer that has ended is freed once nothing references it. Verify that each statement matches the tests of 1.1, 2.1 and 2.2
 

@@ -60,6 +60,7 @@ When a peer is stopped before its read loop ran, because it was never started or
 
 - **WHEN** a peer with automatic closing enabled, the default, is stopped before its read loop ran
 - **THEN** the peer closes its writer
+- **AND** stopping returns without waiting for the writer to close
 
 #### Scenario: Automatic closing is disabled
 
