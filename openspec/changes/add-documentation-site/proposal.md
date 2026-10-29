@@ -9,11 +9,13 @@ The READMEs have also drifted from the code, and nothing checks them:
 - they advertise connection multiplexing, although the client opens one connection per library instance, and progress updates, which do not exist;
 - they describe `--outputdir` as the directory for Robot output files, but the server writes none and only sets `${OUTPUT_DIR}`;
 - they do not say that the server runs keywords one after another, so one blocking keyword blocks all clients;
-- the declared Robot Framework minimum drifted until `fix-robot-framework-compatibility`.
+- they call the protocol language-agnostic, although values other than JSON scalars travel as Python pickles that only a Python peer can read;
+- the server README's quick start binds the server to all network interfaces instead of the loopback address;
+- the declared Robot Framework minimum had drifted to 7.4 until `fix-robot-framework-compatibility` raised it to 7.2.
 
 A small documentation site with guides and runnable examples addresses both. If every example on it is a file that CI runs, the site cannot promise what the code does not do, and every later change can describe its user-visible behavior there and be reviewed against it.
 
-Found in the project review of 2026-10-27 (items DOC-1, DOC-2, SERVER-4 and SERVER-5).
+Found in the project review of 2026-10-27 (items DOC-3, DOC-1, DOC-2, SERVER-4 and SERVER-5).
 
 ## What Changes
 
@@ -26,17 +28,18 @@ Found in the project review of 2026-10-27 (items DOC-1, DOC-2, SERVER-4 and SERV
 - **Runnable examples:** every example on the site is a file in the repository that the page includes with Starlight's `<Code>` component and a `?raw` import. A CI job runs all examples against a real server.
 - **READMEs:** the root README becomes a short overview with installation, a minimal example and a link to the site. The package READMEs keep what their PyPI pages need and link to the site. All examples use the default loopback address.
 - **Build and publishing:** CI builds the site and checks its links, and a workflow publishes it from `main`.
-- **Workflow rule:** `openspec/config.yaml` gets a rule for tasks: a change with user-visible behavior updates the site and its runnable examples, and its review checks the implementation against them.
-- **Server output files:** the unreachable `ResultWriter` branch in the server's runner is removed, and the help text of `--outputdir` says what the option does.
+- **Workflow rule:** `openspec/config.yaml` gets a task rule next to the four on tests, and `AGENTS.md` and `CONTRIBUTING.md` state it as they state those: a change with user-visible behavior updates the site and its runnable examples, and its review checks the implementation against them.
+- **Server output files:** the unreachable `ResultWriter` branch in the server's runner is removed, and the help text of `--outputdir` says that it only sets `${OUTPUT_DIR}`.
 - No product behavior changes, so the change has no spec delta (`skip_specs: true`).
 
-Assumptions recorded for review:
+Decisions confirmed on 2026-10-29:
 
 - The site lives in `docs/` of this repository. Its Node.js toolchain stays separate from the Python workspace.
-- It is published on GitHub Pages of `imbus/robotframework-jsonrpcremote`; Pages has to be enabled for the repository.
-- The protocol specification moves from `packages/protocol/README.md` to the site; the README keeps a summary and a link.
+- It is published on GitHub Pages of `imbus/robotframework-jsonrpcremote`, enabled on 2026-10-29 with GitHub Actions as its source.
+- The protocol specification moves from `packages/protocol/README.md` to the site; the README keeps a summary for its PyPI page and a link.
 - The server gets no options for Robot output files; describing `--outputdir` correctly is enough.
-- The examples run in a CI job of their own on Linux.
+- The examples run in a CI job of their own on Linux, which starts the server as the site shows.
+- The container guide has a `Dockerfile` example that CI builds from the current code; the Kubernetes sidecar is described in text only.
 
 ## Capabilities
 
@@ -51,8 +54,8 @@ _None._ The change sets `skip_specs: true`.
 ## Impact
 
 - **New:** `docs/` with the Astro project, its pages and the example files; a workflow that publishes the site.
-- **CI:** jobs that build the site, check its links and run the examples. The ruff check of Markdown files in CI has to handle the site's pages or exclude them.
-- **Docs:** `README.md`, `packages/server/README.md`, `packages/protocol/README.md`, `packages/jsonrpcpeer/README.md`, `examples/simple-robot-jsonrpcserver/README.md`.
+- **CI:** jobs that build the site, check its links and run the examples, next to the matrix from `add-ci-version-matrix`. The Python tools leave the site alone: ruff follows `.gitignore`, which gets the site's `node_modules` and `.astro`, and pytest, mypy and robotcode only look at their configured paths.
+- **Docs:** `README.md`, `packages/server/README.md`, `packages/protocol/README.md`, `packages/jsonrpcpeer/README.md`, `examples/simple-robot-jsonrpcserver/README.md`, and for the workflow rule `AGENTS.md` and `CONTRIBUTING.md`.
 - **Code:** `packages/server/src/robot_jsonrpcremote_server/_runner.py` (the unreachable `ResultWriter` branch) and the help text of `--outputdir` in `__main__.py`.
 - **Workflow:** `openspec/config.yaml`.
-- **Order:** after `add-ci-version-matrix`, so the site's jobs run on the new matrix from the start; before `fix-keyword-failure-reporting` and every later change, which document their user-visible behavior on the site.
+- **Order:** after `add-ci-version-matrix`, which is done; before `fix-keyword-failure-reporting` and every later change, which document their user-visible behavior on the site.
