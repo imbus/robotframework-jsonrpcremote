@@ -9,6 +9,7 @@ import re
 import threading
 import time
 import warnings
+import weakref
 from collections.abc import Generator, Iterator
 from typing import Any
 from unittest.mock import MagicMock
@@ -247,6 +248,15 @@ def test_session_stopped_by_the_client_is_not_a_loss(remote: JsonRpcRemote) -> N
 
     assert session.ended.wait(5)
     assert not session.lost
+
+
+def test_the_peer_of_an_ended_session_is_freed(remote: JsonRpcRemote) -> None:
+    peer_ref = weakref.ref(_session(remote)._res.peer)
+
+    remote._stop_session()  # as at the end of the session's rpc_scope; the client drops the session
+    gc.collect()
+
+    assert peer_ref() is None
 
 
 def test_calls_after_a_loss_fail_without_connecting_again(server: FakeServer, remote: JsonRpcRemote) -> None:

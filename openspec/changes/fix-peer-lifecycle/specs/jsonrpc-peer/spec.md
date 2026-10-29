@@ -10,7 +10,7 @@ The peer SHALL NOT keep itself alive once it has ended. When the caller no longe
 
 - **WHEN** a started peer is stopped
 - **AND** the caller no longer references it
-- **THEN** the peer is freed by the next garbage collection
+- **THEN** the peer is freed by a garbage collection once the event loop has finished its current step
 
 #### Scenario: Remote side closes the connection
 

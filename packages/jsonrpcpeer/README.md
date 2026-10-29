@@ -110,6 +110,15 @@ except JsonRpcConnectionClosedError as e:
     print(f"Connection lost: {e.__cause__ or 'closed by the remote side'}")
 ```
 
+### Lifecycle
+
+*   **Creating:** a peer can be created before an event loop runs; it binds to the loop that is running when it is first used, for example by `start()`.
+*   **Starting:** `start()` starts reading from the connection in a background task and returns at once; `await peer.run()` starts the peer and waits until it has ended.
+*   **Completion:** `peer.completion` is a future that resolves with `True` once the peer has ended, whether the remote side closed the connection or the peer was stopped. If reading from the connection failed, awaiting it raises that error instead.
+*   **Stopping:** `await peer.stop()` ends the peer at any time, also before or right after `start()`. Requests still waiting for a response fail with `JsonRpcConnectionClosedError`, and new requests are rejected. `stop()` does not wait for the writer to finish closing.
+*   **Closing the writer:** with `auto_close=True`, the default, the peer closes its writer when it ends. Pass `auto_close=False` to close the writer yourself.
+*   **Memory:** a peer that has ended keeps nothing alive that refers back to it, so it is freed once your code no longer references it.
+
 ### Bidirectional Communication
 
 JSON-RPC 2.0 is a peer-to-peer protocol. Although we often use the terms "Client" and "Server":

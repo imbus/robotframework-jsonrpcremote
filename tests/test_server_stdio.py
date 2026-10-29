@@ -2,9 +2,11 @@
 
 import asyncio
 import contextlib
+import gc
 import os
 import re
 import sys
+import weakref
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -95,6 +97,57 @@ async def test_stdio_server_initializes_and_stops_runner_on_eof(
 
     assert remote_context._stopped.is_set()
     assert server_main._server_stop_event.is_set()
+
+
+async def test_stdio_server_releases_the_peer_of_a_closed_connection(
+    loopback_pair: tuple[
+        tuple[asyncio.StreamReader, asyncio.StreamWriter], tuple[asyncio.StreamReader, asyncio.StreamWriter]
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (server_streams, (client_reader, client_writer)) = loopback_pair
+
+    async def fake_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        return server_streams
+
+    monkeypatch.setattr(server_main, "_stdio_streams", fake_streams)
+
+    server_main._server_started_event.clear()
+    server_main._server_stop_event.clear()
+
+    task = asyncio.ensure_future(server_main.run_stdio_server(RobotRemoteContext(), verbose=False, libraries=None))
+
+    for _ in range(100):
+        if server_main._server_started_event.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert server_main._server_started_event.is_set()
+
+    client = JsonRpcPeer(client_reader, client_writer)
+    client.start()
+    await asyncio.wait_for(
+        client.send_request_typed(
+            InitializeResult,
+            INITIALIZE_REQUEST,
+            InitializeParams(
+                capabilities=ClientCapabilities(),
+                client_info=ClientInfo(name="test", version="0"),
+            ),
+        ),
+        2,
+    )
+    # handle_client() serves TCP connections the same way. Neither the peer nor its endpoint,
+    # which refers back to the peer, is bound to a local name here.
+    peer_ref = weakref.ref(next(iter(server_main._clients.values()))[0])
+
+    await client.stop()
+    client_writer.close()
+    await asyncio.wait_for(task, 2)
+    await asyncio.sleep(0)
+
+    gc.collect()
+
+    assert peer_ref() is None
 
 
 async def test_stdio_server_stops_via_stop_server(

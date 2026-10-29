@@ -1,7 +1,9 @@
 import asyncio
 import gc
 import json
-from collections.abc import AsyncIterator, Callable
+import warnings
+import weakref
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -9,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 
-from jsonrpcpeer import JsonRpcConnectionClosedError, JsonRpcPeer
+from jsonrpcpeer import JsonRpcConnectionClosedError, JsonRpcPeer, rpc_request
 from jsonrpcpeer.peer import (
     JsonRpcErrorCode,
     JsonRpcErrorResponse,
@@ -463,3 +465,266 @@ async def test_write_error_unrelated_to_a_close_propagates_unchanged() -> None:
         await peer.send_request("ping")
     assert not peer._closed
     assert not peer._pending_requests
+
+
+# --- lifecycle --------------------------------------------------------------
+
+
+async def _wait_for_read_loop_end(peer: JsonRpcPeer) -> None:
+    await _wait_until(lambda: peer._read_task is not None and peer._read_task.done())
+
+
+async def test_stopped_peer_is_freed() -> None:
+    peer = JsonRpcPeer(asyncio.StreamReader(), cast("asyncio.StreamWriter", _FakeWriter()))
+    peer.start()
+    await asyncio.sleep(0)
+    await peer.stop()
+    ref = weakref.ref(peer)
+    del peer
+    # Until the loop finishes the step that resumed us, it still holds the cancelled read task,
+    # whose CancelledError references the peer through its traceback.
+    await asyncio.sleep(0)
+
+    gc.collect()
+
+    assert ref() is None
+
+
+async def test_peer_whose_connection_the_remote_side_closed_is_freed() -> None:
+    reader = asyncio.StreamReader()
+    peer = JsonRpcPeer(reader, cast("asyncio.StreamWriter", _FakeWriter()))
+    peer.start()
+    reader.feed_eof()
+    await asyncio.wait_for(peer.completion, 2)
+    await _wait_for_read_loop_end(peer)
+    ref = weakref.ref(peer)
+    del peer
+
+    gc.collect()
+
+    assert ref() is None
+
+
+class _EchoEndpoint:
+    rpc_peer: JsonRpcPeer | None = None
+
+    @rpc_request("echo")
+    async def echo(self, params: Any) -> Any:
+        return params
+
+
+async def test_peer_with_an_attached_endpoint_is_freed_together_with_it() -> None:
+    accepted: asyncio.Queue[tuple[asyncio.StreamReader, asyncio.StreamWriter]] = asyncio.Queue()
+
+    async def on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await accepted.put((reader, writer))
+
+    server = await asyncio.start_server(on_client, "127.0.0.1", 0)
+    try:
+        client = JsonRpcPeer(*await asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1]))
+        peer = JsonRpcPeer(*await asyncio.wait_for(accepted.get(), 2))
+        endpoint = _EchoEndpoint()
+        peer.attach_endpoint(endpoint)
+        client.start()
+        peer.start()
+        assert await asyncio.wait_for(client.send_request("echo", {"x": 1}), 2) == {"x": 1}
+
+        # The client closes the connection; the peer ends on its own.
+        await client.stop()
+        await asyncio.wait_for(peer.completion, 2)
+        await _wait_for_read_loop_end(peer)
+        peer_ref, endpoint_ref = weakref.ref(peer), weakref.ref(endpoint)
+        del peer, endpoint
+
+        gc.collect()
+
+        assert peer_ref() is None
+        assert endpoint_ref() is None
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_stopping_a_peer_that_was_never_started_ends_it() -> None:
+    peer = JsonRpcPeer(asyncio.StreamReader(), cast("asyncio.StreamWriter", _FakeWriter()))
+
+    async with asyncio.timeout(2):
+        await peer.stop()
+
+    assert peer.completion.result() is True
+
+
+async def test_stopping_a_peer_right_after_start_ends_it() -> None:
+    peer = JsonRpcPeer(asyncio.StreamReader(), cast("asyncio.StreamWriter", _FakeWriter()))
+    peer.start()
+
+    # In the same task, so the read loop does not get to run before the stop.
+    async with asyncio.timeout(2):
+        await peer.stop()
+
+    assert peer.completion.result() is True
+
+
+async def test_stopping_a_peer_that_was_never_started_fails_its_waiting_request() -> None:
+    peer = JsonRpcPeer(asyncio.StreamReader(), cast("asyncio.StreamWriter", _FakeWriter()))
+    request = asyncio.create_task(peer.send_request("ping"))
+    await _wait_until(lambda: bool(peer._pending_requests))
+
+    async with asyncio.timeout(2):
+        await peer.stop()
+
+    with pytest.raises(JsonRpcConnectionClosedError) as exc_info:
+        await asyncio.wait_for(request, 2)
+    assert exc_info.value.__cause__ is None
+
+
+async def test_request_after_stopping_a_peer_that_was_never_started_fails_without_writing() -> None:
+    writer = _FakeWriter()
+    peer = JsonRpcPeer(asyncio.StreamReader(), cast("asyncio.StreamWriter", writer))
+    async with asyncio.timeout(2):
+        await peer.stop()
+
+    with pytest.raises(JsonRpcConnectionClosedError):
+        await peer.send_request("ping")
+    assert writer.written == []
+
+
+@pytest.mark.parametrize("auto_close", [True, False])
+async def test_stopping_a_peer_that_was_never_started_closes_its_writer_only_with_auto_close(
+    auto_close: bool,
+) -> None:
+    writer = _FakeWriter()
+    peer = JsonRpcPeer(asyncio.StreamReader(), cast("asyncio.StreamWriter", writer), auto_close=auto_close)
+
+    async with asyncio.timeout(2):
+        await peer.stop()
+
+    assert writer.closed is auto_close
+
+
+class _WriterWithSharedClose(_FakeWriter):
+    """A writer whose wait_closed() awaits one future shared by all callers, as StreamWriter does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    async def wait_closed(self) -> None:
+        await self.close_done
+
+
+async def _peer_waiting_for_its_close() -> tuple[JsonRpcPeer, _WriterWithSharedClose]:
+    """A started peer whose read loop ended and now waits in its cleanup for the writer to close."""
+    reader = asyncio.StreamReader()
+    writer = _WriterWithSharedClose()
+    peer = JsonRpcPeer(reader, cast("asyncio.StreamWriter", writer))
+    peer.start()
+    reader.feed_eof()
+    await _wait_until(lambda: writer.closed)
+    return peer, writer
+
+
+async def test_stopping_a_peer_does_not_cancel_the_close_that_others_wait_for() -> None:
+    peer, writer = await _peer_waiting_for_its_close()
+    other = asyncio.create_task(writer.wait_closed())
+    await asyncio.sleep(0)
+
+    async with asyncio.timeout(2):
+        await peer.stop()
+
+    assert not writer.close_done.cancelled()
+    writer.close_done.set_result(None)
+    await asyncio.wait_for(other, 2)
+
+
+async def test_stopping_a_peer_does_not_wait_for_its_writer_to_close() -> None:
+    peer, writer = await _peer_waiting_for_its_close()
+
+    async with asyncio.timeout(2):
+        await peer.stop()
+
+    assert not writer.close_done.done()
+    writer.close_done.set_result(None)
+
+
+async def test_stopping_a_peer_whose_read_loop_never_ran_does_not_wait_for_its_writer_to_close() -> None:
+    writer = _WriterWithSharedClose()
+    peer = JsonRpcPeer(asyncio.StreamReader(), cast("asyncio.StreamWriter", writer))
+
+    async with asyncio.timeout(2):
+        await peer.stop()
+
+    assert writer.closed
+    assert not writer.close_done.done()
+    writer.close_done.set_result(None)
+
+
+async def _peer_whose_read_loop_never_ran() -> tuple[JsonRpcPeer, _WriterWithSharedClose]:
+    writer = _WriterWithSharedClose()
+    return JsonRpcPeer(asyncio.StreamReader(), cast("asyncio.StreamWriter", writer)), writer
+
+
+@pytest.mark.parametrize("make_peer", [_peer_waiting_for_its_close, _peer_whose_read_loop_never_ran])
+async def test_a_close_that_fails_after_the_peer_was_stopped_leaves_no_unretrieved_error(
+    make_peer: Callable[[], Awaitable[tuple[JsonRpcPeer, _WriterWithSharedClose]]],
+) -> None:
+    loop = asyncio.get_running_loop()
+    reports: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _, context: reports.append(context))
+    try:
+        peer, writer = await make_peer()
+        async with asyncio.timeout(2):
+            await peer.stop()
+        # asyncio reports an unretrieved error only when its task is collected, together with the peer.
+        del peer
+
+        writer.close_done.set_exception(NotImplementedError("write pipe has no close waiter"))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        gc.collect()
+        assert not [report for report in reports if "never retrieved" in str(report.get("message"))]
+    finally:
+        loop.set_exception_handler(None)
+
+
+_Streams = tuple[asyncio.StreamReader, asyncio.StreamWriter]
+
+
+async def _connected_streams() -> tuple[asyncio.Server, _Streams, _Streams]:
+    accepted: asyncio.Queue[_Streams] = asyncio.Queue()
+
+    async def on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await accepted.put((reader, writer))
+
+    server = await asyncio.start_server(on_client, "127.0.0.1", 0)
+    client_streams = await asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1])
+    return server, client_streams, await asyncio.wait_for(accepted.get(), 2)
+
+
+def test_peer_can_be_created_without_a_running_event_loop() -> None:
+    loop = asyncio.new_event_loop()
+    try:
+        server, client_streams, server_streams = loop.run_until_complete(_connected_streams())
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            client = JsonRpcPeer(*client_streams)
+            remote = JsonRpcPeer(*server_streams)
+
+        async def exchange() -> None:
+            async def add(params: Any) -> Any:
+                return params["a"] + params["b"]
+
+            remote.register_request_handler("add", add)
+            client.start()
+            remote.start()
+            assert await asyncio.wait_for(client.send_request("add", {"a": 1, "b": 2}), 2) == 3
+            await client.stop()
+            await remote.stop()
+            server.close()
+            await server.wait_closed()
+
+        loop.run_until_complete(exchange())
+    finally:
+        loop.close()

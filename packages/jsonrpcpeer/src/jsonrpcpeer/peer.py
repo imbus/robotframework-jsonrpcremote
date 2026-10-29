@@ -4,7 +4,6 @@ import inspect
 import json
 import logging
 import traceback
-import weakref
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Callable, Coroutine, Optional, Protocol, Type, TypeAlias, TypeVar, cast, get_type_hints
@@ -81,6 +80,16 @@ def _error_from_dict(error_data: Any) -> JsonRpcError:
     )
 
 
+async def _wait_closed(writer: asyncio.StreamWriter) -> None:
+    await writer.wait_closed()
+
+
+def _closing_done(task: "asyncio.Task[None]") -> None:
+    # Retrieve the error, e.g. from the stdio write pipe, so asyncio does not report it as never retrieved.
+    if not task.cancelled():
+        task.exception()
+
+
 class JsonRpcInvalidRequestError(Exception):
     error_code = JsonRpcErrorCode.INVALID_REQUEST
 
@@ -151,31 +160,30 @@ class JsonRpcPeer:
         self.running = False
         # Set once the read loop has ended: no response can arrive after that.
         self._closed = False
-        self._completion_future: asyncio.Future[bool] = asyncio.Future()
+        # Created on first use, so that a peer can be created without a running event loop.
+        self._completion_future: asyncio.Future[bool] | None = None
         self._read_task: asyncio.Task[None] | None = None
         self._inflight: set[asyncio.Future[Any]] = set()
+        # The wait for the writer to close; it may go on after the peer has stopped.
+        self._closing: asyncio.Task[None] | None = None
 
         # JSON serialization options
         self.indent_json = None
         self.compact_json = True
 
-        weakref.finalize(self, self._on_finalize)
-
     def _serialize_json(self, obj: Any) -> str:
         """Serialize an object to JSON using the configured options."""
         return as_json(obj, self.indent_json, self.compact_json)
 
-    def _on_finalize(self) -> None:
-        if not self.running:
-            return
-
-        self.running = False
-        if self._read_task and not self._read_task.done():
-            self._read_task.cancel()
+    def _completion(self) -> asyncio.Future[bool]:
+        """The completion future, bound to the event loop that is running when it is first used."""
+        if self._completion_future is None:
+            self._completion_future = asyncio.get_running_loop().create_future()
+        return self._completion_future
 
     @property
     def completion(self) -> asyncio.Future[bool]:
-        return self._completion_future
+        return self._completion()
 
     def start(self) -> None:
         self.running = True
@@ -190,6 +198,11 @@ class JsonRpcPeer:
             except asyncio.CancelledError:
                 pass
         await self._cancel_inflight()
+        if not self._closed:
+            # The read loop never ran its cleanup: the peer was never started, or its read
+            # task was cancelled before its first step. As after a cancelled cleanup, the
+            # writer goes on closing without stop() waiting for it.
+            await self._finish(None, wait_for_close=False)
         await self.completion
 
     async def _cancel_inflight(self) -> None:
@@ -374,28 +387,37 @@ class JsonRpcPeer:
         except asyncio.IncompleteReadError as e:
             if e.partial or not self.reader.at_eof():
                 close_error = e
-                if not self._completion_future.done():
-                    self._completion_future.set_exception(e)
+                if not self._completion().done():
+                    self._completion().set_exception(e)
         except asyncio.CancelledError:
             raise
         except BaseException as e:
             close_error = e
-            if not self._completion_future.done():
-                self._completion_future.set_exception(e)
+            if not self._completion().done():
+                self._completion().set_exception(e)
         finally:
-            self.running = False
-            # Before anything awaits, so no request can be registered in between.
-            self._mark_closed(close_error)
+            await self._finish(close_error)
 
-            if not self._completion_future.done():
-                self._completion_future.set_result(True)
+    async def _finish(self, close_error: BaseException | None, *, wait_for_close: bool = True) -> None:
+        """End the peer: fail the waiting requests, resolve the completion and, with auto_close, close the writer."""
+        self.running = False
+        # Before anything awaits, so no request can be registered in between.
+        self._mark_closed(close_error)
 
-            if self.auto_close:
-                self.writer.close()
+        if not self._completion().done():
+            self._completion().set_result(True)
+
+        if self.auto_close:
+            self.writer.close()
+            # All callers of wait_closed() share one close future. Wait for it shielded, so that
+            # stop() cancelling this wait does not cancel the close for the other callers.
+            self._closing = asyncio.ensure_future(_wait_closed(self.writer))
+            self._closing.add_done_callback(_closing_done)
+            if wait_for_close:
                 # Some writers (e.g. the stdio stdout pipe) raise from wait_closed(); the
                 # completion future is already set, so ignore cleanup errors here.
                 with contextlib.suppress(Exception):
-                    await self.writer.wait_closed()
+                    await asyncio.shield(self._closing)
 
     def _mark_closed(self, cause: BaseException | None) -> None:
         """Mark the connection closed and fail every request still waiting for a response."""
