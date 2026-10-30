@@ -1045,6 +1045,7 @@ source = { editable = "." }
 dependencies = [
     { name = "jsonrpcpeer" },
     { name = "robotframework" },
+    { name = "robotframework-jsonrpcremote-protocol" },
 ]
 
 [package.optional-dependencies]
@@ -1070,6 +1071,7 @@ dev = [
 requires-dist = [
     { name = "jsonrpcpeer", editable = "packages/jsonrpcpeer" },
     { name = "robotframework", specifier = ">=7.2" },
+    { name = "robotframework-jsonrpcremote-protocol", editable = "packages/protocol" },
     { name = "robotframework-jsonrpcremote-server", marker = "extra == 'server'", editable = "packages/server" },
 ]
 provides-extras = ["server"]

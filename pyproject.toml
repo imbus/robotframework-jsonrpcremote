@@ -37,6 +37,7 @@ classifiers = [
 dependencies = [
     "robotframework>=7.2",
     "jsonrpcpeer",
+    "robotframework-jsonrpcremote-protocol",
 ]
 
 [project.urls]
