@@ -1,13 +1,20 @@
 import asyncio
+import itertools
 
 from jsonrpcpeer import JsonRpcPeer, rpc_notification, rpc_request
 from robot_jsonrpcremote_protocol import (
+    EXIT_NOTIFICATION,
+    FINALIZE_LIBRARY_REQUEST,
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
+    SHUTDOWN_REQUEST,
     ArgumentDefinition,
+    ExitParams,
+    FinalizeLibraryParams,
+    FinalizeLibraryResult,
     ImportLibraryParams,
     ImportLibraryResult,
     InitializedParams,
@@ -22,6 +29,8 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordResult,
     ServerCapabilities,
     ServerInfo,
+    ShutdownParams,
+    ShutdownResult,
 )
 
 
@@ -30,6 +39,7 @@ class SimpleRobotServerEndpoint:
         self.initialize_received: bool = False
         self.initialized_received: bool = False
         self.rpc_peer: JsonRpcPeer | None = None
+        self._token_ids = itertools.count()
 
     async def log(
         self, message: str, level: LogLevel = LogLevel.INFO, console: bool = False, html: bool = False
@@ -63,7 +73,7 @@ class SimpleRobotServerEndpoint:
         print(f"Importing library: {params.name}")
 
         return ImportLibraryResult(
-            token="simple-robot-library-token",
+            token=f"simple-robot-library-{next(self._token_ids)}",
             definition=LibraryDefinition(
                 name="SimpleRobotLibrary",
                 doc="A simple robot library exposed via JSON-RPC.",
@@ -97,6 +107,23 @@ class SimpleRobotServerEndpoint:
             return RunKeywordResult(result=result)
 
         return RunKeywordResult(error=RunKeywordError(message=f"Keyword '{params.name}' not found."))
+
+    @rpc_request(FINALIZE_LIBRARY_REQUEST)
+    async def finalize_library(self, params: FinalizeLibraryParams) -> FinalizeLibraryResult:
+        print(f"Finalizing library: {params.token}")
+        return FinalizeLibraryResult()
+
+    @rpc_request(SHUTDOWN_REQUEST)
+    async def shutdown(self, params: ShutdownParams) -> ShutdownResult:
+        print("Shutdown requested")
+        return ShutdownResult()
+
+    @rpc_notification(EXIT_NOTIFICATION)
+    async def exit(self, params: ExitParams) -> None:
+        print("Exit received, closing the connection")
+        # The end of the input ends the peer's read loop, and the peer closes the connection.
+        if self.rpc_peer:
+            self.rpc_peer.reader.feed_eof()
 
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
