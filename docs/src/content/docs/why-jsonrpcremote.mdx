@@ -1,0 +1,92 @@
+---
+title: Why JsonRpcRemote
+description: Why keywords run on a remote server, and what JsonRpcRemote does better than Robot Framework's Remote library.
+---
+
+Robot Framework runs the keywords of a library in its own process. Often they
+have to run somewhere else:
+
+- on the machine or device with the system under test, while the tests run on a
+  CI agent;
+- in an environment with dependencies, a Python version or an operating system
+  that the test environment does not have;
+- in a container next to the tests, for example as a sidecar in Kubernetes;
+- in a program written in another language, such as Java, .NET or Rust.
+
+Robot Framework's
+[Remote library](https://robotframework.org/robotframework/latest/RobotFrameworkUserGuide.html#remote-library-interface)
+exists for this: it calls the keywords of a remote server over XML-RPC.
+JsonRpcRemote serves the same purpose on a modern foundation, JSON-RPC 2.0, and
+goes further where the Remote library stops.
+
+## What JsonRpcRemote does better
+
+### A standard that every language speaks
+
+[JSON-RPC 2.0](https://www.jsonrpc.org/specification) is a simple, standardized
+protocol; the Language Server Protocol uses it, and every common programming
+language has libraries for it. A server that offers keywords can therefore be
+written in any language, often in a few lines of code. Values are JSON: `null`
+stays `null`, and integers keep their size, where the Remote library turns
+`None` into an empty string and XML-RPC stops at 32-bit integers. Between Python
+peers, Python objects travel unchanged.
+
+### Any library, without code
+
+For the Remote library, every library needs a server that wraps it, for Python a
+script with robotremoteserver. `robot-jsonrpcremote-server MyLibrary` makes
+almost any Robot Framework library remote without code: Robot Framework itself
+imports and runs it, so argument conversion with type hints and custom
+converters works as for a local library, and the suite passes the library's
+arguments. One server serves several libraries.
+
+### Logs while the keyword runs
+
+The Remote library gets the output of a keyword with its result, after the
+keyword has finished. JsonRpcRemote keeps a connection that carries messages
+both ways, so the log messages of a remote keyword appear in the Robot Framework
+log while the keyword runs, which matters for keywords that take long.
+
+### The server starts with the tests
+
+Over stdio, the client starts the server for a session and stops it again: there
+is no server to set up beforehand and no port to manage. Over TCP, named pipes,
+Unix domain sockets, WebSockets or Streamable HTTP, with TLS, it reaches a
+server on another machine or in a container.
+
+### A fresh library for each test or suite
+
+With the Remote library, there is one instance of the library for as long as
+the server runs, shared by every suite. JsonRpcRemote imports the library for
+each session, for a test, a suite or the whole run, so tests start from a known
+state.
+
+### Made for containers and networks
+
+JsonRpcRemote detects a lost connection and reports its cause, waits for a
+server that is still starting, and reconnects with a check that the library has
+not changed. Failures arrive as in Robot Framework, continuable, fatal or
+skipped, with the type and the traceback of the error, and keyword timeouts,
+including the test and keyword timeouts of Robot Framework, end a keyword that
+hangs.
+
+## At a glance
+
+|                            | Remote and robotremoteserver | JsonRpcRemote |
+| -------------------------- | ---------------------------- | ------------- |
+| Protocol                   | XML-RPC over HTTP or HTTPS | JSON-RPC 2.0 over a stream, framed as in the Language Server Protocol |
+| Connection                 | a new HTTP connection for each call | one connection per session, with a handshake and an orderly end |
+| Direction                  | the client calls the server | both ways: the server sends log messages while a keyword runs |
+| Log messages               | the output of a keyword arrives with its result | log messages arrive while the keyword runs |
+| Transports                 | HTTP and HTTPS | TCP; stdio, where the client starts and stops the server; named pipes, Unix domain sockets, WebSockets and Streamable HTTP |
+| Libraries per server       | one | several, which the client chooses by name |
+| Making a library remote    | a script that creates the library and starts the server with it | `robot-jsonrpcremote-server MyLibrary`: Robot Framework itself imports and runs the library |
+| Arguments of the library   | fixed in the server script | given in the suite and converted on the server |
+| Life of the library instance | as long as the server runs | as long as the session: a test, a suite or the run |
+| Argument conversion        | on the client, by the types that the server reports; robotremoteserver reports none | on the server, by Robot Framework, with custom converters |
+| Values                     | XML-RPC types: integers up to 32 bits, `None` becomes an empty string, other types become strings | JSON values; between Python peers, also Python objects, which travel unchanged |
+| Lost connections           | the call fails with `Connection to remote server broken` | detected with their cause; connect retry, and a reconnect that checks the library definition |
+| Failures                   | continuable and fatal failures, with the traceback | continuable, fatal and skipped failures, with the type and the traceback of the error |
+| Timeouts                   | a socket timeout, which also ends a keyword call | for connecting and for each session, and keyword timeouts with cancellation, including the test and keyword timeouts of Robot Framework |
+| Encryption                 | HTTPS | TLS |
+| Servers in other languages | ready-made servers for Java, .NET, Ruby and others | any language: with a JSON-RPC library, a server takes only a few lines of code; see the [protocol](/robotframework-jsonrpcremote/reference/protocol/) |

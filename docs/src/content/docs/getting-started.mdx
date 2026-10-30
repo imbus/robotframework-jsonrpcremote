@@ -1,0 +1,88 @@
+---
+title: Getting started
+description: Install the client and the server, start a server with a library and run a first suite against it.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import library from '../../../examples/getting-started/MyLibrary.py?raw';
+import suite from '../../../examples/getting-started/greet.robot?raw';
+
+JsonRpcRemote is a modern alternative to Robot Framework's
+[Remote library](https://robotframework.org/robotframework/latest/RobotFrameworkUserGuide.html#remote-library-interface),
+built on JSON-RPC 2.0. The server, `robot-jsonrpcremote-server`, hosts Robot
+Framework libraries. A suite imports the client library, `JsonRpcRemote`, which
+connects to the server and offers a library's keywords as if the suite had
+imported the library itself. The protocol is language-agnostic: this server
+hosts Robot Framework libraries in Python, and a server written in another
+language can offer keywords just as well; the
+[protocol](/robotframework-jsonrpcremote/reference/protocol/) describes what it
+has to do.
+[Why JsonRpcRemote](/robotframework-jsonrpcremote/why-jsonrpcremote/)
+describes what it is for and what it does better than the Remote library.
+
+On this page, you write a small library, start a server with it on your
+machine and run a first suite against it.
+
+## Install
+
+The client and the server need Python 3.12 or later and Robot Framework 7.2 or
+later. Install the client where the suites run and the server where the library
+runs; on this page, both run on the same machine:
+
+```sh
+pip install robotframework-jsonrpcremote robotframework-jsonrpcremote-server
+```
+
+## Write a library
+
+The library is a regular Robot Framework library. Nothing in it is specific to
+running on a server:
+
+<Code code={library} lang="python" title="MyLibrary.py" />
+
+## Start the server
+
+In the directory with `MyLibrary.py`, start the server:
+
+```sh
+robot-jsonrpcremote-server --pythonpath . MyLibrary
+```
+
+- The server listens on `127.0.0.1:8271`. That is the loopback address, so only
+  programs on the same machine can connect.
+- `--pythonpath .` makes the libraries in the current directory importable, as
+  `robot --pythonpath` does.
+- `MyLibrary` is the library that clients may import. Given one or more
+  libraries, the server imports no others.
+
+The server runs until you stop it with Ctrl+C. The
+[server reference](/robotframework-jsonrpcremote/reference/server/) lists all
+options.
+
+## Write a suite
+
+<Code code={suite} lang="text" title="greet.robot" />
+
+- `uri` is the address of the server. `tcp://127.0.0.1:8271` is also the
+  default.
+- `library_name` is the library that the server imports for this suite. Robot
+  Framework then knows its keywords, such as `Greet`.
+
+The [library reference](/robotframework-jsonrpcremote/reference/library/) lists
+all arguments of `JsonRpcRemote`.
+
+## Run the suite
+
+While the server runs, run the suite in a second terminal:
+
+```sh
+robot greet.robot
+```
+
+The test passes. In `log.html`, the message `Greeting World`, which `Greet`
+logged on the server, appears under the keyword, as for a library that runs
+locally.
+
+The files of this page are in
+[`docs/examples/getting-started`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/getting-started)
+in the repository. The CI of this site runs them against the current code.

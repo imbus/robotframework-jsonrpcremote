@@ -1,0 +1,73 @@
+---
+title: Sessions and rpc_scope
+description: How long a connection to the server and the remote library instance last, and how rpc_scope sets it.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import library from '../../../../examples/rpc-scope/Counter.py?raw';
+import suite from '../../../../examples/rpc-scope/counter.robot?raw';
+
+A session is a connection to the server together with the remote library that
+the server imported for it. The `rpc_scope` argument of `JsonRpcRemote` sets
+when a session ends:
+
+| `rpc_scope`       | The session ends      |
+| ----------------- | --------------------- |
+| `SUITE` (default) | when a suite ends     |
+| `TEST`            | when a test ends      |
+| `GLOBAL`          | when the run ends     |
+
+Robot Framework converts the value as it converts arguments, so `test` works as
+well as `TEST`. Any other value fails the library import with an error that
+names the valid scopes.
+
+## When a session starts
+
+The first session starts when Robot Framework imports `JsonRpcRemote`: the
+client needs it to learn the keywords of the remote library. After a session
+ended, the next keyword call starts a new one. A new session connects again,
+over stdio with a new server process, and the server imports the remote library
+again, with the same arguments.
+
+## What a new session keeps
+
+Whether the remote library keeps its state from one session to the next depends
+on its scope in Robot Framework:
+
+- A library class with the test or suite scope, test being the default, gets a
+  new instance in each session. A session starts without the state of the
+  previous one.
+- A library module, or a library class with `ROBOT_LIBRARY_SCOPE = "GLOBAL"`,
+  exists once on the server. Every session and every client that imports it
+  with the same arguments uses the same instance, so its state outlives the
+  session.
+
+Over TCP, all sessions run in the same server process, so state outside the
+instance, such as variables of a module, is shared in any case. Over stdio,
+each session has a server process of its own.
+
+## Example: a session per test
+
+The library counts the calls of `Increment` in its instance:
+
+<Code code={library} lang="python" title="Counter.py" />
+
+With `rpc_scope=TEST`, each test gets a session and an instance of its own, so
+the second test counts from one again:
+
+<Code code={suite} lang="text" title="counter.robot" />
+
+With the default `rpc_scope=SUITE`, both tests would share one instance, and
+the second test would count 3.
+
+Start the server with `robot-jsonrpcremote-server --pythonpath . Counter` and
+run the suite, as in [Getting started](/robotframework-jsonrpcremote/getting-started/).
+The files are in
+[`docs/examples/rpc-scope`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/rpc-scope)
+in the repository.
+
+## Sessions and lost connections
+
+A session whose connection was lost stays until it ends according to
+`rpc_scope`, and calls in it fail until then, unless connect retry replaces it.
+See [Lost connections and connect retry](/robotframework-jsonrpcremote/guides/lost-connections/).

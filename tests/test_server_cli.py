@@ -49,6 +49,12 @@ def test_robot_options() -> None:
     assert args.pythonpath == ["d1", "d2"]
 
 
+def test_outputdir_help_says_that_the_server_writes_no_output_files() -> None:
+    help_text = " ".join(build_arg_parser().format_help().split())
+    assert "Set ${OUTPUT_DIR} for the libraries" in help_text
+    assert "the server writes no output files" in help_text
+
+
 def test_mode_aliases() -> None:
     assert build_arg_parser().parse_args(["--pipe", "Lib"]).mode == "pipe"
     assert build_arg_parser().parse_args(["--stdio", "Lib"]).mode == "stdio"

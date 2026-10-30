@@ -1,0 +1,241 @@
+---
+title: Protocol
+description: The JSON-RPC 2.0 messages between JsonRpcRemote and a server, for implementing a server of your own.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import server from '../../../../../examples/simple-robot-jsonrpcserver/src/simple_robot_jsonrpcserver/__main__.py?raw';
+import suite from '../../../../examples/own-server/echo.robot?raw';
+
+`JsonRpcRemote` and the server talk [JSON-RPC 2.0](https://www.jsonrpc.org/specification).
+The protocol is language-agnostic by design: a server can be written in any
+language that reads and writes JSON over a stream, and JSON-RPC libraries that
+support the framing of the Language Server Protocol handle the transport part.
+
+This page describes the messages, for implementing a server of your own. The
+package `robotframework-jsonrpcremote-protocol` defines them as Python
+dataclasses in the module `robot_jsonrpcremote_protocol`; the client, the
+server and the [example server](#example-a-hand-written-server) at the end of
+this page use them.
+
+## Framing
+
+The protocol needs a stream that delivers bytes in order, such as a TCP
+connection or the stdin and stdout of a process. Each message starts with a
+header part, as in the
+[Language Server Protocol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#headerPart):
+
+```text
+Content-Length: 60\r\n
+\r\n
+{"jsonrpc":"2.0","method":"robot/initialized","params":{}}\r\n
+```
+
+- The headers are ASCII, each ends with `\r\n`, and an empty line ends the
+  header part.
+- `Content-Length` is the length of the content in bytes. The reference
+  implementation ends the content with `\r\n` and counts it.
+- `Content-Type` may give a `charset` for the content; the default is UTF-8.
+  Other headers are ignored.
+
+## Values
+
+- Field names are the names of the dataclass fields, such as `library_token`.
+  The reference implementation leaves out optional fields that are not set.
+- Arguments and return values of keywords, the argument defaults in a library
+  definition and the arguments of `robot/import_library` are JSON values.
+- In addition, the Python implementation sends Python objects as
+  `{"__pickled__": "<hex>"}`, where `<hex>` is a Python pickle of the object in
+  hexadecimal, so they travel unchanged between Python peers. It does so for
+  every keyword argument, return value and default that is not `null`, a
+  string, a number or a boolean, lists and dicts included.
+- Reading a pickle can run arbitrary code; see the caution in
+  [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/#tcp).
+
+## Methods
+
+| Constant                   | Method                   | Type         | Params                  | Result                  |
+| -------------------------- | ------------------------ | ------------ | ----------------------- | ----------------------- |
+| `INITIALIZE_REQUEST`       | `robot/initialize`       | request      | `InitializeParams`      | `InitializeResult`      |
+| `INITIALIZED_NOTIFICATION` | `robot/initialized`      | notification | `InitializedParams`     |                         |
+| `IMPORT_LIBRARY_REQUEST`   | `robot/import_library`   | request      | `ImportLibraryParams`   | `ImportLibraryResult`   |
+| `RUN_KEYWORD_REQUEST`      | `robot/run_keyword`      | request      | `RunKeywordParams`      | `RunKeywordResult`      |
+| `LOG_NOTIFICATION`         | `robot/log`              | notification | `LogParams`             |                         |
+| `TRACE_NOTIFICATION`       | `robot/trace`            | notification | `LogParams`             |                         |
+| `FINALIZE_LIBRARY_REQUEST` | `robot/finalize_library` | request      | `FinalizeLibraryParams` | `FinalizeLibraryResult` |
+| `SHUTDOWN_REQUEST`         | `robot/shutdown`         | request      | `ShutdownParams`        | `ShutdownResult`        |
+| `EXIT_NOTIFICATION`        | `robot/exit`             | notification | `ExitParams`            |                         |
+
+The server sends `robot/log`, and the client every other message; the
+reference implementation does not use `robot/trace`.
+
+## A session
+
+A [session](/robotframework-jsonrpcremote/guides/sessions/) is one connection,
+on which the client imports one library:
+
+1. The client connects and sends `robot/initialize`. The server answers with
+   its capabilities and information about itself.
+2. The client sends `robot/initialized`. The reference server refuses
+   `robot/import_library` and `robot/run_keyword` before it has received both.
+3. The client sends `robot/import_library`. The server imports the library and
+   answers with a token for this instance and the library definition, from
+   which Robot Framework learns the keywords.
+4. For each keyword call, the client sends `robot/run_keyword` with the token.
+   While the keyword runs, the server sends its log messages as `robot/log`,
+   which the client logs under the keyword; then it sends the response.
+5. When the session ends, the client sends `robot/finalize_library` with the
+   token, then `robot/shutdown`, then `robot/exit` if the server announced
+   `support_exit`, and closes the connection.
+
+## Data structures
+
+### Initialization
+
+- **`InitializeParams`**
+  - `capabilities`: `ClientCapabilities` (optional): what the client supports.
+  - `client_info`: `ClientInfo` (optional): name and version of the client.
+  - `initialization_options`: any value (optional): options for the server.
+  - `trace`: string (optional): the initial trace setting, such as `"off"`.
+- **`InitializedParams`**: empty.
+- **`InitializeResult`**
+  - `capabilities`: `ServerCapabilities` (optional): what the server supports.
+  - `server_info`: `ServerInfo` (optional): name and version of the server.
+- **`ClientInfo`**, **`ServerInfo`**
+  - `name`: string.
+  - `version`: string.
+- **`ClientCapabilities`**
+  - `supports_log`: boolean (optional).
+  - `supports_trace`: boolean (optional).
+
+  The client sends both unset, and the reference server does not read them.
+- **`ServerCapabilities`**
+  - `support_exit`: boolean (optional): whether the server handles
+    `robot/exit`. The client sends `robot/exit` only if it is `true`.
+  - `libraries`: list of strings (optional): the libraries that clients may
+    import, as given on the server's command line; empty if clients may import
+    any library.
+
+### Library import
+
+- **`ImportLibraryParams`**
+  - `name`: string: the library to import. An empty string asks for the
+    server's default library; the reference server then imports the first
+    library of its command line.
+  - `args`: list (optional): positional arguments for the library.
+  - `kw_args`: object (optional): named arguments for the library. The
+    reference server passes them to Robot Framework as `name=value`, which
+    converts them according to the library's `__init__`.
+- **`ImportLibraryResult`**
+  - `token`: string: identifies the imported library instance in later
+    requests. The server chooses it; it is unique for each import.
+  - `definition`: `LibraryDefinition`.
+- **`FinalizeLibraryParams`**
+  - `token`: string: the instance to release.
+- **`FinalizeLibraryResult`**: empty.
+
+### Library definition
+
+- **`LibraryDefinition`**
+  - `name`: string.
+  - `keywords`: list of `KeywordDefinition`.
+  - `doc`: string (optional): the library documentation.
+  - `doc_format`: string (optional): `ROBOT`, `REST`, `HTML` or `TEXT`.
+  - `scope`: string (optional): `GLOBAL`, `SUITE` or `TEST`.
+  - `version`: string (optional).
+  - `source`: string (optional): the path of the library's source file.
+  - `lineno`: integer (optional): the line where the library is defined.
+- **`KeywordDefinition`**
+  - `name`: string.
+  - `args`: list of `ArgumentDefinition`.
+  - `doc`: string (optional).
+  - `tags`: list of strings (optional).
+  - `source`: string (optional).
+  - `lineno`: integer (optional).
+- **`ArgumentDefinition`**
+  - `name`: string.
+  - `type`: string (optional): the type hint as text, such as `"int"`. The
+    client passes it to Robot Framework as the type of the argument.
+  - `has_default`: boolean (optional): whether the argument has a default.
+    If `true`, `default` holds it, which may be `null`.
+  - `default`: any value (optional).
+  - `required`: boolean: reserved, always `true`. Use `has_default` instead.
+  - `kind`: `ArgumentKind` (optional), a string: `POSITIONAL_ONLY`,
+    `POSITIONAL_OR_NAMED`, `POSITIONAL_ONLY_MARKER` (the `/`),
+    `NAMED_ONLY_MARKER` (the `*`), `VAR_POSITIONAL` (`*args`), `NAMED_ONLY` or
+    `VAR_NAMED` (`**kwargs`).
+  - `doc`: string (optional).
+
+### Keyword calls
+
+- **`RunKeywordParams`**
+  - `library_token`: string: the token from `ImportLibraryResult`.
+  - `name`: string: the keyword name from the library definition.
+  - `args`: list (optional): positional arguments.
+  - `kwargs`: object (optional): named arguments.
+- **`RunKeywordResult`**
+  - `result`: any value (optional): the return value of the keyword.
+  - `error`: `RunKeywordError` (optional): set if the keyword failed.
+- **`RunKeywordError`**
+  - `message`: string.
+  - `type`: string (optional): the name of the exception, such as
+    `"AssertionError"`.
+  - `traceback`: string (optional).
+  - `mode`: `RunKeywordErrorMode` (optional), a string: `CONTINUABLE`,
+    `FATAL` or `SKIP`.
+
+  The reference server sets `message`, and the client fails the keyword with
+  the error.
+
+### Log messages
+
+- **`LogParams`**
+  - `message`: string.
+  - `level`: `LogLevel` (optional), a string: `TRACE`, `DEBUG`, `INFO`,
+    `WARN`, `ERROR`, `CONSOLE` or `HTML`. Without it, the client logs at `INFO`.
+  - `html`: boolean (optional): whether the message is HTML.
+  - `console`: boolean (optional): whether the client also writes the message
+    to the console.
+  - `timestamp`: string (optional): when the message was logged. The client
+    does not read it.
+
+### End of a session
+
+- **`ShutdownParams`**, **`ShutdownResult`**: empty. The client announces that
+  it is about to close the connection.
+- **`ExitParams`**: empty. Sent with `robot/exit`; the server then closes the
+  connection.
+
+## Errors
+
+- A keyword that fails is not a JSON-RPC error: the response is a
+  `RunKeywordResult` with `error`.
+- A request that the server cannot handle, such as the import of a library
+  that it does not serve, gets a JSON-RPC error response. The client fails the
+  library import or the keyword call with its message.
+- The module also defines the error codes `RobotJsonRpcErrorCode`:
+  `NOT_INITIALIZED` (`-32000`), `KEYWORD_NOT_FOUND` (`-32001`) and
+  `ARGUMENT_MISMATCH` (`-32002`). The reference implementation answers with the
+  standard error codes of JSON-RPC.
+
+## Example: a hand-written server
+
+The example server in the repository,
+[`examples/simple-robot-jsonrpcserver`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/examples/simple-robot-jsonrpcserver),
+implements the protocol by hand with
+[`jsonrpcpeer`](https://pypi.org/project/jsonrpcpeer/) and the dataclasses of
+`robot_jsonrpcremote_protocol`, without the server package. It handles every
+message that the client sends and serves the library `SimpleRobotLibrary` with
+the keyword `Echo`, which returns its argument and sends a few log messages
+while it runs:
+
+<Code code={server} lang="python" title="examples/simple-robot-jsonrpcserver/src/simple_robot_jsonrpcserver/__main__.py" />
+
+A suite uses it like any other server:
+
+<Code code={suite} lang="text" title="echo.robot" />
+
+In a clone of the repository, `uv run simple-robot-jsonrpcserver` starts the
+example server on `127.0.0.1:8271`. The suite is in
+[`docs/examples/own-server`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/own-server)
+in the repository.

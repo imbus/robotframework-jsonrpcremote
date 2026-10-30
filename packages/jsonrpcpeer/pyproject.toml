@@ -34,7 +34,7 @@ dependencies = ["typing_extensions>=4.13.0"]
 Homepage = "https://github.com/imbus/robotframework-jsonrpcremote"
 Repository = "https://github.com/imbus/robotframework-jsonrpcremote"
 Issues = "https://github.com/imbus/robotframework-jsonrpcremote/issues"
-Documentation = "https://github.com/imbus/robotframework-jsonrpcremote/tree/main/packages/jsonrpcpeer#readme"
+Documentation = "https://imbus.github.io/robotframework-jsonrpcremote/"
 
 [build-system]
 requires = ["uv_build>=0.9.17,<0.12.0"]

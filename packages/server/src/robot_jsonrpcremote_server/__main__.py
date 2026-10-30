@@ -414,7 +414,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "-d",
         type=str,
         metavar="DIR",
-        help="Directory for Robot output files, like robot's --outputdir",
+        help="Set ${OUTPUT_DIR} for the libraries (default: the current directory); the server writes no output files",
     )
 
     parser.add_argument("libraries", metavar="LIBRARY", nargs="*", help="the library to expose via JSON-RPC")
@@ -450,6 +450,7 @@ def run() -> None:
         variablefiles=args.variablefile or (),
         pythonpath=args.pythonpath or (),
         outputdir=args.outputdir,
+        # No output files: Robot Framework writes none with output, report and log set to None.
         output=None,
         report=None,
         log=None,

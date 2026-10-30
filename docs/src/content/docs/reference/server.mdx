@@ -1,0 +1,83 @@
+---
+title: Server options
+description: The command line options and environment variables of robot-jsonrpcremote-server, and how it starts and stops.
+---
+
+```text
+robot-jsonrpcremote-server [options] [LIBRARY ...]
+```
+
+The `LIBRARY` arguments are the libraries that clients may import. Without
+them, clients may import any library that the server can import; see
+[Several libraries on one server](/robotframework-jsonrpcremote/guides/several-libraries/).
+
+## Options
+
+| Option                         | Default                                              | Meaning |
+| ------------------------------ | ---------------------------------------------------- | ------- |
+| `--mode {tcp,stdio,pipe}`      | `tcp`, or `ROBOT_JSONRPC_MODE`                       | How clients connect: `tcp` or `stdio`; `pipe` is reserved for a pipe mode. |
+| `--tcp`                        |                                                      | Same as `--mode tcp`. |
+| `--stdio`                      |                                                      | Same as `--mode stdio`: serve a single client over stdin and stdout, on POSIX systems only; see [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/). |
+| `--pipe`                       |                                                      | Same as `--mode pipe`, which is reserved. |
+| `--bind ADDRESS`               | `127.0.0.1`, or `ROBOT_JSONRPC_BIND`                 | The address to listen on, in TCP mode. Repeat it to listen on several addresses. |
+| `--port PORT`                  | `8271`, or `ROBOT_JSONRPC_PORT`                      | The port to listen on, in TCP mode. |
+| `--pipe-name PIPE_NAME`        | `robot_jsonrpcremote_pipe`, or `ROBOT_JSONRPC_PIPE_NAME` | The pipe name, reserved for a pipe mode. |
+| `--pythonpath PATH`, `-P PATH` | none                                                 | A directory to add to the Python path, as `robot --pythonpath` does. Repeatable. |
+| `--variable name:value`        | none                                                 | A Robot Framework variable for the libraries, as `robot --variable` sets it. Repeatable. There is no `-v`, which is `--verbose`. |
+| `--variablefile PATH`, `-V PATH` | none                                               | A variable file for the libraries, as `robot --variablefile` loads it. Repeatable. |
+| `--outputdir DIR`, `-d DIR`    | the current directory                                | The value of `${OUTPUT_DIR}` for the libraries. The server writes no output files. |
+| `-v`, `--verbose`              | off                                                  | Log debug messages, with timestamps. |
+| `--version`                    |                                                      | Show the version and exit. |
+| `-h`, `--help`                 |                                                      | Show the options and exit. |
+
+## Environment variables
+
+An option on the command line takes precedence over its environment variable.
+
+| Variable                  | Sets the default of |
+| ------------------------- | ------------------- |
+| `ROBOT_JSONRPC_MODE`      | `--mode`            |
+| `ROBOT_JSONRPC_BIND`      | `--bind`; several addresses are separated by commas |
+| `ROBOT_JSONRPC_PORT`      | `--port`            |
+| `ROBOT_JSONRPC_PIPE_NAME` | `--pipe-name`       |
+
+## Robot Framework on the server
+
+The server runs Robot Framework itself: it imports the libraries in an
+execution of its own and runs their keywords there. A remote keyword therefore
+sees the variables of the server's execution, set with `--variable`,
+`--variablefile` and `--outputdir`, not those of the suite that calls it; for
+example, `${TEST NAME}` is the name of the server's internal test. `BuiltIn`
+keywords that a library calls, for example to set a variable or to run another
+keyword, act on the server's execution, too.
+
+## Starting
+
+The server logs to stderr. Once it accepts clients, it logs
+`Server is up and running. Press Ctrl+C to stop.` If the server cannot start, for example because
+the port is already in use, it logs `Server failed to start: <reason>` and
+exits with exit code 1.
+
+## Stopping the server
+
+Stop the server with SIGTERM or SIGINT (Ctrl+C), for example when a container
+is stopped. It then:
+
+1. lets the keyword that is running finish and delivers its result to the
+   client;
+2. answers requests that need Robot Framework (importing or finalizing a
+   library, running a keyword) and are still waiting or arrive meanwhile with
+   the error `server is shutting down`, without running them;
+3. stops accepting connections, closes every client connection and exits with
+   exit code 0.
+
+The server waits up to 5 seconds for the responses that are still being sent
+before it closes the connections. A keyword that does not return delays the
+stop, since Robot Framework runs it and the server cannot interrupt it. Such a
+server has to be killed, as Kubernetes does at the end of a pod's termination
+grace period.
+
+The client reports the closed connection as a lost connection for the rest of
+its session; see
+[Lost connections and connect retry](/robotframework-jsonrpcremote/guides/lost-connections/).
+In stdio mode, the server also stops when the client closes the server's stdin.

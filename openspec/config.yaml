@@ -27,6 +27,7 @@ rules:
     - Add or change a Robot test when the changed behavior can be observed from Robot Framework, such as keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files. When such a task adds none, state why.
     - Run the unit tests and all Robot suites in the integration checks, also when the change adds no Robot test.
     - Run each new test against the code without the part of the change it covers and see it fail there; failing against the unchanged code alone does not show which part a test covers.
+    - When the change has user-visible behavior, update the pages of the documentation site in docs/ and their runnable examples in docs/examples/ in the same change, and name them in the task; review the implementation against them. The overview pages, that is the home page, the page Why JsonRpcRemote and the README, describe JsonRpcRemote as it is meant to be; guides and references describe what works today, without listing gaps or giving workarounds; the page Status and roadmap says what is available and what is planned. Every change that implements a feature updates the documentation, the roadmap included.
 
 # Per-operation guidance (optional)
 # Add advisory guidance for how apply and archive work should be conducted.

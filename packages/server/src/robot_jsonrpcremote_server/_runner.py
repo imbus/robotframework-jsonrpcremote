@@ -14,7 +14,6 @@ from robot.api import TestSuite, get_model
 from robot.api.interfaces import ListenerV3
 from robot.conf import RobotSettings
 from robot.output import LOGGER
-from robot.reporting import ResultWriter
 from robot.utils import NOT_SET
 
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
@@ -270,11 +269,7 @@ class RobotRemoteContext:
 
         suite = TestSuite.from_model(model)
         suite.configure(**settings.suite_config)
-        run_result = suite.run(settings)
-
-        if settings.log or settings.report or settings.xunit:
-            writer = ResultWriter(settings.output if settings.log else run_result)
-            writer.write_results(settings.get_rebot_settings())
+        suite.run(settings)
 
     def stop(self) -> None:
         # Without the lock: a signal handler calls this on the runner thread, which may

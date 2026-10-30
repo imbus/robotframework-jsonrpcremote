@@ -40,7 +40,7 @@ dependencies = []
 Homepage = "https://github.com/imbus/robotframework-jsonrpcremote"
 Repository = "https://github.com/imbus/robotframework-jsonrpcremote"
 Issues = "https://github.com/imbus/robotframework-jsonrpcremote/issues"
-Documentation = "https://github.com/imbus/robotframework-jsonrpcremote/tree/main/packages/protocol#readme"
+Documentation = "https://imbus.github.io/robotframework-jsonrpcremote/"
 
 [tool.uv.build-backend]
 module-name = "robot_jsonrpcremote_protocol"

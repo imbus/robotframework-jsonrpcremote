@@ -2,7 +2,9 @@
 
 A lightweight, asynchronous **JSON-RPC 2.0** peer implementation for Python, built on top of `asyncio`.
 
-This package provides the core communication logic used by `robotframework-jsonrpcremote`, but it can be used independently to build custom JSON-RPC 2.0 clients and servers.
+This package provides the core communication logic used by `robotframework-jsonrpcremote`, but it can be used independently to build custom JSON-RPC 2.0 clients and servers. The [documentation of robotframework-jsonrpcremote](https://imbus.github.io/robotframework-jsonrpcremote/) shows a Robot Framework remote server built on it, on its [protocol page](https://imbus.github.io/robotframework-jsonrpcremote/reference/protocol/).
+
+> **Status: pre-alpha.** The project is under active development: interfaces can still change, and more features are coming. See [Status and roadmap](https://imbus.github.io/robotframework-jsonrpcremote/roadmap/).
 
 ## Features
 
@@ -126,7 +128,7 @@ JSON-RPC 2.0 is a peer-to-peer protocol. Although we often use the terms "Client
 *   **Server:** Accepts the connection.
 
 Once connected, **both** sides can send requests and notifications to the other. This is useful for:
-*   **Server-side Events:** The server sending notifications to the client (e.g., progress updates, log messages).
+*   **Server-side Events:** The server sending notifications to the client (e.g., log messages).
 *   **Callbacks:** The server requesting information from the client during a procedure call.
 
 ## License

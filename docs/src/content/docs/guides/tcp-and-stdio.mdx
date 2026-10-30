@@ -1,0 +1,83 @@
+---
+title: TCP and stdio
+description: Connect to a running server over TCP, or let the client start the server and talk to it over its stdin and stdout.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import suite from '../../../../examples/stdio/greet.robot?raw';
+
+The scheme of the `uri` argument chooses how `JsonRpcRemote` reaches the server:
+
+|                     | TCP: `tcp://host:port`             | stdio: `stdio:command`                     |
+| ------------------- | ---------------------------------- | ------------------------------------------ |
+| Server started by   | you, before the suite runs         | the client, for each session               |
+| Clients per server  | several                            | one, the client that started it            |
+| Platforms           | all                                | Linux, macOS and other POSIX systems       |
+
+## TCP
+
+A URI such as `tcp://127.0.0.1:8271` connects to a server that is already
+running, on the same machine or on another one. Without a port, the client
+connects to port 8271. [Getting started](/robotframework-jsonrpcremote/getting-started/)
+uses TCP.
+
+The server listens on the loopback address `127.0.0.1` by default, so only
+programs on the same machine can connect. To accept clients from other
+machines, bind the server to an address they can reach with `--bind`, and
+choose the port with `--port`; see the
+[server reference](/robotframework-jsonrpcremote/reference/server/).
+
+:::caution
+The server does not authenticate clients and does not encrypt the connection.
+Whoever can connect can run the keywords of the libraries it serves. The
+Python implementation sends Python objects as pickles, and reading a pickle can
+run arbitrary code: on the server for keyword arguments, and on the client for
+return values and for the argument defaults in the library definition, already
+when Robot Framework imports `JsonRpcRemote`. Make the server reachable only for
+clients you trust, and connect only to servers you trust.
+:::
+
+## stdio
+
+A URI such as `stdio:robot-jsonrpcremote-server --stdio MyLibrary` makes the
+client start the server itself, with the command after `stdio:`. The client
+talks to the server over the server's stdin and stdout, so no network port is
+involved, and the server ends with the session.
+
+The example runs the suite from
+[Getting started](/robotframework-jsonrpcremote/getting-started/) this way. Its
+files are in
+[`docs/examples/stdio`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/stdio)
+in the repository:
+
+<Code code={suite} lang="text" title="greet.robot" />
+
+- The client splits the command into arguments as a shell does, with quotes
+  grouping an argument, but starts it without a shell: it expands no variables
+  or wildcards, and passes `|` or `>` on as plain arguments.
+- `--stdio` makes the server serve one client over its stdin and stdout.
+- The server starts in the directory that `robot` runs in, so
+  `--pythonpath .` makes the libraries there importable.
+- Each [session](/robotframework-jsonrpcremote/guides/sessions/) starts a server
+  of its own: with the default `rpc_scope=SUITE`, one per suite.
+- What the server logs goes to its stderr, which appears on the console of
+  `robot`.
+
+There is no server to start beforehand: `robot greet.robot` runs the suite,
+and the client starts and stops the server.
+
+### Limits of stdio
+
+- **POSIX only.** On Windows, the server refuses stdio mode and exits, so the
+  library import fails.
+- **One client.** The server serves only the client that started it.
+- **stdout carries the messages.** What a library prints with `print()` while
+  Robot Framework imports it or runs one of its keywords is captured and logged
+  as usual. Everything else that reaches the server's stdout corrupts the
+  messages: `logger.console()`, `Log To Console`, log messages for the console,
+  the output of child processes, and output at any other time, for example from
+  a thread that keeps running after a keyword returned.
+- **stdin must stay open.** The server needs a pipe on stdin, as the client
+  provides. If you start a stdio server through another command, such as
+  `docker run`, keep stdin open with `docker run -i`. With `/dev/null` or a
+  regular file on stdin, the server fails to start and exits with code 1.

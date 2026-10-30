@@ -13,6 +13,7 @@ robotframework-jsonrpcremote is a [uv](https://github.com/astral-sh/uv) workspac
 - Examples: `examples/simple-robot-jsonrpcserver/`
 - Unit tests (pytest): `tests/`
 - Robot Framework integration tests: `atests/`
+- Documentation site (Starlight, published to <https://imbus.github.io/robotframework-jsonrpcremote/>): `docs/`
 
 ## Project Language
 
@@ -35,6 +36,9 @@ English is the project language. Write everything that goes into the repository 
 	- End-to-end behavior is covered by Robot Framework suites in `atests/`; each suite starts and stops its own server.
 	- Add or change a Robot test when the changed behavior can be observed from Robot Framework: keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files. When such a change adds none, say why. Behavior that only shows inside a package is covered by unit tests; the Robot suites still run as a regression check.
 	- Run each new test against the code without the part of the change it covers and see it fail there; failing against the unchanged code alone does not show which part a test covers.
+- Documentation site:
+	- Owning path: `docs/`, with the pages in `docs/src/content/docs/` and their runnable examples in `docs/examples/<name>/`, each with a `run.sh` that CI runs.
+	- When a change has user-visible behavior, update the pages and their runnable examples in the same change; review the implementation against them. The overview pages, that is the home page, the page Why JsonRpcRemote and the README, describe JsonRpcRemote as it is meant to be; guides and references describe what works today, without listing gaps or giving workarounds; the page Status and roadmap (`docs/src/content/docs/roadmap.mdx`) says what is available and what is planned. Every change that implements a feature updates the documentation, the roadmap included.
 - Generated or ignored outputs (do not commit by hand):
 	- Build artifacts in `dist/`, Robot output in `results/`, and the various caches are gitignored.
 
@@ -58,6 +62,10 @@ All commands run inside the project environment via `uv run` (or after activatin
 	- Lint / format the `.robot` files in `atests/` (optional).
 - `uv build --all-packages`
 	- Build wheels and sdists for all packages into `dist/`.
+- `npm ci` and `npm run build` in `docs/`
+	- Install and build the documentation site; the build fails on broken internal links. `npm run dev` serves it locally.
+- `uv run --all-packages bash docs/examples/<name>/run.sh`
+	- Run one example of the site against the current code.
 
 ## Commits and Pull Requests
 

@@ -1,0 +1,74 @@
+---
+title: Server in a container
+description: Run the server with a library in a container, or as a sidecar next to the tests in a Kubernetes pod.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import dockerfile from '../../../../examples/container/Dockerfile?raw';
+
+In a container, the library comes with its own Python and its own dependencies,
+apart from the environment that runs the tests.
+
+## The image
+
+The image installs the server, copies the library into it and starts the
+server. The library is `MyLibrary` from
+[Getting started](/robotframework-jsonrpcremote/getting-started/). The files are
+in
+[`docs/examples/container`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/container)
+in the repository.
+
+<Code code={dockerfile} lang="dockerfile" title="Dockerfile" />
+
+- `PACKAGES` is what pip installs: the server from PyPI by default. The CI of
+  this site passes the wheels of the current code instead. In an image of your
+  own, `RUN pip install robotframework-jsonrpcremote-server` and the
+  dependencies of your libraries are enough.
+- `COPY` puts the library into the image, and `--pythonpath` makes it
+  importable. A library that is a package can be installed with pip instead.
+- `--bind 0.0.0.0` makes the server listen on all interfaces of the container.
+  Connections from outside the container do not arrive on its loopback address,
+  so the default `127.0.0.1` would refuse them. This is the only place where
+  this site binds the server to all interfaces: here, `docker run` decides who
+  can connect.
+
+## Running it
+
+In the directory with the `Dockerfile` and `MyLibrary.py`, build the image and
+start the server in a container:
+
+```sh
+docker build --tag my-library-server .
+docker run --detach --rm --name my-library-server --publish 127.0.0.1:8271:8271 my-library-server
+```
+
+Then run the suite from Getting started against it, and stop the container
+with `docker stop my-library-server` when you are done.
+
+- `--publish 127.0.0.1:8271:8271` publishes the port on the loopback address of
+  the machine only. With `--publish 8271:8271`, every machine that can reach
+  this one could connect; see the caution in
+  [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/#tcp).
+- The container needs a moment to start: run the suite once
+  `docker logs my-library-server` shows `Server is up and running`.
+- `docker stop` sends SIGTERM, and the server stops as described in
+  [Stopping the server](/robotframework-jsonrpcremote/reference/server/#stopping-the-server).
+
+## As a sidecar in Kubernetes
+
+In Kubernetes, the server can run as a sidecar: a second container in the pod
+that runs the tests.
+
+- The containers of a pod share their network, so the tests reach the server
+  at `tcp://127.0.0.1:8271`. The server can keep its default address
+  `127.0.0.1`: leave `--bind 0.0.0.0` out of the image's command, and nothing
+  outside the pod can connect.
+- The container with the tests can start before the server listens. Set
+  `rpc_connect_retry_timeout` so that the library import waits for the server.
+- If the server container restarts, the session loses its connection. With
+  connect retry, the next keyword call connects again and imports the library
+  anew, with a warning; see
+  [Lost connections and connect retry](/robotframework-jsonrpcremote/guides/lost-connections/).
+- When the pod ends, Kubernetes sends SIGTERM to the server. A keyword that
+  does not return delays the stop, until Kubernetes kills the server at the end
+  of the pod's termination grace period.

@@ -182,6 +182,7 @@ The repository is a uv workspace organized into a client library, several suppor
 - **[`examples/`](examples)** — runnable usage examples, e.g. a minimal hand-written server.
 - **[`tests`](tests)** — fast unit tests (pytest).
 - **[`atests`](atests)** — Robot Framework integration tests; each suite starts its own server.
+- **[`docs`](docs)** — the documentation site (Starlight), with its runnable examples in `docs/examples/`.
 
 #### Development Workflow
 
@@ -223,6 +224,8 @@ This runs the Robot Framework suites under [`atests`](atests) (configured via [`
 Run the unit tests on every change; run the integration tests before opening or updating a pull request.
 
 **Which tests a change needs:** every Python change adds or updates unit tests. A change whose effect can be observed from Robot Framework — keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files — also adds or changes a Robot test; if it adds none, the pull request says why. Behavior that only shows inside a package, such as the lifecycle of the JSON-RPC peer, is covered by unit tests, and the Robot suites still run as a regression check.
+
+**Which documentation a change needs:** a change with user-visible behavior updates the pages of the [documentation site](#improving-the-documentation) in `docs/` and their runnable examples in `docs/examples/` in the same pull request, and the review checks the implementation against them. The overview pages, that is the home page, the page Why JsonRpcRemote and the README, describe JsonRpcRemote as it is meant to be; guides and references describe what works today, without listing gaps or giving workarounds; the page Status and roadmap says what is available and what is planned. Every change that implements a feature updates the documentation, the roadmap included.
 
 #### Linting and Type Checking
 
@@ -297,7 +300,7 @@ Before submitting your pull request, make sure that:
 - [ ] **Tests** for the change have been added or updated, and `uv run --all-packages pytest` (plus `uv run --all-packages robotcode run` where relevant) passes locally.
 - [ ] **Linting** passes: `uv run ruff check .` and `uv run ruff format --check .`.
 - [ ] **Type checking** passes: `uv run mypy`.
-- [ ] **Documentation** has been updated where relevant (package READMEs, code comments, main README).
+- [ ] **Documentation** has been updated where relevant: the [documentation site](#improving-the-documentation) and its examples (see [Which documentation a change needs](#running-tests)), the READMEs and code comments.
 - [ ] **Commits** follow [Conventional Commits](#commit-messages) and are [cryptographically signed](#signed-commits-required) (`git commit -S`, GPG/SSH).
 - [ ] **AI / tooling disclosure** is included if AI tools or automated agents were used for a substantial part of the change (see [AI_POLICY.md](AI_POLICY.md)).
 
@@ -335,8 +338,9 @@ A good PR description:
 
 Documentation helps users understand and use the project effectively. Ways you can help:
 
-1. **README files** — the main [README](README.md) and the per-package READMEs under [`packages/`](packages) and [`examples/`](examples).
-2. **Code documentation** — docstrings for public classes and functions, inline comments for non-obvious logic, and type hints.
+1. **The documentation site** — [`docs/`](docs), published to <https://imbus.github.io/robotframework-jsonrpcremote/>. It is a [Starlight](https://starlight.astro.build/) site with its own Node.js toolchain: run `npm ci` once and `npm run build` in `docs/` to build it, which fails on broken internal links, or `npm run dev` to preview it. The libraries, suites and other files that a page shows are files in `docs/examples/<name>/`, which the page includes. Next to them, a `run.sh` runs the example against the current code: `uv run --all-packages bash docs/examples/<name>/run.sh`. The [docs workflow](.github/workflows/docs.yml) builds the site, runs every example and publishes the site from `main`.
+2. **README files** — the main [README](README.md) and the per-package READMEs under [`packages/`](packages) and [`examples/`](examples). They are short and link to the site.
+3. **Code documentation** — docstrings for public classes and functions, inline comments for non-obvious logic, and type hints.
 
 Guidelines:
 - **Clear and concise:** write for users of all skill levels.

@@ -28,10 +28,9 @@ Echo Returns The Message
 
 ## What it demonstrates
 
-*   Implementing the protocol handlers — `robot/initialize`, `robot/initialized`, `robot/import_library`, `robot/run_keyword` — with the `@rpc_request` / `@rpc_notification` decorators from `jsonrpcpeer`.
+*   Implementing the protocol handlers — `robot/initialize`, `robot/initialized`, `robot/import_library`, `robot/run_keyword`, `robot/finalize_library`, `robot/shutdown` and `robot/exit` — with the `@rpc_request` / `@rpc_notification` decorators from `jsonrpcpeer`.
 *   Returning a `LibraryDefinition` (keywords, arguments, docs) on import.
 *   Sending `robot/log` notifications to the client *during* keyword execution.
 *   Accepting clients over TCP via `asyncio.start_server`.
 
-See [`src/simple_robot_jsonrpcserver/__main__.py`](src/simple_robot_jsonrpcserver/__main__.py) for the full implementation.
-</content>
+See [`src/simple_robot_jsonrpcserver/__main__.py`](src/simple_robot_jsonrpcserver/__main__.py) for the full implementation. The [protocol page](https://imbus.github.io/robotframework-jsonrpcremote/reference/protocol/) of the documentation describes the messages it handles and runs this server with a suite.

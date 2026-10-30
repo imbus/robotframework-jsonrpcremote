@@ -22,7 +22,7 @@
 - [ ] Tests for the change have been added or updated, and `uv run pytest` (plus `uv run robotcode run` where relevant) passes locally.
 - [ ] `uv run ruff check .` and `uv run ruff format --check .` pass.
 - [ ] `uv run mypy` passes.
-- [ ] Documentation has been updated where relevant (package READMEs, code comments, main README).
+- [ ] Documentation has been updated where relevant: the documentation site in `docs/` and its examples, the READMEs and code comments.
 - [ ] Commits follow [Conventional Commits](../CONTRIBUTING.md#commit-messages) and are [cryptographically signed](../CONTRIBUTING.md#signed-commits-required) (`git commit -S`, GPG/SSH).
 
 ## AI / tooling disclosure

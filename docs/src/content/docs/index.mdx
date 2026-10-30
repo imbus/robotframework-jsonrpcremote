@@ -1,0 +1,56 @@
+---
+title: JsonRpcRemote
+description: A modern alternative to Robot Framework's Remote library, built on JSON-RPC 2.0.
+template: splash
+hero:
+  tagline: A modern alternative to Robot Framework's Remote library, built on JSON-RPC 2.0.
+  actions:
+    - text: Getting started
+      link: /robotframework-jsonrpcremote/getting-started/
+      icon: right-arrow
+    - text: Why JsonRpcRemote
+      link: /robotframework-jsonrpcremote/why-jsonrpcremote/
+      variant: minimal
+    - text: GitHub
+      link: https://github.com/imbus/robotframework-jsonrpcremote
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+	<Card title="Language-agnostic" icon="comment">
+		The protocol is JSON-RPC 2.0, a simple, standardized protocol that every
+		common programming language supports. A server that offers keywords can
+		be written in any of them; the
+		[protocol](/robotframework-jsonrpcremote/reference/protocol/) describes
+		what it has to do.
+	</Card>
+	<Card title="Any library, remote" icon="puzzle">
+		`robot-jsonrpcremote-server` makes almost any Robot Framework library
+		remote without code: Robot Framework itself imports and runs it, with
+		the library's arguments from the suite.
+	</Card>
+	<Card title="Started with the tests" icon="rocket">
+		Over stdio, the client starts the server for a session and stops it
+		again. Over TCP, it connects to a server on another machine or in a
+		container.
+	</Card>
+	<Card title="Several libraries, one server" icon="server">
+		One server serves several libraries, and a suite imports each of them by
+		name.
+	</Card>
+	<Card title="Logs while keywords run" icon="document">
+		Log messages of a remote keyword reach the Robot Framework log while the
+		keyword runs.
+	</Card>
+	<Card title="Sessions and connect retry" icon="setting">
+		A session lasts a test, a suite or the whole run. Lost connections are
+		detected, and connect retry waits for a server that is not reachable
+		yet.
+	</Card>
+</CardGrid>
+
+JsonRpcRemote is in pre-alpha: [Status and roadmap](/robotframework-jsonrpcremote/roadmap/)
+lists what works today and what is planned.

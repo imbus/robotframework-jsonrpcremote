@@ -29,6 +29,11 @@ results/
 
 .robotcode-cache/
 
+# Documentation site
+docs/node_modules/
+docs/.astro/
+docs/examples/container/wheels/
+
 # Ignore temporary files
 *.tmp
 playwright-log.txt

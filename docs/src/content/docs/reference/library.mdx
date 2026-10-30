@@ -1,0 +1,64 @@
+---
+title: JsonRpcRemote arguments
+description: The arguments of the client library JsonRpcRemote and their defaults.
+---
+
+A suite imports the client library with the address of the server, the name of
+the remote library and, if needed, the arguments of the remote library and
+options of the client:
+
+```text
+*** Settings ***
+Library    JsonRpcRemote    uri    library_name    *library_args
+...        rpc_timeout=10.0    rpc_scope=SUITE
+...        rpc_connect_retry_timeout=0    rpc_connect_retry_interval=1.0
+...        **library_kw_args
+```
+
+| Argument                     | Default                | Meaning |
+| ---------------------------- | ---------------------- | ------- |
+| `uri`                        | `tcp://127.0.0.1:8271` | Where the server is: `tcp://host:port`, or `stdio:command` to start the server; see [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/). |
+| `library_name`               | none                   | The remote library to import. Without it, the server imports the first library of its command line. |
+| `*library_args`              | none                   | Positional arguments of the remote library. |
+| `rpc_timeout`                | `10.0`                 | How long to wait for the connection and the start of a session, and for the end of a session, in seconds or as a time string such as `15s`. Keyword calls are not limited. |
+| `rpc_scope`                  | `SUITE`                | When a session ends: `TEST`, `SUITE` or `GLOBAL`; see [Sessions and rpc_scope](/robotframework-jsonrpcremote/guides/sessions/). |
+| `rpc_connect_retry_timeout`  | `0`                    | How long to keep trying to connect while the server is not reachable, in seconds or as a time string such as `1 minute`. `0` turns connect retry off; see [Lost connections and connect retry](/robotframework-jsonrpcremote/guides/lost-connections/). |
+| `rpc_connect_retry_interval` | `1.0`                  | How long to wait between two attempts to connect, in seconds or as a time string. It must be greater than 0 when connect retry is on. |
+| `**library_kw_args`          | none                   | Named arguments of the remote library. |
+
+## Arguments of the remote library
+
+Positional arguments after `library_name` go to the constructor of the remote
+library, and named arguments (`name=value`) are passed to it by name:
+
+```text
+*** Settings ***
+# Positional arguments.
+Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary    ${42}    text
+
+# Named arguments.
+Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
+...        greeting=hello    times=3    enabled=true
+```
+
+Positional values are passed on as JSON values. Named values
+are converted on the server according to the type hints of the library's
+`__init__`, so `int`, `float`, `bool`, `Decimal`, `date`, `Enum`, `list`,
+`dict` and other types that Robot Framework converts work; without type hints,
+they arrive as strings.
+
+## Options of the client
+
+The options `rpc_timeout`, `rpc_scope`, `rpc_connect_retry_timeout` and
+`rpc_connect_retry_interval` belong to `JsonRpcRemote` itself and do not reach
+the remote library, so they can be mixed with its named arguments:
+
+```text
+*** Settings ***
+Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
+...        greeting=hello    rpc_timeout=20    rpc_scope=TEST
+...        rpc_connect_retry_timeout=1 minute    rpc_connect_retry_interval=2s
+```
+
+A value that is neither a number of seconds nor a time string, or that is
+negative, makes the library import fail with an error that names the option.

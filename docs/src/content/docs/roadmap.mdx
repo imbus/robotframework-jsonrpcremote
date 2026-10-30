@@ -1,0 +1,75 @@
+---
+title: Status and roadmap
+description: What JsonRpcRemote can do today and what is planned.
+---
+
+JsonRpcRemote is in pre-alpha and under active development. Its interfaces can
+still change from one release to the next, and more features are coming. This
+page lists what works today and what is planned. Ideas and problems are
+welcome as
+[issues](https://github.com/imbus/robotframework-jsonrpcremote/issues).
+
+## Available today
+
+**Client library `JsonRpcRemote`**
+
+- Connects to a server over TCP, or starts the server itself and talks to it
+  over its stdin and stdout; see
+  [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/).
+- Imports a remote library with positional and named arguments from the suite,
+  and offers its keywords with their arguments, types, defaults, documentation,
+  tags and sources; see the
+  [arguments of JsonRpcRemote](/robotframework-jsonrpcremote/reference/library/).
+- Writes the log messages of a remote keyword to the Robot Framework log while
+  the keyword runs.
+- Starts a session per test, per suite or for the whole run; see
+  [Sessions and rpc_scope](/robotframework-jsonrpcremote/guides/sessions/).
+- Detects lost connections, waits for a server that is not reachable yet, and
+  reconnects with a check of the library definition; see
+  [Lost connections and connect retry](/robotframework-jsonrpcremote/guides/lost-connections/).
+
+**Server `robot-jsonrpcremote-server`**
+
+- Makes almost any Robot Framework library remote without code: Robot
+  Framework itself imports and runs it, including its argument conversion.
+- Serves several libraries, to several clients at the same time; see
+  [Several libraries on one server](/robotframework-jsonrpcremote/guides/several-libraries/).
+- Takes Robot Framework's `--pythonpath`, `--variable`, `--variablefile` and
+  `--outputdir`; see the
+  [server options](/robotframework-jsonrpcremote/reference/server/).
+- Stops in an orderly way on SIGTERM and SIGINT, also in a
+  [container](/robotframework-jsonrpcremote/guides/container/).
+
+**Protocol**
+
+- JSON-RPC 2.0 with the framing of the Language Server Protocol, defined in the
+  package `robotframework-jsonrpcremote-protocol`, with a hand-written example
+  server; see the [protocol](/robotframework-jsonrpcremote/reference/protocol/).
+- Between Python peers, keyword arguments and return values that JSON cannot
+  carry travel as pickles, so they keep their type.
+
+## Planned
+
+- **More transports:** named pipes, Unix domain sockets, WebSockets and
+  Streamable HTTP, and encryption with TLS.
+- **Servers in other languages:** example servers in other languages, such as
+  Rust, Java and .NET, and values that every language can read. The Python
+  implementation sends lists and dicts of JSON values as plain JSON, and other
+  values by these conventions:
+  - date and time as ISO 8601 strings, such as `"2025-12-18T14:30:00+00:00"`;
+  - binary data as Base64 strings;
+  - decimal numbers as strings, to keep their precision, such as `"123.45"`;
+  - UUIDs as strings, such as `"123e4567-e89b-12d3-a456-426614174000"`;
+  - paths as strings, preferably with `/` as the separator;
+  - other objects as JSON objects with a field such as `__type__` that names the
+    type, such as `{"__type__": "MyCustomObject", "id": 1, "name": "foo"}`.
+- **A Robot Framework process per session** on the server, so that sessions run
+  apart from each other.
+- **Keyword timeouts and cancellation**, including the test and keyword
+  timeouts of Robot Framework.
+- **Failure modes:** continuable, fatal and skipped failures of remote keywords,
+  with the type and the traceback of the error.
+- **Access control** for the server and protection of the values that travel
+  as pickles.
+- **Several libraries over one connection**, and progress messages while a
+  keyword runs.

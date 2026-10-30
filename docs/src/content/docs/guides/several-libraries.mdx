@@ -1,0 +1,72 @@
+---
+title: Several libraries on one server
+description: Serve several libraries from one server, import each in a suite, and know that the server runs one keyword at a time.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import calculator from '../../../../examples/several-libraries/Calculator.py?raw';
+import suite from '../../../../examples/several-libraries/two-libraries.robot?raw';
+
+One server can serve several libraries, to one or more clients.
+
+## Which libraries the server imports
+
+The libraries on the command line are the ones that clients may import:
+
+```sh
+# Only MyLibrary.
+robot-jsonrpcremote-server MyLibrary
+
+# MyLibrary and Calculator.
+robot-jsonrpcremote-server MyLibrary Calculator
+
+# Any library that the server can import.
+robot-jsonrpcremote-server
+```
+
+- With one or more libraries, the server refuses to import any other. A client
+  that gives no `library_name` gets the first of them.
+- Without libraries, the server imports any library that a client names, and a
+  client has to give `library_name`.
+- The libraries have to be importable on the server: installed, or in a
+  directory given with `--pythonpath`.
+
+## Importing several libraries in a suite
+
+A `JsonRpcRemote` import serves one remote library, as a client of its own,
+with its own session and connection. To use two libraries, import
+`JsonRpcRemote` twice and give each import a name of its own with `AS`: Robot
+Framework ignores a second import of a library under the same name with other
+arguments. The log then shows the keywords as `MyLibrary.Greet` and
+`Calculator.Add`:
+
+<Code code={suite} lang="text" title="two-libraries.robot" />
+
+The second library adds numbers; `MyLibrary` is the one from
+[Getting started](/robotframework-jsonrpcremote/getting-started/):
+
+<Code code={calculator} lang="python" title="Calculator.py" />
+
+One server serves both libraries:
+
+```sh
+robot-jsonrpcremote-server --pythonpath . MyLibrary Calculator
+```
+
+The files are in
+[`docs/examples/several-libraries`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/several-libraries)
+in the repository.
+
+## One Robot Framework execution for all sessions
+
+The server runs the keywords of all its sessions in one Robot Framework
+execution, and Robot Framework runs one keyword at a time. Keywords of
+different clients and libraries therefore run one after another, and library
+imports and the cleanup at the end of a session wait their turn the same way.
+While a keyword runs, for example one that waits for an application, the other
+clients of the server wait for it. A keyword that does not return also delays
+stopping the server; see
+[Stopping the server](/robotframework-jsonrpcremote/reference/server/#stopping-the-server).
+
+Clients that run in parallel, for example the processes of pabot, therefore
+wait for each other when they share a server.

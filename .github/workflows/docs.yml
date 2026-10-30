@@ -1,0 +1,70 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  # On main, let a deployment finish instead of cancelling it.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build the site
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      # Installs the site with npm, builds it, which checks its internal links with
+      # starlight-links-validator, and uploads it for the deploy job.
+      - name: Build the site
+        uses: withastro/action@v6
+        with:
+          path: docs
+
+  examples:
+    name: run the examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --all-packages
+
+      - name: Run the examples
+        run: |
+          for script in docs/examples/*/run.sh; do
+            echo "::group::$script"
+            uv run --all-packages bash "$script"
+            echo "::endgroup::"
+          done
+
+  deploy:
+    name: deploy the site
+    needs: [build, examples]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
