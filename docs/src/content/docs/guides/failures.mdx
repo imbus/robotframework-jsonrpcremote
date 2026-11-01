@@ -1,0 +1,76 @@
+---
+title: Failures of remote keywords
+description: How a failing remote keyword appears in Robot Framework, with its message, its traceback, and skipped, continuable and fatal failures.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import library from '../../../../examples/failures/FailingLibrary.py?raw';
+import suite from '../../../../examples/failures/failures.robot?raw';
+
+A remote keyword fails like a keyword of a library that runs locally: Robot
+Framework shows the same message, logs the same traceback, and skips the test,
+continues it or stops the run in the same way. A library needs nothing special
+for it, and keywords such as `Run Keyword And Expect Error` work as usual.
+
+## The message
+
+The keyword fails with the message that Robot Framework shows for the same
+error of a local keyword, without anything added:
+
+| The keyword raises        | It fails with           |
+| ------------------------- | ----------------------- |
+| `ValueError("bad value")` | `ValueError: bad value` |
+| `AssertionError("boom")`  | `boom`                  |
+| `RuntimeError("boom")`    | `boom`                  |
+
+## The traceback
+
+At the log level `DEBUG` or `TRACE`, the traceback of the error appears in
+`log.html` under the failed keyword. It shows the code of the library on the
+server, and `[remote]` marks it as coming from there, like all `DEBUG` and
+`TRACE` messages from the server:
+
+```text
+[remote] Traceback (most recent call last):
+  File "/srv/libraries/FailingLibrary.py", line 6, in fail_normally
+    raise ValueError("bad value")
+ValueError: bad value
+```
+
+## Skipped, continuable and fatal failures
+
+The [exceptions and attributes](https://robotframework.org/robotframework/latest/RobotFrameworkUserGuide.html#reporting-keyword-status)
+with which a library reports them work as in a local library. This library has
+a keyword for each kind of failure:
+
+<Code code={library} lang="python" title="FailingLibrary.py" />
+
+A suite with a test for each:
+
+<Code code={suite} lang="text" title="failures.robot" />
+
+The tests end like this:
+
+| Test                  | Status | Message                                        |
+| --------------------- | ------ | ---------------------------------------------- |
+| `Normal Failure`      | FAIL   | `ValueError: bad value`                        |
+| `Skipped`             | SKIP   | `not today`                                    |
+| `Continuable Failure` | FAIL   | `go on`                                        |
+| `Fatal Failure`       | FAIL   | `FatalError: stop all`                         |
+| `Not Run`             | FAIL   | `Test execution stopped due to a fatal error.` |
+
+- `SkipExecution` skips the test, and the rest of the test does not run.
+- After `ContinuableFailure`, the rest of the test runs, and the test fails at
+  its end with the message of the failure.
+- `FatalError` stops the run of the suite: the following tests do not run and
+  fail with a message that says so.
+
+A fatal failure ends only that run. The server keeps running and serves the
+next keyword call, from the same client or from another one.
+
+Start the server with `robot-jsonrpcremote-server --pythonpath . FailingLibrary`
+and run the suite, as in
+[Getting started](/robotframework-jsonrpcremote/getting-started/). The files are
+in
+[`docs/examples/failures`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/failures)
+in the repository.

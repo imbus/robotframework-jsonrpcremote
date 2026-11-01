@@ -53,7 +53,8 @@ keyword, act on the server's execution, too.
 
 ## Starting
 
-The server logs to stderr. Once it accepts clients, it logs
+The server logs to stderr, whatever the log level of its clients. Once it
+accepts clients, it logs
 `Server is up and running. Press Ctrl+C to stop.` If the server cannot start, for example because
 the port is already in use, it logs `Server failed to start: <reason>` and
 exits with exit code 1.

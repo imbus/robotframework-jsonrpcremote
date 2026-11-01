@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fake_server import NEVER_ANSWER, FakeServer, wait_until
+from robot.errors import RemoteError
 
 from jsonrpcpeer import JsonRpcPeer
 from JsonRpcRemote import (
@@ -100,7 +101,7 @@ def test_keyword_answered_with_rpc_error_does_not_poison_the_session(server: Fak
 def test_failed_remote_keyword_does_not_poison_the_session(server: FakeServer, remote: JsonRpcRemote) -> None:
     server.script(RUN_KEYWORD_REQUEST, RunKeywordResult(error=RunKeywordError(message="keyword failed")))
 
-    with pytest.raises(RuntimeError, match="keyword failed"):
+    with pytest.raises(RemoteError, match="keyword failed"):
         _call(remote, "first")
     assert _call(remote, "second") == "echo: second"
     assert _session(remote).start_error is None

@@ -1,11 +1,14 @@
-"""Unit tests for the server endpoint's lifecycle handlers (finalize/shutdown/exit).
+"""Unit tests for the server endpoint's handlers: the lifecycle, failed keywords and the client's log level.
 
 A stub stands in for ``RobotRemoteContext`` so the handlers can be exercised without a
 running Robot suite.
 """
 
 import asyncio
+import logging
 from typing import Any, cast
+
+import pytest
 
 from robot_jsonrpcremote_protocol import (
     ExitParams,
@@ -14,11 +17,14 @@ from robot_jsonrpcremote_protocol import (
     InitializedParams,
     InitializeParams,
     LibraryDefinition,
+    RunKeywordError,
+    RunKeywordErrorMode,
     RunKeywordParams,
+    SetLogLevelParams,
     ShutdownParams,
 )
 from robot_jsonrpcremote_server._endpoint import RobotServerEndpoint
-from robot_jsonrpcremote_server._runner import RobotRemoteContext
+from robot_jsonrpcremote_server._runner import KeywordFailedError, RobotRemoteContext
 
 
 class _StubContext:
@@ -138,3 +144,57 @@ async def test_wait_idle_returns_false_while_a_handler_still_runs() -> None:
 
     context.release.set()
     await call
+
+
+class _FailingContext(_StubContext):
+    """A stub whose keyword calls raise ``error``."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    async def run_keyword(self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None) -> str:
+        raise self.error
+
+
+async def test_failed_keyword_is_answered_with_its_error_and_logged_at_debug(caplog: pytest.LogCaptureFixture) -> None:
+    error = RunKeywordError(
+        message="stop all", type="FatalError", traceback="the trace", mode=RunKeywordErrorMode.FATAL
+    )
+    endpoint = await _initialized_endpoint(_FailingContext(KeywordFailedError(error)))
+
+    with caplog.at_level(logging.DEBUG, logger="robot_jsonrpcremote_server.endpoint"):
+        result = await endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword"))
+
+    assert result.error == error
+    assert [(record.levelno, record.getMessage()) for record in caplog.records if "Keyword" in record.getMessage()] == [
+        (logging.DEBUG, "Keyword 'Keyword' failed: stop all")
+    ]
+
+
+async def test_other_exception_is_answered_with_its_message_and_logged_as_an_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    endpoint = await _initialized_endpoint(_FailingContext(RuntimeError("server is shutting down")))
+
+    with caplog.at_level(logging.DEBUG, logger="robot_jsonrpcremote_server.endpoint"):
+        result = await endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword"))
+
+    assert result.error == RunKeywordError(message="server is shutting down")
+    assert [record.levelno for record in caplog.records if "Keyword" in record.getMessage()] == [logging.ERROR]
+
+
+async def test_log_level_is_info_if_the_client_reports_none() -> None:
+    endpoint = await _initialized_endpoint(_StubContext())
+
+    assert endpoint.log_level == "INFO"
+
+
+async def test_log_level_comes_from_initialize_and_from_the_notification() -> None:
+    endpoint = RobotServerEndpoint(remote_context=cast(RobotRemoteContext, _StubContext()))
+
+    await endpoint.initialize(InitializeParams(log_level="DEBUG"))
+    assert endpoint.log_level == "DEBUG"
+
+    await endpoint.set_log_level(SetLogLevelParams(log_level="TRACE"))
+    assert endpoint.log_level == "TRACE"

@@ -15,6 +15,7 @@ from robot_jsonrpcremote_protocol import (
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
+    SET_LOG_LEVEL_NOTIFICATION,
     SHUTDOWN_REQUEST,
     ExitParams,
     FinalizeLibraryParams,
@@ -31,12 +32,13 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordResult,
     ServerCapabilities,
     ServerInfo,
+    SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
 )
 
 from .__version__ import __version__
-from ._runner import RobotRemoteContext
+from ._runner import KeywordFailedError, RobotRemoteContext
 
 logger = logging.getLogger("robot_jsonrpcremote_server.endpoint")
 
@@ -90,6 +92,8 @@ class RobotServerEndpoint:
         self.remote_context = remote_context
         self.libraries = list(libraries) if libraries is not None else []
         self.verbose = verbose
+        # The log level that the client reported; the runner runs this client's commands at it.
+        self.log_level: str = "INFO"
         self.initialize_received: bool = False
         self.initialized_received: bool = False
         self.rpc_peer: JsonRpcPeer | None = None
@@ -166,6 +170,8 @@ class RobotServerEndpoint:
     async def initialize(self, params: InitializeParams) -> InitializeResult:
         logger.debug("Initializing client: %s", params)
         self.initialize_received = True
+        if params.log_level is not None:
+            self.log_level = params.log_level
 
         return InitializeResult(
             capabilities=ServerCapabilities(support_exit=True, libraries=self.libraries),
@@ -176,6 +182,11 @@ class RobotServerEndpoint:
     async def initialized(self, params: InitializedParams) -> None:
         logger.debug("Client initialized with params: %s", params)
         self.initialized_received = True
+
+    @rpc_notification(SET_LOG_LEVEL_NOTIFICATION)
+    async def set_log_level(self, params: SetLogLevelParams) -> None:
+        logger.debug("Client log level: %s", params.log_level)
+        self.log_level = params.log_level
 
     @rpc_request(IMPORT_LIBRARY_REQUEST)
     @_counted
@@ -223,6 +234,10 @@ class RobotServerEndpoint:
                     params.library_token, params.name, params.args or [], params.kwargs or {}, subscriber=self
                 )
             )
+        except KeywordFailedError as failure:
+            # A test result, not an error of the server.
+            logger.debug("Keyword '%s' failed: %s", params.name, failure.error.message)
+            return RunKeywordResult(error=failure.error)
         except Exception as e:
             logger.exception("Error executing keyword '%s': %s", params.name, e)
             return RunKeywordResult(error=RunKeywordError(message=str(e)))

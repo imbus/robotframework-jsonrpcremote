@@ -17,6 +17,7 @@ This package defines the **JSON-RPC 2.0** protocol between the client library `J
     | `robot/initialized`      | notification | client  |
     | `robot/import_library`   | request      | client  |
     | `robot/run_keyword`      | request      | client  |
+    | `robot/set_log_level`    | notification | client  |
     | `robot/log`              | notification | server  |
     | `robot/finalize_library` | request      | client  |
     | `robot/shutdown`         | request      | client  |

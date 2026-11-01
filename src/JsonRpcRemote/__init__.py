@@ -17,6 +17,8 @@ from urllib.parse import urlparse
 from robot import result, running
 from robot.api import TypeInfo, logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
+from robot.errors import RemoteError
+from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
 from robot.utils import secs_to_timestr, timestr_to_secs
 
 from jsonrpcpeer import JsonRpcPeer
@@ -30,6 +32,7 @@ from robot_jsonrpcremote_protocol import (
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
+    SET_LOG_LEVEL_NOTIFICATION,
     SHUTDOWN_REQUEST,
     ArgumentDefinition,
     ArgumentKind,
@@ -46,10 +49,13 @@ from robot_jsonrpcremote_protocol import (
     KeywordDefinition,
     LibraryDefinition,
     LogParams,
+    RunKeywordError,
+    RunKeywordErrorMode,
     RunKeywordParams,
     RunKeywordResult,
     ServerCapabilities,
     ServerInfo,
+    SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
 )
@@ -66,6 +72,9 @@ _LOGGER_WRITE_HAS_CONSOLE = "console" in inspect.signature(logger.write).paramet
 
 # How often ending a session checks whether the worker has ended while it waits for a teardown step.
 _TEARDOWN_POLL_INTERVAL = 0.05
+
+# In front of the DEBUG and TRACE messages from the server, to tell them from the client's own at these levels.
+_REMOTE_MARK = "[remote] "
 
 
 def _write_log(message: str, level: str, html: bool, console: bool) -> None:
@@ -140,6 +149,26 @@ def _describe_error(error: BaseException) -> str:
     return f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
 
 
+def _robot_log_level() -> str | None:
+    """The current log level of the Robot Framework run; ``None`` outside a run, for example under Libdoc."""
+    try:
+        return cast(str, BuiltIn().get_variable_value("${LOG LEVEL}"))
+    except RobotNotRunningError:
+        return None
+
+
+def _keyword_failure(error: RunKeywordError) -> RemoteError:
+    """The exception for a failed remote keyword, which Robot Framework reports like the failure of a local one."""
+    failure = RemoteError(
+        error.message,
+        _REMOTE_MARK + error.traceback if error.traceback else "",
+        fatal=error.mode is RunKeywordErrorMode.FATAL,
+        continuable=error.mode is RunKeywordErrorMode.CONTINUABLE,
+    )
+    failure.ROBOT_SKIP_EXECUTION = error.mode is RunKeywordErrorMode.SKIP
+    return failure
+
+
 def _attempts(count: int) -> str:
     return f"{count} attempt" if count == 1 else f"{count} attempts"
 
@@ -177,8 +206,10 @@ def _definition_changes(registered: LibraryDefinition | None, current: LibraryDe
 
 
 class _ClientEndpoint:
-    def __init__(self, log_sink: _LogSink | None = None) -> None:
+    def __init__(self, log_sink: _LogSink | None = None, log_level: str | None = None) -> None:
         self.log_sink = log_sink if log_sink is not None else _LogSink()
+        # The log level to report when the session starts, and from then on the one reported last.
+        self.log_level = log_level
         self.rpc_peer: JsonRpcPeer | None = None
         # Set after initialize/import so the graceful teardown can finalize the
         # library and decide whether the server supports the exit notification.
@@ -188,7 +219,8 @@ class _ClientEndpoint:
     @rpc_notification(LOG_NOTIFICATION)
     async def _log_notification(self, params: LogParams) -> None:
         level = params.level.value if params.level is not None else "INFO"
-        self.log_sink.submit(params.message, level, params.html or False, params.console or False)
+        message = _REMOTE_MARK + params.message if level in ("DEBUG", "TRACE") else params.message
+        self.log_sink.submit(message, level, params.html or False, params.console or False)
 
     async def initialize(self) -> InitializeResult:
         if self.rpc_peer is None:
@@ -200,6 +232,7 @@ class _ClientEndpoint:
             InitializeParams(
                 capabilities=ClientCapabilities(),
                 client_info=ClientInfo(name="RobotFramework JsonRpcRemote Client", version=__version__),
+                log_level=self.log_level,
             ),
         )
 
@@ -208,6 +241,17 @@ class _ClientEndpoint:
             raise RuntimeError("RPC peer is not initialized yet")
 
         await self.rpc_peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
+
+    async def report_log_level(self, log_level: str | None) -> None:
+        """Tell the server ``log_level`` if it is not the level reported last."""
+        if log_level is None or log_level == self.log_level:
+            return
+
+        if self.rpc_peer is None:
+            raise RuntimeError("RPC peer is not initialized yet")
+
+        self.log_level = log_level
+        await self.rpc_peer.send_notification(SET_LOG_LEVEL_NOTIFICATION, SetLogLevelParams(log_level=log_level))
 
     async def import_library(
         self, name: str, args: Sequence[Any] | None, kw_args: Mapping[str, Any] | None
@@ -388,6 +432,7 @@ class _Session:
         library_kw_args: dict[str, Any] | None,
         timeout: float | None = 30.0,
         log_sink: _LogSink | None = None,
+        log_level: str | None = None,
     ) -> None:
         self._uri = uri
         self._library_name = library_name
@@ -418,7 +463,7 @@ class _Session:
         # Set when the client ends the session itself; the end of its connection is then no loss.
         self.closed_by_client = False
 
-        self.client_endpoint = _ClientEndpoint(log_sink)
+        self.client_endpoint = _ClientEndpoint(log_sink, log_level)
         self._res.endpoint = self.client_endpoint
 
     @property
@@ -659,10 +704,13 @@ class _Session:
     def _closed_error(self) -> ConnectionError:
         return ConnectionError(f"Connection to '{self._uri}' is closed")
 
-    async def run_keyword(self, name: str, args: list[Any], named: dict[str, Any]) -> RunKeywordResult:
+    async def run_keyword(
+        self, name: str, args: list[Any], named: dict[str, Any], log_level: str | None = None
+    ) -> RunKeywordResult:
         if self.library_token is None:
             raise RuntimeError("Library token is not initialized yet")
 
+        await self.client_endpoint.report_log_level(log_level)
         return await self.client_endpoint.run_keyword(self.library_token, name, args, named)
 
 
@@ -820,7 +868,13 @@ class JsonRpcRemote:
     def _connect(self) -> _Session:
         """Start a new session; return it only once it has started, otherwise raise why it did not."""
         session = _Session(
-            self._uri, self._library_name, self._library_args, self._library_kw_args, self._timeout, self._log_sink
+            self._uri,
+            self._library_name,
+            self._library_args,
+            self._library_kw_args,
+            self._timeout,
+            self._log_sink,
+            _robot_log_level(),
         )
         session.start()
 
@@ -939,12 +993,13 @@ class JsonRpcRemote:
                         name,
                         [value_to_jsonable(arg) for arg in args],
                         {key: value_to_jsonable(value) for key, value in named.items()},
+                        _robot_log_level(),
                     )
                 )
             )
 
             if result.error is not None:
-                raise RuntimeError(f"Error executing keyword '{name}': {result.error}")
+                raise _keyword_failure(result.error)
 
             return jsonable_to_value(result.result)
         except (ConnectionError, asyncio.CancelledError) as error:

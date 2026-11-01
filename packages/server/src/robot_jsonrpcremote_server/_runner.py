@@ -13,11 +13,20 @@ from robot import result, running
 from robot.api import TestSuite, get_model
 from robot.api.interfaces import ListenerV3
 from robot.conf import RobotSettings
+from robot.errors import ExecutionFailed
 from robot.output import LOGGER
-from robot.utils import NOT_SET
+from robot.utils import NOT_SET, ErrorDetails
 
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
-from robot_jsonrpcremote_protocol import AnyType, ArgumentDefinition, ArgumentKind, KeywordDefinition, LibraryDefinition
+from robot_jsonrpcremote_protocol import (
+    AnyType,
+    ArgumentDefinition,
+    ArgumentKind,
+    KeywordDefinition,
+    LibraryDefinition,
+    RunKeywordError,
+    RunKeywordErrorMode,
+)
 
 _T = TypeVar("_T")
 
@@ -25,6 +34,14 @@ _T = TypeVar("_T")
 def _shutting_down() -> RuntimeError:
     """The error for a command that the stopping server no longer runs."""
     return RuntimeError("server is shutting down")
+
+
+class KeywordFailedError(Exception):
+    """A keyword failed; ``error`` is what the server reports for it."""
+
+    def __init__(self, error: RunKeywordError) -> None:
+        super().__init__(error.message)
+        self.error = error
 
 
 REPL_SUITE = """\
@@ -103,6 +120,30 @@ def _robot_import_library(library_token: str | None, name: str, args: Sequence[A
     )
 
 
+def _failure_mode(failure: ExecutionFailed) -> RunKeywordErrorMode | None:
+    # In the order in which Robot evaluates the flags.
+    if failure.skip:
+        return RunKeywordErrorMode.SKIP
+    if failure.exit:
+        return RunKeywordErrorMode.FATAL
+    if failure.continue_on_failure:
+        return RunKeywordErrorMode.CONTINUABLE
+    return None
+
+
+def _run_keyword_error(failure: ExecutionFailed) -> RunKeywordError:
+    """The error to report for ``failure``: Robot has formatted its message as for a local keyword."""
+    # The exception of the keyword, which Robot was handling when it raised the failure. There is none
+    # if a library ran the failing keyword itself and Robot aggregated its failures.
+    original = failure.__context__
+    return RunKeywordError(
+        message=failure.message,
+        type=type(original).__name__ if original is not None else None,
+        traceback=(ErrorDetails(original).traceback or None) if original is not None else None,
+        mode=_failure_mode(failure),
+    )
+
+
 def _robot_run_keyword(
     library_token: str, name: str, args: list[AnyType], kwargs: dict[str, AnyType]
 ) -> AnyType | None:
@@ -130,7 +171,10 @@ def _robot_run_keyword(
     )
 
     keyword_result = result.Keyword(kw.name)
-    r = runner.run(keyword_data, keyword_result, context)
+    try:
+        r = runner.run(keyword_data, keyword_result, context)
+    except ExecutionFailed as failure:
+        raise KeywordFailedError(_run_keyword_error(failure)) from None
 
     return cast(AnyType, value_to_jsonable(r))
 
@@ -154,7 +198,18 @@ def _robot_finalize_library(library_token: str) -> None:
             scope_manager.end_suite()
 
 
+def _robot_set_log_level(level: str) -> None:
+    context: "running.context._ExecutionContext" = running.context.EXECUTION_CONTEXTS.current
+    if context is None:
+        raise RuntimeError("No execution context available for setting the log level.")
+
+    context.output.set_log_level(level)
+
+
 class LogMessageSubscriber(Protocol):
+    # The log level at which the commands of this subscriber run.
+    log_level: str
+
     def log_message(self, message: str, level: str, html: bool, timestamp: datetime.datetime) -> None: ...
 
 
@@ -189,6 +244,8 @@ class RobotRemoteContext:
         # Log messages are routed only to it, so concurrent clients don't see each
         # other's logs. No lock needed: only ever accessed on the runner thread.
         self._active_subscriber: LogMessageSubscriber | None = None
+        # Whether the last message of the running command reported a failure. Same thread as above.
+        self._failure_logged = False
 
     def _hook_loop(self) -> None:
         try:
@@ -198,7 +255,10 @@ class RobotRemoteContext:
                 except Empty:
                     continue
                 self._active_subscriber = subscriber
+                self._failure_logged = False
                 try:
+                    # Robot has one log level, and the commands of several clients run one after another.
+                    _robot_set_log_level(subscriber.log_level if subscriber is not None else "INFO")
                     result = command()
                     future.set_result(result)
                 except Exception as e:
@@ -232,6 +292,12 @@ class RobotRemoteContext:
         return future
 
     def _log_message(self, message: result.Message) -> None:
+        # Robot logs the traceback of a failure at DEBUG right after its FAIL or SKIP message. The
+        # error of the keyword call carries the traceback, and the client logs it from there.
+        follows_failure, self._failure_logged = self._failure_logged, message.level in ("FAIL", "SKIP")
+        if follows_failure and message.level == "DEBUG":
+            return
+
         subscriber = self._active_subscriber
         if subscriber is not None:
             subscriber.log_message(message.message, message.level, message.html, message.timestamp)

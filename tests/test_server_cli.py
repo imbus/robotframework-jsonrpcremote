@@ -61,6 +61,25 @@ def test_mode_aliases() -> None:
     assert build_arg_parser().parse_args(["--tcp", "Lib"]).mode == "tcp"
 
 
+# --- configure_logging ------------------------------------------------------
+
+
+def test_level_of_the_root_logger_does_not_change_what_the_server_prints() -> None:
+    # In its own process: basicConfig() does nothing here, where pytest has configured logging.
+    code = """
+import logging
+from robot_jsonrpcremote_server.__main__ import configure_logging
+
+configure_logging(verbose=False)
+logging.getLogger().setLevel(logging.DEBUG)  # what Robot does for a client at DEBUG
+logging.getLogger("library").debug("hidden")
+logging.getLogger("library").info("shown")
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=True)
+
+    assert result.stderr.splitlines() == ["[INFO] shown"]
+
+
 # --- run() rejects unsupported modes cleanly -------------------------------
 
 

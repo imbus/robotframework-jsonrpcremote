@@ -2,6 +2,7 @@ import pytest
 
 from jsonrpcpeer.json_helpers import as_json, from_dict, from_json
 from robot_jsonrpcremote_protocol import (
+    SET_LOG_LEVEL_NOTIFICATION,
     ArgumentKind,
     ClientInfo,
     ExitParams,
@@ -10,6 +11,7 @@ from robot_jsonrpcremote_protocol import (
     InitializeParams,
     LibraryDefinition,
     RunKeywordParams,
+    SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
 )
@@ -57,6 +59,16 @@ def test_initialize_params_json_roundtrip() -> None:
     params = InitializeParams(client_info=ClientInfo(name="c", version="1"))
     restored = from_json(as_json(params), InitializeParams)
     assert restored.client_info == ClientInfo(name="c", version="1")
+
+
+def test_initialize_params_carry_the_log_level() -> None:
+    assert from_json(as_json(InitializeParams(log_level="DEBUG")), InitializeParams).log_level == "DEBUG"
+    assert from_json(as_json(InitializeParams()), InitializeParams).log_level is None
+
+
+def test_set_log_level_notification_roundtrip() -> None:
+    assert SET_LOG_LEVEL_NOTIFICATION == "robot/set_log_level"
+    assert from_json(as_json(SetLogLevelParams(log_level="TRACE")), SetLogLevelParams).log_level == "TRACE"
 
 
 def test_finalize_library_params_roundtrip() -> None:

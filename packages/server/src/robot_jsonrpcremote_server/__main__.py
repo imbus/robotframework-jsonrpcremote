@@ -55,6 +55,9 @@ def configure_logging(verbose: bool) -> None:
             logging.basicConfig(level=level, format="%(asctime)s [%(levelname)s] %(message)s")
         else:
             logging.basicConfig(level=level, format="[%(levelname)s] %(message)s")
+        # Robot sets the root logger to the log level of the client whose command runs, so that a
+        # library's messages reach that client. What the server prints does not depend on it.
+        root.handlers[0].setLevel(level)
     logger.setLevel(level)
 
 

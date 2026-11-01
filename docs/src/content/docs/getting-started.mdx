@@ -81,7 +81,14 @@ robot greet.robot
 
 The test passes. In `log.html`, the message `Greeting World`, which `Greet`
 logged on the server, appears under the keyword, as for a library that runs
-locally.
+locally. The log messages of a remote keyword also follow the log level of the
+suite, as for a local keyword: with `robot --loglevel DEBUG`, or after
+`Set Log Level    DEBUG` in a test, the `DEBUG` messages of the library appear
+as well. `[remote]` in front of a `DEBUG` or `TRACE` message marks it as coming
+from the server.
+
+If a remote keyword fails, the test fails as with a local keyword; see
+[Failures of remote keywords](/robotframework-jsonrpcremote/guides/failures/).
 
 The files of this page are in
 [`docs/examples/getting-started`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/getting-started)

@@ -52,6 +52,12 @@ class ServerProbeLib:
         """Raises an error, to check that failures propagate back to the client."""
         raise RuntimeError(message)
 
+    def log_at_each_level(self, marker: str) -> None:
+        """Logs ``marker`` at TRACE, DEBUG and INFO, to check which messages reach the client."""
+        logger.trace(f"{marker} at TRACE")
+        logger.debug(f"{marker} at DEBUG")
+        logger.info(f"{marker} at INFO")
+
     def emit_log(self, message: str) -> str:
         """Logs a message on the server; it should be forwarded to the client."""
         logger.info(message)

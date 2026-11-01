@@ -10,6 +10,7 @@ from robot_jsonrpcremote_protocol import (
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
+    SET_LOG_LEVEL_NOTIFICATION,
     SHUTDOWN_REQUEST,
     ArgumentDefinition,
     ExitParams,
@@ -29,6 +30,7 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordResult,
     ServerCapabilities,
     ServerInfo,
+    SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
 )
@@ -64,6 +66,11 @@ class SimpleRobotServerEndpoint:
     async def initialized(self, params: InitializedParams) -> None:
         print(f"Client initialized with params: {params}")
         self.initialized_received = True
+
+    @rpc_notification(SET_LOG_LEVEL_NOTIFICATION)
+    async def set_log_level(self, params: SetLogLevelParams) -> None:
+        # This server sends all its log messages: the client logs those from its log level on.
+        print(f"Client log level: {params.log_level}")
 
     @rpc_request(IMPORT_LIBRARY_REQUEST)
     async def import_library(self, params: ImportLibraryParams) -> ImportLibraryResult:

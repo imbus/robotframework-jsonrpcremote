@@ -64,11 +64,17 @@ class InitializeParams:
     client_info: ClientInfo | None = None
     initialization_options: AnyType | None = None
     trace: str | None = None
+    log_level: str | None = None
 
 
 @dataclass
 class InitializedParams:
     pass
+
+
+@dataclass
+class SetLogLevelParams:
+    log_level: str
 
 
 @dataclass
@@ -202,4 +208,5 @@ SHUTDOWN_REQUEST = "robot/shutdown"
 EXIT_NOTIFICATION = "robot/exit"
 
 LOG_NOTIFICATION = "robot/log"
+SET_LOG_LEVEL_NOTIFICATION = "robot/set_log_level"
 TRACE_NOTIFICATION = "robot/trace"

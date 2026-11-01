@@ -9,4 +9,4 @@ ${PORT}           8271
 
 *** Test Cases ***
 Failing Keyword Propagates As Error
-    Run Keyword And Expect Error    *boom*    Fail With    boom
+    Run Keyword And Expect Error    boom    Fail With    boom

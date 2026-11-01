@@ -21,7 +21,10 @@ welcome as
   tags and sources; see the
   [arguments of JsonRpcRemote](/robotframework-jsonrpcremote/reference/library/).
 - Writes the log messages of a remote keyword to the Robot Framework log while
-  the keyword runs.
+  the keyword runs, at the log level of the suite.
+- Reports a failing remote keyword like a failing local one, with its message
+  and its traceback, and skips the test, continues it or stops the run; see
+  [Failures of remote keywords](/robotframework-jsonrpcremote/guides/failures/).
 - Starts a session per test, per suite or for the whole run; see
   [Sessions and rpc_scope](/robotframework-jsonrpcremote/guides/sessions/).
 - Detects lost connections, waits for a server that is not reachable yet, and
@@ -67,8 +70,6 @@ welcome as
   apart from each other.
 - **Keyword timeouts and cancellation**, including the test and keyword
   timeouts of Robot Framework.
-- **Failure modes:** continuable, fatal and skipped failures of remote keywords,
-  with the type and the traceback of the error.
 - **Access control** for the server and protection of the values that travel
   as pickles.
 - **Several libraries over one connection**, and progress messages while a

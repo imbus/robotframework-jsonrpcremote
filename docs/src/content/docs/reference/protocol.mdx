@@ -54,17 +54,18 @@ Content-Length: 60\r\n
 
 ## Methods
 
-| Constant                   | Method                   | Type         | Params                  | Result                  |
-| -------------------------- | ------------------------ | ------------ | ----------------------- | ----------------------- |
-| `INITIALIZE_REQUEST`       | `robot/initialize`       | request      | `InitializeParams`      | `InitializeResult`      |
-| `INITIALIZED_NOTIFICATION` | `robot/initialized`      | notification | `InitializedParams`     |                         |
-| `IMPORT_LIBRARY_REQUEST`   | `robot/import_library`   | request      | `ImportLibraryParams`   | `ImportLibraryResult`   |
-| `RUN_KEYWORD_REQUEST`      | `robot/run_keyword`      | request      | `RunKeywordParams`      | `RunKeywordResult`      |
-| `LOG_NOTIFICATION`         | `robot/log`              | notification | `LogParams`             |                         |
-| `TRACE_NOTIFICATION`       | `robot/trace`            | notification | `LogParams`             |                         |
-| `FINALIZE_LIBRARY_REQUEST` | `robot/finalize_library` | request      | `FinalizeLibraryParams` | `FinalizeLibraryResult` |
-| `SHUTDOWN_REQUEST`         | `robot/shutdown`         | request      | `ShutdownParams`        | `ShutdownResult`        |
-| `EXIT_NOTIFICATION`        | `robot/exit`             | notification | `ExitParams`            |                         |
+| Constant                     | Method                   | Type         | Params                  | Result                  |
+| ---------------------------- | ------------------------ | ------------ | ----------------------- | ----------------------- |
+| `INITIALIZE_REQUEST`         | `robot/initialize`       | request      | `InitializeParams`      | `InitializeResult`      |
+| `INITIALIZED_NOTIFICATION`   | `robot/initialized`      | notification | `InitializedParams`     |                         |
+| `IMPORT_LIBRARY_REQUEST`     | `robot/import_library`   | request      | `ImportLibraryParams`   | `ImportLibraryResult`   |
+| `RUN_KEYWORD_REQUEST`        | `robot/run_keyword`      | request      | `RunKeywordParams`      | `RunKeywordResult`      |
+| `SET_LOG_LEVEL_NOTIFICATION` | `robot/set_log_level`    | notification | `SetLogLevelParams`     |                         |
+| `LOG_NOTIFICATION`           | `robot/log`              | notification | `LogParams`             |                         |
+| `TRACE_NOTIFICATION`         | `robot/trace`            | notification | `LogParams`             |                         |
+| `FINALIZE_LIBRARY_REQUEST`   | `robot/finalize_library` | request      | `FinalizeLibraryParams` | `FinalizeLibraryResult` |
+| `SHUTDOWN_REQUEST`           | `robot/shutdown`         | request      | `ShutdownParams`        | `ShutdownResult`        |
+| `EXIT_NOTIFICATION`          | `robot/exit`             | notification | `ExitParams`            |                         |
 
 The server sends `robot/log`, and the client every other message; the
 reference implementation does not use `robot/trace`.
@@ -74,16 +75,18 @@ reference implementation does not use `robot/trace`.
 A [session](/robotframework-jsonrpcremote/guides/sessions/) is one connection,
 on which the client imports one library:
 
-1. The client connects and sends `robot/initialize`. The server answers with
-   its capabilities and information about itself.
+1. The client connects and sends `robot/initialize` with its log level. The
+   server answers with its capabilities and information about itself.
 2. The client sends `robot/initialized`. The reference server refuses
    `robot/import_library` and `robot/run_keyword` before it has received both.
 3. The client sends `robot/import_library`. The server imports the library and
    answers with a token for this instance and the library definition, from
    which Robot Framework learns the keywords.
-4. For each keyword call, the client sends `robot/run_keyword` with the token.
-   While the keyword runs, the server sends its log messages as `robot/log`,
-   which the client logs under the keyword; then it sends the response.
+4. For each keyword call, the client sends `robot/run_keyword` with the token;
+   if its log level has changed since it last reported it, it sends
+   `robot/set_log_level` first. While the keyword runs, the server sends its log
+   messages from that level on as `robot/log`, which the client logs under the
+   keyword; then it sends the response.
 5. When the session ends, the client sends `robot/finalize_library` with the
    token, then `robot/shutdown`, then `robot/exit` if the server announced
    `support_exit`, and closes the connection.
@@ -97,6 +100,10 @@ on which the client imports one library:
   - `client_info`: `ClientInfo` (optional): name and version of the client.
   - `initialization_options`: any value (optional): options for the server.
   - `trace`: string (optional): the initial trace setting, such as `"off"`.
+  - `log_level`: string (optional): the log level of the client, one of Robot
+    Framework's levels `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `NONE`. The
+    reference server sends messages from this level on, and from `INFO` on
+    without it.
 - **`InitializedParams`**: empty.
 - **`InitializeResult`**
   - `capabilities`: `ServerCapabilities` (optional): what the server supports.
@@ -177,15 +184,23 @@ on which the client imports one library:
   - `result`: any value (optional): the return value of the keyword.
   - `error`: `RunKeywordError` (optional): set if the keyword failed.
 - **`RunKeywordError`**
-  - `message`: string.
-  - `type`: string (optional): the name of the exception, such as
-    `"AssertionError"`.
-  - `traceback`: string (optional).
-  - `mode`: `RunKeywordErrorMode` (optional), a string: `CONTINUABLE`,
-    `FATAL` or `SKIP`.
+  - `message`: string: the client fails the keyword with exactly this message.
+    The reference server sends the message that Robot Framework shows for the
+    same error of a local keyword, such as `ValueError: bad value`.
+  - `type`: string (optional): the name of the exception, such as `"ValueError"`.
+    The client does not read it.
+  - `traceback`: string (optional): the client logs it at the level `DEBUG`
+    under the keyword, with `[remote] ` in front.
+  - `mode`: `RunKeywordErrorMode` (optional), a string. Without it, the failure
+    is a normal one.
+    - `SKIP`: the client skips the test with the message.
+    - `CONTINUABLE`: the test continues and fails at its end.
+    - `FATAL`: the client stops the run. The reference server keeps running.
 
-  The reference server sets `message`, and the client fails the keyword with
-  the error.
+  The reference server sets all fields for a failure of a keyword, the `mode`
+  if there is one, and only `message` for a call that it does not run, such as
+  while it stops. [Failures of remote keywords](/robotframework-jsonrpcremote/guides/failures/)
+  shows how the failures appear in Robot Framework.
 
 ### Log messages
 
@@ -193,11 +208,19 @@ on which the client imports one library:
   - `message`: string.
   - `level`: `LogLevel` (optional), a string: `TRACE`, `DEBUG`, `INFO`,
     `WARN`, `ERROR`, `CONSOLE` or `HTML`. Without it, the client logs at `INFO`.
+    At `TRACE` and `DEBUG`, it puts `[remote] ` in front of the message, to tell
+    it from its own messages at these levels.
   - `html`: boolean (optional): whether the message is HTML.
   - `console`: boolean (optional): whether the client also writes the message
     to the console.
   - `timestamp`: string (optional): when the message was logged. The client
     does not read it.
+- **`SetLogLevelParams`**
+  - `log_level`: string: the new log level of the client, as in
+    `InitializeParams`.
+
+  A server may send all its messages and ignore the log level: the client logs
+  only the messages from its log level on.
 
 ### End of a session
 

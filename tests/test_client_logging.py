@@ -1,4 +1,5 @@
-"""Unit tests for how the JsonRpcRemote client hands log messages from the server to Robot Framework."""
+"""Unit tests for how the JsonRpcRemote client hands log messages from the server to Robot Framework
+and tells the server its log level."""
 
 import asyncio
 import threading
@@ -8,8 +9,16 @@ from typing import Any
 import pytest
 from fake_server import FakeServer, LogFirst
 
-from JsonRpcRemote import JsonRpcRemote, SessionScope, _LogSink, _write_log
-from robot_jsonrpcremote_protocol import FINALIZE_LIBRARY_REQUEST, IMPORT_LIBRARY_REQUEST
+from JsonRpcRemote import JsonRpcRemote, SessionScope, _ClientEndpoint, _LogSink, _robot_log_level, _write_log
+from robot_jsonrpcremote_protocol import (
+    FINALIZE_LIBRARY_REQUEST,
+    IMPORT_LIBRARY_REQUEST,
+    INITIALIZE_REQUEST,
+    RUN_KEYWORD_REQUEST,
+    SET_LOG_LEVEL_NOTIFICATION,
+    LogLevel,
+    LogParams,
+)
 
 
 class _RecordingLogger:
@@ -236,5 +245,116 @@ def test_messages_from_a_reimport_are_written_during_the_keyword_call(server: Fa
         assert result == "echo: hello"
         assert written.messages == [("imported again", threading.current_thread().name)]
         assert written.during_call == [True]
+    finally:
+        remote._stop_session()
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [
+        (LogLevel.TRACE, "[remote] from the server"),
+        (LogLevel.DEBUG, "[remote] from the server"),
+        (LogLevel.INFO, "from the server"),
+        (LogLevel.WARN, "from the server"),
+        (LogLevel.ERROR, "from the server"),
+        (None, "from the server"),
+    ],
+)
+async def test_only_debug_and_trace_messages_from_the_server_are_marked(
+    written: _Written, level: LogLevel | None, expected: str
+) -> None:
+    sink = _LogSink()
+
+    await _ClientEndpoint(sink)._log_notification(LogParams(message="from the server", level=level))
+    sink.drain()
+
+    assert [message for message, _ in written.messages] == [expected]
+
+
+class _RobotLogLevel:
+    """Replaces `_robot_log_level`: the log level of a Robot Framework run."""
+
+    def __init__(self, level: str) -> None:
+        self.level = level
+
+    def __call__(self) -> str:
+        return self.level
+
+
+@pytest.fixture
+def robot_log_level(monkeypatch: pytest.MonkeyPatch) -> _RobotLogLevel:
+    level = _RobotLogLevel("DEBUG")
+    monkeypatch.setattr("JsonRpcRemote._robot_log_level", level)
+    return level
+
+
+def _reported(server: FakeServer) -> list[tuple[str, str | None]]:
+    """The requests and notifications that report a log level, each with the level it reports."""
+    return [
+        (method, params.get("log_level"))
+        for method, params in zip(server.requests, server.params, strict=True)
+        if method in (INITIALIZE_REQUEST, SET_LOG_LEVEL_NOTIFICATION)
+    ]
+
+
+def test_log_level_is_reported_when_a_session_starts(server: FakeServer, robot_log_level: _RobotLogLevel) -> None:
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        assert _reported(server) == [(INITIALIZE_REQUEST, "DEBUG")]
+    finally:
+        remote._stop_session()
+
+
+def test_changed_log_level_is_reported_before_the_next_keyword_call(
+    server: FakeServer, robot_log_level: _RobotLogLevel
+) -> None:
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        robot_log_level.level = "TRACE"
+
+        asyncio.run(remote.run_keyword("Echo", ["hello"], {}))
+
+        assert _reported(server) == [(INITIALIZE_REQUEST, "DEBUG"), (SET_LOG_LEVEL_NOTIFICATION, "TRACE")]
+        assert server.requests[-2:] == [SET_LOG_LEVEL_NOTIFICATION, RUN_KEYWORD_REQUEST]
+    finally:
+        remote._stop_session()
+
+
+def test_log_level_is_reported_only_when_it_changes(server: FakeServer, robot_log_level: _RobotLogLevel) -> None:
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        asyncio.run(remote.run_keyword("Echo", ["first"], {}))
+        robot_log_level.level = "TRACE"
+        asyncio.run(remote.run_keyword("Echo", ["second"], {}))
+        asyncio.run(remote.run_keyword("Echo", ["third"], {}))
+
+        assert _reported(server) == [(INITIALIZE_REQUEST, "DEBUG"), (SET_LOG_LEVEL_NOTIFICATION, "TRACE")]
+    finally:
+        remote._stop_session()
+
+
+def test_new_session_reports_the_current_log_level_when_it_starts(
+    server: FakeServer, robot_log_level: _RobotLogLevel
+) -> None:
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        remote._stop_session()  # the end of a suite, with its session
+        robot_log_level.level = "TRACE"
+
+        asyncio.run(remote.run_keyword("Echo", ["hello"], {}))
+
+        assert _reported(server) == [(INITIALIZE_REQUEST, "DEBUG"), (INITIALIZE_REQUEST, "TRACE")]
+    finally:
+        remote._stop_session()
+
+
+def test_outside_a_robot_framework_run_no_log_level_is_reported(server: FakeServer) -> None:
+    assert _robot_log_level() is None
+
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        asyncio.run(remote.run_keyword("Echo", ["hello"], {}))
+
+        assert _reported(server) == [(INITIALIZE_REQUEST, None)]
     finally:
         remote._stop_session()

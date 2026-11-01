@@ -29,6 +29,7 @@ export default defineConfig({
 					items: [
 						'guides/tcp-and-stdio',
 						'guides/sessions',
+						'guides/failures',
 						'guides/lost-connections',
 						'guides/container',
 						'guides/several-libraries',

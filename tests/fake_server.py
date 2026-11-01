@@ -27,6 +27,7 @@ from robot_jsonrpcremote_protocol import (
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
+    SET_LOG_LEVEL_NOTIFICATION,
     SHUTDOWN_REQUEST,
     ArgumentDefinition,
     ArgumentKind,
@@ -96,8 +97,9 @@ class FakeServer:
         self.port = 0
         self.keywords = list(keywords)
         self.connections: list[FakeConnection] = []
+        # The method of each request and each ``robot/set_log_level`` notification, in order.
         self.requests: list[str] = []
-        # The params of each request in ``requests``.
+        # The params of each entry in ``requests``.
         self.params: list[Any] = []
         self._scripts: defaultdict[str, deque[Any]] = defaultdict(deque)
         self._server: asyncio.AbstractServer | None = None
@@ -188,6 +190,7 @@ class FakeServer:
         for method in _REQUESTS:
             peer.register_request_handler(method, self._handler(method, peer))
         peer.register_notification_handler(INITIALIZED_NOTIFICATION, self._ignore)
+        peer.register_notification_handler(SET_LOG_LEVEL_NOTIFICATION, self._record_log_level)
         peer.register_notification_handler(EXIT_NOTIFICATION, self._exit_handler(peer))
         self._peers.add(peer)
         try:
@@ -242,6 +245,10 @@ class FakeServer:
 
     async def _ignore(self, params: Any) -> None:
         pass
+
+    async def _record_log_level(self, params: Any) -> None:
+        self.requests.append(SET_LOG_LEVEL_NOTIFICATION)
+        self.params.append(params)
 
     def _exit_handler(self, peer: JsonRpcPeer) -> Callable[[Any], Coroutine[Any, Any, None]]:
         async def exit_connection(params: Any) -> None:
