@@ -797,6 +797,18 @@ async def _bad_value(params: Any) -> Any:
     raise ValueError("bad value")
 
 
+async def _gone_with_data_that_is_no_json(params: Any) -> Any:
+    raise JsonRpcResponseError(-32001, "gone", object())
+
+
+async def _gone_with_a_long_message(params: Any) -> Any:
+    raise JsonRpcResponseError(-32001, "gone" * 100)
+
+
+async def _bad_value_with_a_long_message(params: Any) -> Any:
+    raise ValueError("bad value" * 100)
+
+
 async def _total(params: Sum) -> int:
     return params.total
 
@@ -826,6 +838,20 @@ async def test_handler_answers_with_the_data_of_its_error(peer_pair: tuple[JsonR
     error = await _failure_of_handler(client, server, _gone_with_details)
 
     assert error.data == "details"
+
+
+@pytest.mark.parametrize(
+    "handler", [_gone_with_data_that_is_no_json, _gone_with_a_long_message, _bad_value_with_a_long_message]
+)
+async def test_request_gets_an_answer_when_its_error_response_cannot_be_sent(
+    peer_pair: tuple[JsonRpcPeer, JsonRpcPeer], handler: Any
+) -> None:
+    client, server = peer_pair
+    server.max_message_size = 200
+
+    error = await _failure_of_handler(client, server, handler)
+
+    assert error.code == -32603
 
 
 async def test_unexpected_exception_of_a_handler_has_no_traceback_by_default(

@@ -123,6 +123,7 @@ except JsonRpcResponseError as e:
 
 *   **Other exceptions:** any other exception in a request handler results in an `Internal Error` (-32603) with the exception message. The peer logs it at `ERROR` level with its traceback and the name of the method, on the logger `jsonrpcpeer.peer`. It does the same for an exception in a notification handler.
 *   **Tracebacks:** error responses carry no traceback, because it would show your code and paths to the remote side. With `JsonRpcPeer(reader, writer, send_tracebacks=True)`, the peer puts it into `data` when it builds a response from an exception: another exception in a handler, params that cannot be converted, or a message that cannot be parsed. An error that a handler raises stays as it is.
+*   **Errors that cannot be sent:** the `data` of an error must be writable as JSON. If an error response cannot be sent, the request gets an `Internal Error` (-32603) with the reason instead.
 
 Requests you send fail with `JsonRpcConnectionClosedError`, a subclass of `ConnectionError`, once the connection closes, whether the remote side closed it, reading from it failed, or the peer was stopped. This applies to requests still waiting for a response and to requests sent afterwards, which fail immediately without being written. If reading from the connection failed, that error is attached as the exception's `__cause__`:
 

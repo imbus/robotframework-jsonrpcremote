@@ -476,7 +476,7 @@ class JsonRpcPeer:
             else:
                 response = await self.process_single_message(json_element)
                 if response is not None:
-                    if isinstance(response, JsonRpcResponse):
+                    if isinstance(response, (JsonRpcResponse, JsonRpcErrorResponse)):
                         response_id = response.id
                     await self._send_message(response)
 

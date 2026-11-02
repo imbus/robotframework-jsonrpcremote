@@ -35,7 +35,7 @@ When the remote side answers a request with an error, the peer SHALL fail the re
 
 ### Requirement: A handler answers with an error of its choice by raising it
 
-When a request handler raises `JsonRpcResponseError`, the peer SHALL answer the request with the code, message and data of that error. It SHALL NOT treat this as an unexpected exception.
+When a request handler raises `JsonRpcResponseError`, the peer SHALL answer the request with the code, message and data of that error. It SHALL NOT treat this as an unexpected exception. If an error response cannot be sent, the peer SHALL answer the request with the code `-32603` instead, so that it does not wait forever.
 
 #### Scenario: Handler raises an error with a code
 
@@ -47,6 +47,11 @@ When a request handler raises `JsonRpcResponseError`, the peer SHALL answer the 
 
 - **WHEN** a request handler raises a `JsonRpcResponseError` with the data `details`
 - **THEN** the response carries the data `details`
+
+#### Scenario: Error response that cannot be sent
+
+- **WHEN** a request handler raises a `JsonRpcResponseError` whose data cannot be written as JSON
+- **THEN** the response carries the id of the request and the code `-32603`
 
 ### Requirement: Error responses carry a traceback only if the peer is configured to send it
 
