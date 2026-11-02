@@ -1,4 +1,4 @@
-"""Unit tests for the server endpoint's handlers: the lifecycle, failed keywords and the client's log level.
+"""Unit tests for the server endpoint's handlers: the lifecycle, errors, failed keywords and the client's log level.
 
 A stub stands in for ``RobotRemoteContext`` so the handlers can be exercised without a
 running Robot suite.
@@ -6,10 +6,12 @@ running Robot suite.
 
 import asyncio
 import logging
+from collections.abc import Awaitable
 from typing import Any, cast
 
 import pytest
 
+from jsonrpcpeer import JsonRpcErrorCode, JsonRpcResponseError
 from robot_jsonrpcremote_protocol import (
     ExitParams,
     FinalizeLibraryParams,
@@ -17,6 +19,7 @@ from robot_jsonrpcremote_protocol import (
     InitializedParams,
     InitializeParams,
     LibraryDefinition,
+    RobotJsonRpcErrorCode,
     RunKeywordError,
     RunKeywordErrorMode,
     RunKeywordParams,
@@ -24,7 +27,7 @@ from robot_jsonrpcremote_protocol import (
     ShutdownParams,
 )
 from robot_jsonrpcremote_server._endpoint import RobotServerEndpoint
-from robot_jsonrpcremote_server._runner import KeywordFailedError, RobotRemoteContext
+from robot_jsonrpcremote_server._runner import KeywordFailedError, RobotRemoteContext, _shutting_down
 
 
 class _StubContext:
@@ -40,8 +43,8 @@ class _StubContext:
         self.finalized.append(token)
 
 
-async def _initialized_endpoint(context: _StubContext) -> RobotServerEndpoint:
-    endpoint = RobotServerEndpoint(remote_context=cast(RobotRemoteContext, context))
+async def _initialized_endpoint(context: _StubContext, libraries: list[str] | None = None) -> RobotServerEndpoint:
+    endpoint = RobotServerEndpoint(remote_context=cast(RobotRemoteContext, context), libraries=libraries)
     await endpoint.initialize(InitializeParams())
     await endpoint.initialized(InitializedParams())
     return endpoint
@@ -172,16 +175,77 @@ async def test_failed_keyword_is_answered_with_its_error_and_logged_at_debug(cap
     ]
 
 
-async def test_other_exception_is_answered_with_its_message_and_logged_as_an_error(
-    caplog: pytest.LogCaptureFixture,
+async def test_other_exception_leaves_run_keyword() -> None:
+    endpoint = await _initialized_endpoint(_FailingContext(ValueError("bad value")))
+
+    with pytest.raises(ValueError, match=r"^bad value$"):
+        await endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword"))
+
+
+async def test_error_of_a_stopping_server_leaves_run_keyword() -> None:
+    error = _shutting_down()
+    endpoint = await _initialized_endpoint(_FailingContext(error))
+
+    assert await _error_of(endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword"))) is error
+    assert (error.code, error.message) == (JsonRpcErrorCode.INTERNAL_ERROR, "server is shutting down")
+
+
+async def _error_of(call: Awaitable[Any]) -> JsonRpcResponseError:
+    with pytest.raises(JsonRpcResponseError) as exc_info:
+        await call
+    return exc_info.value
+
+
+_INCOMPLETE_HANDSHAKES = [(False, False), (True, False), (False, True)]
+
+
+async def _endpoint_after_handshake(initialize: bool, initialized: bool) -> RobotServerEndpoint:
+    endpoint = RobotServerEndpoint(remote_context=cast(RobotRemoteContext, _StubContext()))
+    if initialize:
+        await endpoint.initialize(InitializeParams())
+    if initialized:
+        await endpoint.initialized(InitializedParams())
+    return endpoint
+
+
+@pytest.mark.parametrize(("initialize", "initialized"), _INCOMPLETE_HANDSHAKES)
+async def test_keyword_call_before_the_end_of_the_handshake_is_answered_with_not_initialized(
+    initialize: bool, initialized: bool
 ) -> None:
-    endpoint = await _initialized_endpoint(_FailingContext(RuntimeError("server is shutting down")))
+    endpoint = await _endpoint_after_handshake(initialize, initialized)
 
-    with caplog.at_level(logging.DEBUG, logger="robot_jsonrpcremote_server.endpoint"):
-        result = await endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword"))
+    error = await _error_of(endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword")))
 
-    assert result.error == RunKeywordError(message="server is shutting down")
-    assert [record.levelno for record in caplog.records if "Keyword" in record.getMessage()] == [logging.ERROR]
+    assert error.code == RobotJsonRpcErrorCode.NOT_INITIALIZED
+
+
+@pytest.mark.parametrize(("initialize", "initialized"), _INCOMPLETE_HANDSHAKES)
+async def test_library_import_before_the_end_of_the_handshake_is_answered_with_not_initialized(
+    initialize: bool, initialized: bool
+) -> None:
+    endpoint = await _endpoint_after_handshake(initialize, initialized)
+
+    error = await _error_of(endpoint.import_library(ImportLibraryParams(name="Lib")))
+
+    assert error.code == RobotJsonRpcErrorCode.NOT_INITIALIZED
+
+
+async def test_import_of_a_library_that_the_server_does_not_serve_is_answered_with_invalid_params() -> None:
+    endpoint = await _initialized_endpoint(_StubContext(), libraries=["MyLibrary"])
+
+    error = await _error_of(endpoint.import_library(ImportLibraryParams(name="OtherLibrary")))
+
+    assert error.code == JsonRpcErrorCode.INVALID_PARAMS
+    assert error.message == "Library 'OtherLibrary' is not available."
+
+
+async def test_import_without_a_name_and_without_a_default_library_is_answered_with_invalid_params() -> None:
+    endpoint = await _initialized_endpoint(_StubContext())
+
+    error = await _error_of(endpoint.import_library(ImportLibraryParams(name="")))
+
+    assert error.code == JsonRpcErrorCode.INVALID_PARAMS
+    assert "name cannot be empty" in error.message
 
 
 async def test_log_level_is_info_if_the_client_reports_none() -> None:

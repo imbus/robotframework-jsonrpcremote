@@ -1,11 +1,12 @@
 ---
 title: Failures of remote keywords
-description: How a failing remote keyword appears in Robot Framework, with its message, its traceback, and skipped, continuable and fatal failures.
+description: How a failing remote keyword appears in Robot Framework, with its message, its traceback, and skipped, continuable and fatal failures, and how other errors of the server appear.
 ---
 
 import { Code } from '@astrojs/starlight/components';
 import library from '../../../../examples/failures/FailingLibrary.py?raw';
 import suite from '../../../../examples/failures/failures.robot?raw';
+import refusedImport from '../../../../examples/failures/refused_import.robot?raw';
 
 A remote keyword fails like a keyword of a library that runs locally: Robot
 Framework shows the same message, logs the same traceback, and skips the test,
@@ -74,3 +75,46 @@ and run the suite, as in
 in
 [`docs/examples/failures`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/failures)
 in the repository.
+
+## Errors that are not failures of a keyword
+
+Some calls fail although no keyword has failed. The library import or the
+keyword call then fails with the message of the server, as a normal failure:
+
+| What happens                                                             | The message |
+| ------------------------------------------------------------------------ | ----------- |
+| A suite imports a library that the server does not serve                 | `Library 'OtherLibrary' is not available.` |
+| A keyword call names a keyword that the library no longer has, for example after an update of the server | `Keyword 'Old Keyword' not found in library 'MyLibrary'.` |
+| A keyword call arrives while the server is stopping                      | `server is shutting down` |
+| A library fails to import on the server                                  | What Robot Framework says about a local library that fails to import |
+
+This suite imports a library that the server from above does not serve:
+
+<Code code={refusedImport} lang="text" title="refused_import.robot" />
+
+As with a local library, the failed import is an error of the run, and the
+suite goes on without the keywords of the library:
+
+```text
+[ ERROR ] Error in file '/work/refused_import.robot' on line 2: Initializing library 'JsonRpcRemote' with arguments [ tcp://127.0.0.1:8271 | OtherLibrary ] failed: Library 'OtherLibrary' is not available.
+```
+
+If a library fails to import on the server, for example because a module is
+missing there, the message names the module and holds the traceback of the
+library's code and the module search path of the server:
+
+```text
+Importing library 'MyLibrary' failed: ModuleNotFoundError: No module named 'a_missing_module'
+Traceback (most recent call last):
+  File "/srv/libraries/MyLibrary.py", line 1, in <module>
+    import a_missing_module
+PYTHONPATH:
+  /srv/libraries
+  /usr/lib/python3.12
+```
+
+The tracebacks of the server's own code stay in the server's log. To see them on
+the client while you look for a problem, start the server with
+[`--send-tracebacks`](/robotframework-jsonrpcremote/reference/server/#errors-and-tracebacks):
+at the log level `DEBUG`, such a traceback then appears in `log.html` under the
+keyword, marked with `[remote]`, and at a library import it follows the message.

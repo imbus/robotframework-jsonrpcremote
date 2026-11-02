@@ -1,7 +1,7 @@
 import asyncio
 import itertools
 
-from jsonrpcpeer import JsonRpcPeer, rpc_notification, rpc_request
+from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError, rpc_notification, rpc_request
 from robot_jsonrpcremote_protocol import (
     EXIT_NOTIFICATION,
     FINALIZE_LIBRARY_REQUEST,
@@ -25,7 +25,7 @@ from robot_jsonrpcremote_protocol import (
     LibraryDefinition,
     LogLevel,
     LogParams,
-    RunKeywordError,
+    RobotJsonRpcErrorCode,
     RunKeywordParams,
     RunKeywordResult,
     ServerCapabilities,
@@ -75,7 +75,10 @@ class SimpleRobotServerEndpoint:
     @rpc_request(IMPORT_LIBRARY_REQUEST)
     async def import_library(self, params: ImportLibraryParams) -> ImportLibraryResult:
         if not self.initialize_received or not self.initialized_received:
-            raise Exception("Initialize and Initialized must be received before ImportLibrary.")
+            raise JsonRpcResponseError(
+                RobotJsonRpcErrorCode.NOT_INITIALIZED,
+                "Initialize and Initialized must be received before ImportLibrary.",
+            )
 
         print(f"Importing library: {params.name}")
 
@@ -99,7 +102,10 @@ class SimpleRobotServerEndpoint:
     @rpc_request(RUN_KEYWORD_REQUEST)
     async def run_keyword(self, params: RunKeywordParams) -> RunKeywordResult:
         if not self.initialize_received or not self.initialized_received:
-            raise Exception("Initialize and Initialized must be received before RunKeyword.")
+            raise JsonRpcResponseError(
+                RobotJsonRpcErrorCode.NOT_INITIALIZED,
+                "Initialize and Initialized must be received before RunKeyword.",
+            )
 
         print(f"Running keyword: {params.name} with args: {params.args} and kwargs: {params.kwargs}")
 
@@ -113,7 +119,10 @@ class SimpleRobotServerEndpoint:
                 await self.log(f"Echo {i} request received with params: {params}", level=LogLevel.WARN, html=True)
             return RunKeywordResult(result=result)
 
-        return RunKeywordResult(error=RunKeywordError(message=f"Keyword '{params.name}' not found."))
+        raise JsonRpcResponseError(
+            RobotJsonRpcErrorCode.KEYWORD_NOT_FOUND,
+            f"Keyword '{params.name}' not found in library 'SimpleRobotLibrary'.",
+        )
 
     @rpc_request(FINALIZE_LIBRARY_REQUEST)
     async def finalize_library(self, params: FinalizeLibraryParams) -> FinalizeLibraryResult:

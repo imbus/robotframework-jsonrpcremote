@@ -17,6 +17,7 @@ from robot.errors import ExecutionFailed
 from robot.output import LOGGER
 from robot.utils import NOT_SET, ErrorDetails
 
+from jsonrpcpeer import JsonRpcErrorCode, JsonRpcResponseError
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from robot_jsonrpcremote_protocol import (
     AnyType,
@@ -24,6 +25,7 @@ from robot_jsonrpcremote_protocol import (
     ArgumentKind,
     KeywordDefinition,
     LibraryDefinition,
+    RobotJsonRpcErrorCode,
     RunKeywordError,
     RunKeywordErrorMode,
 )
@@ -31,9 +33,9 @@ from robot_jsonrpcremote_protocol import (
 _T = TypeVar("_T")
 
 
-def _shutting_down() -> RuntimeError:
+def _shutting_down() -> JsonRpcResponseError:
     """The error for a command that the stopping server no longer runs."""
-    return RuntimeError("server is shutting down")
+    return JsonRpcResponseError(JsonRpcErrorCode.INTERNAL_ERROR, "server is shutting down")
 
 
 class KeywordFailedError(Exception):
@@ -155,11 +157,13 @@ def _robot_run_keyword(
     if lib is None:
         raise RuntimeError(f"Library with token '{library_token}' is not imported.")
 
-    kws: "running.LibraryKeyword" = lib.find_keywords(name)
-    if kws is None:
-        raise RuntimeError(f"Keyword '{name}' not found in library '{lib.name}'.")
+    kws: "list[running.LibraryKeyword]" = lib.find_keywords(name)
+    if not kws:
+        raise JsonRpcResponseError(
+            RobotJsonRpcErrorCode.KEYWORD_NOT_FOUND, f"Keyword '{name}' not found in library '{lib.real_name}'."
+        )
     if len(kws) > 1:
-        raise RuntimeError(f"Multiple keywords named '{name}' found in library '{lib.name}'.")
+        raise RuntimeError(f"Multiple keywords named '{name}' found in library '{lib.real_name}'.")
 
     kw: "running.LibraryKeyword" = kws[0]
 

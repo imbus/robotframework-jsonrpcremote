@@ -16,6 +16,7 @@ from robot.errors import ExecutionFailed, HandlerExecutionFailed
 from robot.result import Message
 from robot.utils import ErrorDetails
 
+from jsonrpcpeer import JsonRpcResponseError
 from robot_jsonrpcremote_protocol import RunKeywordError, RunKeywordErrorMode
 from robot_jsonrpcremote_server import _runner
 from robot_jsonrpcremote_server._runner import RobotRemoteContext, _run_keyword_error
@@ -83,7 +84,7 @@ async def test_stop_completes_the_running_command_and_fails_the_queued_one(
     robot.release.set()
 
     assert await asyncio.wait_for(running, 5) == "result of Blocking"
-    with pytest.raises(RuntimeError, match=r"^server is shutting down$"):
+    with pytest.raises(JsonRpcResponseError, match=r"^RPC Error -32603: server is shutting down$"):
         await asyncio.wait_for(queued, 5)
     assert robot.calls == ["Blocking"]
 
@@ -91,11 +92,11 @@ async def test_stop_completes_the_running_command_and_fails_the_queued_one(
 async def test_submission_after_stop_fails_at_once(context: RobotRemoteContext, robot: _FakeRobot) -> None:
     context.stop()
 
-    with pytest.raises(RuntimeError, match=r"^server is shutting down$"):
+    with pytest.raises(JsonRpcResponseError, match=r"^RPC Error -32603: server is shutting down$"):
         await asyncio.wait_for(context.run_keyword("token", "Late", [], {}), 1)
-    with pytest.raises(RuntimeError, match=r"^server is shutting down$"):
+    with pytest.raises(JsonRpcResponseError, match=r"^RPC Error -32603: server is shutting down$"):
         await asyncio.wait_for(context.import_library("Lib", [], "token"), 1)
-    with pytest.raises(RuntimeError, match=r"^server is shutting down$"):
+    with pytest.raises(JsonRpcResponseError, match=r"^RPC Error -32603: server is shutting down$"):
         await asyncio.wait_for(context.finalize_library("token"), 1)
     assert robot.calls == []
 

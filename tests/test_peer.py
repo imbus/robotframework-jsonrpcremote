@@ -1,6 +1,7 @@
 import asyncio
 import gc
 import json
+import logging
 import warnings
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -11,11 +12,12 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 
-from jsonrpcpeer import JsonRpcConnectionClosedError, JsonRpcPeer, rpc_request
+import jsonrpcpeer.peer
+from jsonrpcpeer import JsonRpcConnectionClosedError, JsonRpcErrorCode, JsonRpcPeer, JsonRpcResponseError, rpc_request
 from jsonrpcpeer.peer import (
-    JsonRpcErrorCode,
     JsonRpcErrorResponse,
     JsonRpcMethodAlreadyRegisteredError,
+    JsonRpcNotification,
     JsonRpcRequest,
 )
 
@@ -25,9 +27,9 @@ class Sum:
     total: int
 
 
-def make_peer() -> JsonRpcPeer:
+def make_peer(**options: Any) -> JsonRpcPeer:
     """A peer with a real reader and a dummy writer, for tests that never send."""
-    return JsonRpcPeer(asyncio.StreamReader(), MagicMock())
+    return JsonRpcPeer(asyncio.StreamReader(), MagicMock(), **options)
 
 
 @pytest_asyncio.fixture
@@ -212,19 +214,6 @@ async def test_request_with_extra_field_error_code() -> None:
     assert len(sent) == 1
     assert isinstance(sent[0], JsonRpcErrorResponse)
     assert sent[0].error.code != JsonRpcErrorCode.INTERNAL_ERROR
-
-
-async def test_malformed_error_response_resolves_pending_request() -> None:
-    # A non-dict "error" payload must not raise and leave the caller hanging.
-    peer = make_peer()
-    pending: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
-    peer._pending_requests["1"] = pending
-
-    await peer._handle_response({"jsonrpc": "2.0", "id": "1", "error": "boom"}, "1")
-
-    assert pending.done()
-    with pytest.raises(Exception, match="boom"):
-        pending.result()
 
 
 async def test_param_conversion_failure_is_invalid_params() -> None:
@@ -728,3 +717,235 @@ def test_peer_can_be_created_without_a_running_event_loop() -> None:
         loop.run_until_complete(exchange())
     finally:
         loop.close()
+
+
+# --- error responses --------------------------------------------------------
+
+
+def _frame(message: Any) -> bytes:
+    body = json.dumps(message).encode()
+    return b"Content-Length: %d\r\n\r\n%s" % (len(body), body)
+
+
+async def _failure_of_waiting_request(response: dict[str, Any]) -> JsonRpcResponseError:
+    """The error of a request whose response is `response`, which needs no `jsonrpc` and no `id`."""
+    peer, reader, request = await _peer_with_waiting_request()
+    reader.feed_data(_frame({"jsonrpc": "2.0", "id": "1", **response}))
+    with pytest.raises(JsonRpcResponseError) as exc_info:
+        await asyncio.wait_for(request, 2)
+    await peer.stop()
+    return exc_info.value
+
+
+async def test_error_response_fails_the_request_with_its_fields() -> None:
+    error = await _failure_of_waiting_request(
+        {"error": {"code": -32601, "message": "no such method", "data": "details"}}
+    )
+
+    assert (error.code, error.message, error.data) == (-32601, "no such method", "details")
+    assert str(error) == "RPC Error -32601: no such method"
+
+
+async def test_error_response_is_no_connection_failure(peer_pair: tuple[JsonRpcPeer, JsonRpcPeer]) -> None:
+    client, server = peer_pair
+
+    async def echo(params: Any) -> Any:
+        return params
+
+    server.register_request_handler("echo", echo)
+
+    with pytest.raises(JsonRpcResponseError) as exc_info:
+        await asyncio.wait_for(client.send_request("missing"), 2)
+
+    assert not isinstance(exc_info.value, ConnectionError)
+    assert await asyncio.wait_for(client.send_request("echo", {"x": 1}), 2) == {"x": 1}
+
+
+def test_response_error_and_its_codes_are_part_of_the_package_api() -> None:
+    assert jsonrpcpeer.JsonRpcResponseError is jsonrpcpeer.peer.JsonRpcResponseError
+    assert jsonrpcpeer.JsonRpcErrorCode is jsonrpcpeer.peer.JsonRpcErrorCode
+
+
+async def test_error_that_is_not_an_object_fails_the_request_with_its_text() -> None:
+    error = await _failure_of_waiting_request({"error": "boom"})
+
+    assert (error.code, error.message, error.data) == (-32603, "boom", None)
+
+
+async def test_response_with_neither_a_result_nor_an_error_fails_the_request() -> None:
+    error = await _failure_of_waiting_request({})
+
+    assert error.code == -32603
+    assert str(error) == "RPC Error -32603: Invalid response format"
+
+
+def _errors_of_the_peer(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record for record in caplog.records if record.name == "jsonrpcpeer.peer" and record.levelno >= logging.ERROR
+    ]
+
+
+async def _gone(params: Any) -> Any:
+    raise JsonRpcResponseError(-32001, "gone")
+
+
+async def _gone_with_details(params: Any) -> Any:
+    raise JsonRpcResponseError(-32001, "gone", "details")
+
+
+async def _bad_value(params: Any) -> Any:
+    raise ValueError("bad value")
+
+
+async def _total(params: Sum) -> int:
+    return params.total
+
+
+async def _failure_of_handler(client: JsonRpcPeer, server: JsonRpcPeer, handler: Any) -> JsonRpcResponseError:
+    """The error that a client gets from a request answered by `handler`."""
+    server.register_request_handler("call", handler)
+    with pytest.raises(JsonRpcResponseError) as exc_info:
+        await asyncio.wait_for(client.send_request("call"), 2)
+    return exc_info.value
+
+
+async def test_handler_answers_with_the_code_and_the_message_of_its_error(
+    peer_pair: tuple[JsonRpcPeer, JsonRpcPeer], caplog: pytest.LogCaptureFixture
+) -> None:
+    client, server = peer_pair
+
+    error = await _failure_of_handler(client, server, _gone)
+
+    assert (error.code, error.message, error.data) == (-32001, "gone", None)
+    assert not _errors_of_the_peer(caplog)
+
+
+async def test_handler_answers_with_the_data_of_its_error(peer_pair: tuple[JsonRpcPeer, JsonRpcPeer]) -> None:
+    client, server = peer_pair
+
+    error = await _failure_of_handler(client, server, _gone_with_details)
+
+    assert error.data == "details"
+
+
+async def test_unexpected_exception_of_a_handler_has_no_traceback_by_default(
+    peer_pair: tuple[JsonRpcPeer, JsonRpcPeer],
+) -> None:
+    client, server = peer_pair
+
+    error = await _failure_of_handler(client, server, _bad_value)
+
+    assert (error.code, error.message, error.data) == (-32603, "bad value", None)
+
+
+async def test_params_that_cannot_be_converted_have_no_traceback_by_default_and_are_not_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    peer = make_peer()
+    peer.register_request_handler("add", _total)
+
+    response = await peer.process_request(JsonRpcRequest(method="add", id=1, params={"total": "not-an-int"}))
+
+    assert isinstance(response, JsonRpcErrorResponse)
+    assert response.error.code == JsonRpcErrorCode.INVALID_PARAMS
+    assert response.error.data is None
+    assert not _errors_of_the_peer(caplog)
+
+
+async def _response_to_a_message_that_cannot_be_parsed(peer: JsonRpcPeer) -> JsonRpcErrorResponse:
+    sent: list[Any] = []
+
+    async def capture(message: Any) -> None:
+        sent.append(message)
+
+    peer._send_message = capture  # type: ignore[method-assign]
+    await peer.handle_message("{not json")
+    assert isinstance(sent[0], JsonRpcErrorResponse)
+    return sent[0]
+
+
+async def test_message_that_cannot_be_parsed_has_no_traceback_by_default_and_is_not_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = await _response_to_a_message_that_cannot_be_parsed(make_peer())
+
+    assert response.error.code == JsonRpcErrorCode.PARSE_ERROR
+    assert response.error.data is None
+    assert not _errors_of_the_peer(caplog)
+
+
+async def test_peer_configured_to_send_tracebacks_sends_that_of_a_handler() -> None:
+    peer = make_peer(send_tracebacks=True)
+    peer.register_request_handler("call", _bad_value)
+
+    response = await peer.process_request(JsonRpcRequest(method="call", id=1))
+
+    assert isinstance(response, JsonRpcErrorResponse)
+    assert response.error.code == JsonRpcErrorCode.INTERNAL_ERROR
+    assert response.error.message == "bad value"
+    assert 'raise ValueError("bad value")' in str(response.error.data)
+
+
+async def test_peer_configured_to_send_tracebacks_sends_that_of_params_that_cannot_be_converted() -> None:
+    peer = make_peer(send_tracebacks=True)
+    peer.register_request_handler("add", _total)
+
+    response = await peer.process_request(JsonRpcRequest(method="add", id=1, params={"total": "not-an-int"}))
+
+    assert isinstance(response, JsonRpcErrorResponse)
+    assert "Traceback (most recent call last):" in str(response.error.data)
+
+
+async def test_peer_configured_to_send_tracebacks_sends_that_of_a_message_that_cannot_be_parsed() -> None:
+    response = await _response_to_a_message_that_cannot_be_parsed(make_peer(send_tracebacks=True))
+
+    assert "JSONDecodeError" in str(response.error.data)
+
+
+async def test_peer_configured_to_send_tracebacks_leaves_the_error_of_a_handler_as_it_is() -> None:
+    peer = make_peer(send_tracebacks=True)
+    peer.register_request_handler("call", _gone)
+
+    response = await peer.process_request(JsonRpcRequest(method="call", id=1))
+
+    assert isinstance(response, JsonRpcErrorResponse)
+    assert response.error.data is None
+
+
+@pytest.mark.parametrize("send_tracebacks", [False, True])
+async def test_unexpected_exception_of_a_request_handler_is_logged(
+    send_tracebacks: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    peer = make_peer(send_tracebacks=send_tracebacks)
+    peer.register_request_handler("add", _bad_value)
+
+    await peer.process_request(JsonRpcRequest(method="add", id=1))
+
+    errors = _errors_of_the_peer(caplog)
+    assert len(errors) == 1
+    assert "'add'" in errors[0].getMessage()
+    assert 'raise ValueError("bad value")' in caplog.text
+
+
+@pytest.mark.parametrize("send_tracebacks", [False, True])
+async def test_unexpected_exception_of_a_notification_handler_is_logged(
+    send_tracebacks: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    peer = make_peer(send_tracebacks=send_tracebacks)
+    peer.register_notification_handler("changed", _bad_value)
+
+    await peer.process_notification(JsonRpcNotification(method="changed"))
+
+    errors = _errors_of_the_peer(caplog)
+    assert len(errors) == 1
+    assert "'changed'" in errors[0].getMessage()
+    assert 'raise ValueError("bad value")' in caplog.text
+
+
+async def test_error_that_a_notification_handler_raises_is_not_logged(caplog: pytest.LogCaptureFixture) -> None:
+    peer = make_peer()
+    peer.register_notification_handler("changed", _gone)
+
+    await peer.process_notification(JsonRpcNotification(method="changed"))
+
+    assert not _errors_of_the_peer(caplog)

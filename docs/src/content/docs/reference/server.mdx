@@ -27,6 +27,7 @@ them, clients may import any library that the server can import; see
 | `--variablefile PATH`, `-V PATH` | none                                               | A variable file for the libraries, as `robot --variablefile` loads it. Repeatable. |
 | `--outputdir DIR`, `-d DIR`    | the current directory                                | The value of `${OUTPUT_DIR}` for the libraries. The server writes no output files. |
 | `-v`, `--verbose`              | off                                                  | Log debug messages, with timestamps. |
+| `--send-tracebacks`            | off                                                  | Send the traceback of an unexpected error to the client; see [Errors and tracebacks](#errors-and-tracebacks). |
 | `--version`                    |                                                      | Show the version and exit. |
 | `-h`, `--help`                 |                                                      | Show the options and exit. |
 
@@ -58,6 +59,23 @@ accepts clients, it logs
 `Server is up and running. Press Ctrl+C to stop.` If the server cannot start, for example because
 the port is already in use, it logs `Server failed to start: <reason>` and
 exits with exit code 1.
+
+## Errors and tracebacks
+
+If something unexpected goes wrong while the server handles a request, such as
+a call with an unknown library token or a library that fails to import, the
+server logs the error with its traceback at `ERROR` level and answers with the
+message of the error. A keyword that fails is a test result and is not logged
+as an error, and neither is a request that the server refuses, such as the
+import of a library that it does not serve. The
+[protocol page](/robotframework-jsonrpcremote/reference/protocol/#errors) lists
+the error codes.
+
+For debugging from the client's side, start the server with `--send-tracebacks`:
+the response to an unexpected error then also holds the traceback, and the
+client [shows it](/robotframework-jsonrpcremote/guides/failures/#errors-that-are-not-failures-of-a-keyword).
+The option shows the server's code and paths to every client, so keep it for a
+debugging session.
 
 ## Stopping the server
 

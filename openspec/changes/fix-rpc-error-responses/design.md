@@ -108,7 +108,7 @@ The option goes from `run()` through `run_server`, `run_server_async` and the tr
   - `tests/test_server_cli.py`: the parser takes `--send-tracebacks`.
 - **The real server over the protocol** (`tests/test_server_end_to_end.py`): every scenario of the `server` delta spec, including the module search path of a failed import, a return value that cannot be pickled and a wrong number of arguments. A second server runs with `--send-tracebacks`, and both write their stderr to a file, for what they log.
 - **Robot tests:** a new suite `atests/protocol_errors.robot` with its own server on port 8281:
-  - a refused import shows the message, without `RPC Error` and without a traceback;
+  - a refused import shows the message, without `RPC Error` and without a traceback. The tests of an import run a nested suite `atests/_nested/failing_import.robot` and read its execution error, because Robot Framework removes the middle of a long error of the keyword `Import Library`, which would hide what the tests look for;
   - an outdated library definition: with `rpc_scope=TEST`, the suite restarts the server with a variable that makes a dynamic library offer fewer keywords, because Robot Framework caches a library's keywords per name and arguments for the life of the server process. The next test calls the keyword that is gone and expects the exact message.
 - **The example server:** `tests/test_example_server.py` checks its two codes.
 

@@ -96,10 +96,33 @@ The `params` argument type annotation is used to validate and convert the incomi
 
 ### Error Handling
 
-Exceptions raised within your request handlers are automatically caught and translated into JSON-RPC Error responses.
+An error response is a `JsonRpcResponseError` in both directions. It has the fields `code`, `message` and `data`, and its text is `RPC Error <code>: <message>`. `JsonRpcErrorCode` holds the codes of JSON-RPC 2.0; you can use codes of your own as well.
 
-*   **Standard Exceptions:** Any unhandled exception results in an `Internal Error` (-32603) with the exception message.
-*   **Custom Errors:** You can raise `JsonRpcError` (or subclasses) to return specific error codes and data to the client.
+A handler answers with an error by raising it, and a request that gets an error response fails with it. This is not a connection failure: the next request on the same connection gets its response.
+
+```python
+from typing import Any
+
+from jsonrpcpeer import JsonRpcErrorCode, JsonRpcResponseError
+
+
+async def divide(params: dict[str, Any]) -> float:
+    if params["b"] == 0:
+        raise JsonRpcResponseError(JsonRpcErrorCode.INVALID_PARAMS, "b must not be 0", {"b": params["b"]})
+    return params["a"] / params["b"]
+
+
+server.register_request_handler("divide", divide)
+
+try:
+    await client.send_request("divide", {"a": 1, "b": 0})
+except JsonRpcResponseError as e:
+    print(e)  # RPC Error -32602: b must not be 0
+    print(e.code == JsonRpcErrorCode.INVALID_PARAMS, e.message, e.data)  # True b must not be 0 {'b': 0}
+```
+
+*   **Other exceptions:** any other exception in a request handler results in an `Internal Error` (-32603) with the exception message. The peer logs it at `ERROR` level with its traceback and the name of the method, on the logger `jsonrpcpeer.peer`. It does the same for an exception in a notification handler.
+*   **Tracebacks:** error responses carry no traceback, because it would show your code and paths to the remote side. With `JsonRpcPeer(reader, writer, send_tracebacks=True)`, the peer puts it into `data` when it builds a response from an exception: another exception in a handler, params that cannot be converted, or a message that cannot be parsed. An error that a handler raises stays as it is.
 
 Requests you send fail with `JsonRpcConnectionClosedError`, a subclass of `ConnectionError`, once the connection closes, whether the remote side closed it, reading from it failed, or the peer was stopped. This applies to requests still waiting for a response and to requests sent afterwards, which fail immediately without being written. If reading from the connection failed, that error is attached as the exception's `__cause__`:
 

@@ -10,11 +10,19 @@ from robot_jsonrpcremote_protocol import (
     FinalizeLibraryResult,
     InitializeParams,
     LibraryDefinition,
+    RobotJsonRpcErrorCode,
     RunKeywordParams,
     SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
 )
+
+
+def test_error_codes_of_the_protocol() -> None:
+    assert {code.name: code.value for code in RobotJsonRpcErrorCode} == {
+        "NOT_INITIALIZED": -32000,
+        "KEYWORD_NOT_FOUND": -32001,
+    }
 
 
 def test_argument_kind_value_lookup() -> None:

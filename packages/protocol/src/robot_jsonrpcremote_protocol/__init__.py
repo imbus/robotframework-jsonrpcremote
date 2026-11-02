@@ -9,7 +9,6 @@ AnyType: TypeAlias = SimpleType | list[SimpleType] | dict[str, SimpleType]
 class RobotJsonRpcErrorCode(IntEnum):
     NOT_INITIALIZED = -32000
     KEYWORD_NOT_FOUND = -32001
-    ARGUMENT_MISMATCH = -32002
 
 
 class ArgumentKind(str, Enum):

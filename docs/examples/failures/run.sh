@@ -40,3 +40,16 @@ assert 'raise ValueError("bad value")' in tracebacks[0], tracebacks
 assert tests["Continuable Failure"].body[1].status == "PASS"
 CHECK
 done
+
+# The server does not serve this library: the import fails with its message, as the page says.
+robot refused_import.robot
+
+python - <<'CHECK'
+from robot.api import ExecutionResult
+
+errors = [message.message.strip() for message in ExecutionResult("output.xml").errors.messages]
+assert len(errors) == 1, errors
+assert errors[0].endswith("failed: Library 'OtherLibrary' is not available."), errors
+assert "RPC Error" not in errors[0], errors
+assert "Traceback" not in errors[0], errors
+CHECK

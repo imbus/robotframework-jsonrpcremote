@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from typing import Any, TypeVar, cast
 
-from jsonrpcpeer import JsonRpcPeer, rpc_notification, rpc_request
+from jsonrpcpeer import JsonRpcErrorCode, JsonRpcPeer, JsonRpcResponseError, rpc_notification, rpc_request
 from robot_jsonrpcremote_protocol import (
     EXIT_NOTIFICATION,
     FINALIZE_LIBRARY_REQUEST,
@@ -27,7 +27,7 @@ from robot_jsonrpcremote_protocol import (
     InitializeResult,
     LogLevel,
     LogParams,
-    RunKeywordError,
+    RobotJsonRpcErrorCode,
     RunKeywordParams,
     RunKeywordResult,
     ServerCapabilities,
@@ -192,19 +192,23 @@ class RobotServerEndpoint:
     @_counted
     async def import_library(self, params: ImportLibraryParams) -> ImportLibraryResult:
         if not self.initialize_received or not self.initialized_received:
-            raise RuntimeError("Initialize and Initialized must be received before ImportLibrary.")
+            raise JsonRpcResponseError(
+                RobotJsonRpcErrorCode.NOT_INITIALIZED,
+                "Initialize and Initialized must be received before ImportLibrary.",
+            )
 
         lib_name = params.name
         if lib_name == "":
             if self.libraries:
                 lib_name = self.libraries[0]
             else:
-                raise RuntimeError(
-                    "Library name cannot be empty when there are no libraries defined at server startup."
+                raise JsonRpcResponseError(
+                    JsonRpcErrorCode.INVALID_PARAMS,
+                    "Library name cannot be empty when there are no libraries defined at server startup.",
                 )
 
         if self.libraries and lib_name not in self.libraries:
-            raise RuntimeError(f"Library '{lib_name}' is not available.")
+            raise JsonRpcResponseError(JsonRpcErrorCode.INVALID_PARAMS, f"Library '{lib_name}' is not available.")
 
         logger.debug("Importing library: %s", lib_name)
         token = f"{lib_name}_{self._endpoint_id}_{next(self._token_ids)}"
@@ -226,7 +230,10 @@ class RobotServerEndpoint:
     @_counted
     async def run_keyword(self, params: RunKeywordParams) -> RunKeywordResult:
         if not self.initialize_received or not self.initialized_received:
-            raise RuntimeError("Initialize and Initialized must be received before RunKeyword.")
+            raise JsonRpcResponseError(
+                RobotJsonRpcErrorCode.NOT_INITIALIZED,
+                "Initialize and Initialized must be received before RunKeyword.",
+            )
 
         try:
             return RunKeywordResult(
@@ -238,9 +245,6 @@ class RobotServerEndpoint:
             # A test result, not an error of the server.
             logger.debug("Keyword '%s' failed: %s", params.name, failure.error.message)
             return RunKeywordResult(error=failure.error)
-        except Exception as e:
-            logger.exception("Error executing keyword '%s': %s", params.name, e)
-            return RunKeywordResult(error=RunKeywordError(message=str(e)))
 
     @rpc_request(FINALIZE_LIBRARY_REQUEST)
     @_counted

@@ -22,6 +22,7 @@ class ServerControl:
         variables: str = "",
         timeout: float = 20.0,
         wait: bool = True,
+        send_tracebacks: bool = False,
     ) -> None:
         """Start the real server as a subprocess and wait until it accepts connections.
 
@@ -32,6 +33,8 @@ class ServerControl:
             raise RuntimeError("JSON-RPC server is already running")
 
         command = [sys.executable, "-m", "robot_jsonrpcremote_server", "--port", str(port)]
+        if send_tracebacks:
+            command += ["--send-tracebacks"]
         if pythonpath:
             command += ["--pythonpath", pythonpath]
         for variable in variables.split():

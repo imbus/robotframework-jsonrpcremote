@@ -55,6 +55,11 @@ def test_outputdir_help_says_that_the_server_writes_no_output_files() -> None:
     assert "the server writes no output files" in help_text
 
 
+def test_tracebacks_are_only_sent_with_the_option() -> None:
+    assert build_arg_parser().parse_args(["Lib"]).send_tracebacks is False
+    assert build_arg_parser().parse_args(["--send-tracebacks", "Lib"]).send_tracebacks is True
+
+
 def test_mode_aliases() -> None:
     assert build_arg_parser().parse_args(["--pipe", "Lib"]).mode == "pipe"
     assert build_arg_parser().parse_args(["--stdio", "Lib"]).mode == "stdio"

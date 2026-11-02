@@ -67,7 +67,9 @@ async def test_stdio_server_initializes_and_stops_runner_on_eof(
     server_main._server_stop_event.clear()
 
     remote_context = RobotRemoteContext()
-    task = asyncio.ensure_future(server_main.run_stdio_server(remote_context, verbose=False, libraries=None))
+    task = asyncio.ensure_future(
+        server_main.run_stdio_server(remote_context, verbose=False, libraries=None, send_tracebacks=False)
+    )
 
     for _ in range(100):
         if server_main._server_started_event.is_set():
@@ -115,7 +117,9 @@ async def test_stdio_server_releases_the_peer_of_a_closed_connection(
     server_main._server_started_event.clear()
     server_main._server_stop_event.clear()
 
-    task = asyncio.ensure_future(server_main.run_stdio_server(RobotRemoteContext(), verbose=False, libraries=None))
+    task = asyncio.ensure_future(
+        server_main.run_stdio_server(RobotRemoteContext(), verbose=False, libraries=None, send_tracebacks=False)
+    )
 
     for _ in range(100):
         if server_main._server_started_event.is_set():
@@ -150,6 +154,46 @@ async def test_stdio_server_releases_the_peer_of_a_closed_connection(
     assert peer_ref() is None
 
 
+@pytest.mark.parametrize("send_tracebacks", [False, True])
+async def test_stdio_server_gives_the_option_for_tracebacks_to_the_peer(
+    send_tracebacks: bool,
+    loopback_pair: tuple[
+        tuple[asyncio.StreamReader, asyncio.StreamWriter], tuple[asyncio.StreamReader, asyncio.StreamWriter]
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (server_streams, (client_reader, client_writer)) = loopback_pair
+
+    async def fake_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        return server_streams
+
+    monkeypatch.setattr(server_main, "_stdio_streams", fake_streams)
+
+    server_main._server_started_event.clear()
+    server_main._server_stop_event.clear()
+
+    task = asyncio.ensure_future(
+        server_main.run_stdio_server(
+            RobotRemoteContext(), verbose=False, libraries=None, send_tracebacks=send_tracebacks
+        )
+    )
+
+    client = JsonRpcPeer(client_reader, client_writer)
+    client.start()
+    await asyncio.wait_for(
+        client.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams()),
+        2,
+    )
+
+    option_of_the_peer = next(iter(server_main._clients.values()))[0].send_tracebacks
+
+    await client.stop()
+    client_writer.close()
+    await asyncio.wait_for(task, 2)
+
+    assert option_of_the_peer is send_tracebacks
+
+
 async def test_stdio_server_stops_via_stop_server(
     loopback_pair: tuple[
         tuple[asyncio.StreamReader, asyncio.StreamWriter], tuple[asyncio.StreamReader, asyncio.StreamWriter]
@@ -167,7 +211,9 @@ async def test_stdio_server_stops_via_stop_server(
     server_main._server_stop_event.clear()
 
     remote_context = RobotRemoteContext()
-    task = asyncio.ensure_future(server_main.run_stdio_server(remote_context, verbose=False, libraries=None))
+    task = asyncio.ensure_future(
+        server_main.run_stdio_server(remote_context, verbose=False, libraries=None, send_tracebacks=False)
+    )
 
     for _ in range(100):
         if server_main._server_started_event.is_set():
@@ -242,8 +288,8 @@ async def test_stdio_streams_connect_a_pipe(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_run_server_async_dispatches_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
     called: dict[str, Any] = {}
 
-    async def fake_run_stdio_server(remote_context: Any, verbose: bool, libraries: Any) -> None:
-        called["args"] = (remote_context, verbose, libraries)
+    async def fake_run_stdio_server(remote_context: Any, verbose: bool, libraries: Any, send_tracebacks: bool) -> None:
+        called["args"] = (remote_context, verbose, libraries, send_tracebacks)
 
     monkeypatch.setattr(server_main, "run_stdio_server", fake_run_stdio_server)
 
@@ -256,6 +302,7 @@ async def test_run_server_async_dispatches_stdio(monkeypatch: pytest.MonkeyPatch
         pipe_name="",
         libraries=["Lib"],
         verbose=True,
+        send_tracebacks=True,
     )
 
-    assert called["args"] == (remote_context, True, ["Lib"])
+    assert called["args"] == (remote_context, True, ["Lib"], True)

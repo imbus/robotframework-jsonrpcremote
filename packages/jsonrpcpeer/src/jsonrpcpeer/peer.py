@@ -102,6 +102,16 @@ class JsonRpcMethodAlreadyRegisteredError(ValueError):
     """Raised when a handler for a method is already registered."""
 
 
+class JsonRpcResponseError(Exception):
+    """An error response: raised for a request that gets one, and by a handler to answer with one."""
+
+    def __init__(self, code: int, message: str, data: Any = None) -> None:
+        super().__init__(f"RPC Error {code}: {message}")
+        self.code = code
+        self.message = message
+        self.data = data
+
+
 class _InvalidParamsError(Exception):
     """Internal marker: request/notification params could not be converted to the handler's type."""
 
@@ -141,6 +151,7 @@ class JsonRpcPeer:
         max_message_size: int | None = None,
         default_encoding: str = "utf-8",
         auto_close: bool = True,
+        send_tracebacks: bool = False,
     ) -> None:
         self.reader = reader
         self.writer = writer
@@ -150,6 +161,7 @@ class JsonRpcPeer:
         self.max_message_size: int | None = max_message_size
         self.default_encoding = default_encoding
         self.auto_close = auto_close
+        self.send_tracebacks = send_tracebacks
 
         self._request_handlers: dict[str, _HandlerEntry] = {}
         self._notification_handlers: dict[str, _HandlerEntry] = {}
@@ -174,6 +186,10 @@ class JsonRpcPeer:
     def _serialize_json(self, obj: Any) -> str:
         """Serialize an object to JSON using the configured options."""
         return as_json(obj, self.indent_json, self.compact_json)
+
+    def _traceback_data(self) -> str | None:
+        """The traceback of the exception being handled, as `data` of an error response, if the peer sends it."""
+        return traceback.format_exc() if self.send_tracebacks else None
 
     def _completion(self) -> asyncio.Future[bool]:
         """The completion future, bound to the event loop that is running when it is first used."""
@@ -469,7 +485,7 @@ class JsonRpcPeer:
                 error=JsonRpcError(
                     code=JsonRpcErrorCode.PARSE_ERROR,
                     message=str(ex),
-                    data=traceback.format_exc(),
+                    data=self._traceback_data(),
                 ),
                 id=response_id,
             )
@@ -479,7 +495,7 @@ class JsonRpcPeer:
                 error=JsonRpcError(
                     code=JsonRpcInvalidRequestError.error_code,
                     message=str(ex),
-                    data=traceback.format_exc(),
+                    data=self._traceback_data(),
                 ),
                 id=response_id,
             )
@@ -489,7 +505,7 @@ class JsonRpcPeer:
                 error=JsonRpcError(
                     code=JsonRpcErrorCode.INTERNAL_ERROR,
                     message=str(ex),
-                    data=traceback.format_exc(),
+                    data=self._traceback_data(),
                 ),
                 id=response_id,
             )
@@ -549,11 +565,7 @@ class JsonRpcPeer:
             match json_element:
                 case {"error": error_data}:
                     error = _error_from_dict(error_data)
-                    tcs.set_exception(
-                        Exception(
-                            f"RPC Error {error.code}: {error.message}" + (f" ({error.data})" if error.data else "")
-                        )
-                    )
+                    tcs.set_exception(JsonRpcResponseError(error.code, error.message, error.data))
                 case {"result": result}:
                     response = JsonRpcResponse(
                         id=cast(str | int, id_value),
@@ -561,7 +573,7 @@ class JsonRpcPeer:
                     )
                     tcs.set_result(response)
                 case _:
-                    tcs.set_exception(Exception("RPC Error: Invalid response format"))
+                    tcs.set_exception(JsonRpcResponseError(JsonRpcErrorCode.INTERNAL_ERROR, "Invalid response format"))
             return None
 
         # Handle error with null ID
@@ -598,22 +610,28 @@ class JsonRpcPeer:
             try:
                 result = await self._call_handler(handler, message.params)
                 return JsonRpcResponse(id=message.id, result=result)
+            except JsonRpcResponseError as ex:
+                return JsonRpcErrorResponse(
+                    id=message.id,
+                    error=JsonRpcError(code=ex.code, message=ex.message, data=ex.data),
+                )
             except _InvalidParamsError as ex:
                 return JsonRpcErrorResponse(
                     id=message.id,
                     error=JsonRpcError(
                         code=JsonRpcErrorCode.INVALID_PARAMS,
                         message=str(ex),
-                        data=traceback.format_exc(),
+                        data=self._traceback_data(),
                     ),
                 )
             except Exception as ex:
+                self.logger.exception("The handler of request '%s' failed", message.method)
                 return JsonRpcErrorResponse(
                     id=message.id,
                     error=JsonRpcError(
                         code=JsonRpcErrorCode.INTERNAL_ERROR,
                         message=str(ex),
-                        data=traceback.format_exc(),
+                        data=self._traceback_data(),
                     ),
                 )
         else:
@@ -631,22 +649,28 @@ class JsonRpcPeer:
             try:
                 await self._call_handler(handler, message.params)
                 return None
+            except JsonRpcResponseError as ex:
+                return JsonRpcErrorResponse(
+                    id=None,
+                    error=JsonRpcError(code=ex.code, message=ex.message, data=ex.data),
+                )
             except _InvalidParamsError as ex:
                 return JsonRpcErrorResponse(
                     id=None,
                     error=JsonRpcError(
                         code=JsonRpcErrorCode.INVALID_PARAMS,
                         message=str(ex),
-                        data=traceback.format_exc(),
+                        data=self._traceback_data(),
                     ),
                 )
             except Exception as ex:
+                self.logger.exception("The handler of notification '%s' failed", message.method)
                 return JsonRpcErrorResponse(
                     id=None,
                     error=JsonRpcError(
                         code=JsonRpcErrorCode.INTERNAL_ERROR,
                         message=str(ex),
-                        data=traceback.format_exc(),
+                        data=self._traceback_data(),
                     ),
                 )
         else:

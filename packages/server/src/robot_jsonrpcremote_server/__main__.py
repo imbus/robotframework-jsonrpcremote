@@ -91,11 +91,12 @@ async def handle_client(
     writer: asyncio.StreamWriter,
     verbose: bool,
     libraries: Sequence[str] | None,
+    send_tracebacks: bool,
 ) -> None:
     addr = writer.get_extra_info("peername")
     logger.debug("Client connected from %s", addr)
 
-    peer = JsonRpcPeer(reader, writer)
+    peer = JsonRpcPeer(reader, writer, send_tracebacks=send_tracebacks)
     endpoint = RobotServerEndpoint(remote_context=remote_context, libraries=libraries, verbose=verbose)
     peer.attach_endpoint(endpoint)
     task = asyncio.current_task()
@@ -139,9 +140,10 @@ async def run_tcp_server(
     port: int,
     verbose: bool,
     libraries: Sequence[str] | None,
+    send_tracebacks: bool,
 ) -> None:
     def client_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> Awaitable[None]:
-        return handle_client(remote_context, reader, writer, verbose, libraries)
+        return handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
 
     server = await asyncio.start_server(client_handler, addresses, port)
     bind_targets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
@@ -224,12 +226,15 @@ async def run_stdio_server(
     remote_context: RobotRemoteContext,
     verbose: bool,
     libraries: Sequence[str] | None,
+    send_tracebacks: bool,
 ) -> None:
     reader, writer = await _stdio_streams()
     loop = asyncio.get_running_loop()
     logger.info("Robot JSON-RPC Remote Server serving on stdio")
 
-    client_task = asyncio.ensure_future(handle_client(remote_context, reader, writer, verbose, libraries))
+    client_task = asyncio.ensure_future(
+        handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
+    )
     stopping: set["asyncio.Task[None]"] = set()
 
     async def close_client() -> None:
@@ -267,13 +272,14 @@ async def run_server_async(
     pipe_name: str,
     libraries: Sequence[str] | None,
     verbose: bool,
+    send_tracebacks: bool,
 ) -> None:
     if mode == "tcp":
-        await run_tcp_server(remote_context, addresses, port, verbose, libraries)
+        await run_tcp_server(remote_context, addresses, port, verbose, libraries, send_tracebacks)
         return
 
     if mode == "stdio":
-        await run_stdio_server(remote_context, verbose, libraries)
+        await run_stdio_server(remote_context, verbose, libraries, send_tracebacks)
         return
 
     raise NotImplementedError(f"Mode '{mode}' is not implemented yet")
@@ -287,6 +293,7 @@ def run_server(
     pipe_name: str,
     libraries: Sequence[str] | None,
     verbose: bool,
+    send_tracebacks: bool,
 ) -> None:
     global _server_start_error
     try:
@@ -299,6 +306,7 @@ def run_server(
                 pipe_name=pipe_name,
                 libraries=libraries,
                 verbose=verbose,
+                send_tracebacks=send_tracebacks,
             )
         )
     except Exception as error:
@@ -328,6 +336,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--version", action="version", version=f"robot-jsonrpcremote-server {__version__}")
+    parser.add_argument(
+        "--send-tracebacks",
+        action="store_true",
+        help="Send the traceback of an unexpected error to the client, for debugging; "
+        "it shows the server's code and paths to every client",
+    )
 
     mode_group = parser.add_argument_group("server mode")
 
@@ -469,6 +483,7 @@ def run() -> None:
             args.pipe_name,
             args.libraries,
             args.verbose,
+            args.send_tracebacks,
         ),
         name="RobotJsonRpcRemoteServerThread",
     )

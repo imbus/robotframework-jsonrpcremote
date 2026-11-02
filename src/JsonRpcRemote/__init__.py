@@ -21,7 +21,7 @@ from robot.errors import RemoteError
 from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
 from robot.utils import secs_to_timestr, timestr_to_secs
 
-from jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from jsonrpcpeer.peer import rpc_notification
 from robot_jsonrpcremote_protocol import (
@@ -167,6 +167,13 @@ def _keyword_failure(error: RunKeywordError) -> RemoteError:
     )
     failure.ROBOT_SKIP_EXECUTION = error.mode is RunKeywordErrorMode.SKIP
     return failure
+
+
+def _response_failure(error: JsonRpcResponseError) -> RemoteError:
+    """The exception for an error response, which Robot Framework reports like a failed keyword."""
+    return _keyword_failure(
+        RunKeywordError(message=error.message, traceback=str(error.data) if error.data is not None else None)
+    )
 
 
 def _attempts(count: int) -> str:
@@ -789,6 +796,8 @@ class JsonRpcRemote:
     def _start_session(self) -> _Session:
         try:
             return self._ensure_session()
+        except JsonRpcResponseError as error:
+            raise _response_failure(error) from None
         finally:
             # Back on the test thread: log messages that arrived meanwhile, e.g. from the import, reach Robot.
             self._log_sink.drain()
@@ -1002,6 +1011,8 @@ class JsonRpcRemote:
                 raise _keyword_failure(result.error)
 
             return jsonable_to_value(result.result)
+        except JsonRpcResponseError as error:
+            raise _response_failure(error) from None
         except (ConnectionError, asyncio.CancelledError) as error:
             # On a healthy session, raise it unchanged: a CancelledError then means that Robot
             # cancelled the keyword, for example on a timeout.
