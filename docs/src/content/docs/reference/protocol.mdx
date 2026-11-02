@@ -186,7 +186,9 @@ on which the client imports one library:
 - **`RunKeywordError`**
   - `message`: string: the client fails the keyword with exactly this message.
     The reference server sends the message that Robot Framework shows for the
-    same error of a local keyword, such as `ValueError: bad value`.
+    same error of a local keyword, such as `ValueError: bad value`. A server
+    sends the whole message, however long: what the report shows is up to the
+    Robot Framework run of the client.
   - `type`: string (optional): the name of the exception, such as `"ValueError"`.
     The client does not read it.
   - `traceback`: string (optional): the client logs it at the level `DEBUG`

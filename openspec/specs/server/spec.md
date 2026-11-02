@@ -98,7 +98,7 @@ The server SHALL start, import libraries and run their keywords with every Robot
 
 ### Requirement: The error of a failed keyword has the message of a local keyword
 
-When a keyword that the server runs fails, the server SHALL report it with the message that Robot Framework shows for the same failure of a local keyword.
+When a keyword that the server runs fails, the server SHALL report it with the message that Robot Framework shows for the same failure of a local keyword. It SHALL send the whole message, however long: what a report shows is up to the Robot Framework run that called the keyword.
 
 #### Scenario: Keyword raises a ValueError
 
@@ -109,6 +109,11 @@ When a keyword that the server runs fails, the server SHALL report it with the m
 
 - **WHEN** a keyword raises `AssertionError("boom")`
 - **THEN** the server reports the failure with the message `boom`
+
+#### Scenario: Keyword fails with a long message
+
+- **WHEN** a keyword fails with a message of 100 lines
+- **THEN** the server reports the failure with all 100 lines
 
 ### Requirement: The error of a failed keyword names its type and carries its traceback
 

@@ -15,7 +15,7 @@ from robot.api.interfaces import ListenerV3
 from robot.conf import RobotSettings
 from robot.errors import ExecutionFailed
 from robot.output import LOGGER
-from robot.utils import NOT_SET, ErrorDetails
+from robot.utils import NOT_SET, ErrorDetails, text
 
 from jsonrpcpeer import JsonRpcErrorCode, JsonRpcResponseError
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
@@ -333,6 +333,10 @@ class RobotRemoteContext:
         )
 
         LOGGER.unregister_console_logger()
+
+        # Robot cuts a long failure message for its report. This server writes no report: it sends the
+        # whole message, and the Robot Framework run of the client decides what its report shows.
+        text.MAX_ERROR_LINES = None
 
         with io.StringIO(REPL_SUITE) as suite_io:
             model = get_model(suite_io, curdir=str(curdir).replace("\\", "\\\\"))

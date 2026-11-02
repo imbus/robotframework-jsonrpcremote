@@ -24,18 +24,26 @@ class _MessageCollector(ResultVisitor):
 
 class NestedRobot:
     def run_nested_suite(
-        self, suite: str, output_dir: str, *variables: str, log_level: str = "INFO", allow_failures: bool = False
+        self,
+        suite: str,
+        output_dir: str,
+        *variables: str,
+        log_level: str = "INFO",
+        allow_failures: bool = False,
+        max_error_lines: str = "",
     ) -> str:
         """Runs ``suite`` with ``python -m robot`` and returns its output file.
 
         Fails if one of its tests fails, unless ``allow_failures`` is true. ``variables`` are ``name:value``
-        items, passed with ``--variable``.
+        items, passed with ``--variable``. ``max_error_lines`` is passed with ``--maxerrorlines``, if given.
         """
         output = Path(output_dir) / "output.xml"
         command = [sys.executable, "-m", "robot", "--output", str(output), "--log", "NONE", "--report", "NONE"]
         command += ["--loglevel", log_level]
         if allow_failures:
             command += ["--nostatusrc"]
+        if max_error_lines:
+            command += ["--maxerrorlines", max_error_lines]
         for variable in variables:
             command += ["--variable", variable]
         completed = subprocess.run([*command, suite], capture_output=True, text=True, timeout=120, check=False)

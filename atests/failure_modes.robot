@@ -35,6 +35,19 @@ Fatal Failure Stops The Run
     Should Be Equal    ${RESULTS}[Fatal Failure]    FAIL: FatalError: stop all
     Should Be Equal    ${RESULTS}[After The Fatal Failure]    FAIL: Test execution stopped due to a fatal error.
 
+A Long Message Is Cut In The Report And Complete In The Log
+    ${output}=    Run The Long Failure
+    ${results}=    Get Test Results    ${output}
+    Should Contain    ${results}[Long Failure]    [ Message content over the limit has been removed. ]
+    The Log Should Hold The Whole Message    ${output}
+
+The Run Of The Client Decides How Much Of A Long Message The Report Shows
+    ${output}=    Run The Long Failure    max_error_lines=NONE
+    ${message}=    Long Message
+    ${results}=    Get Test Results    ${output}
+    Should Be Equal    ${results}[Long Failure]    FAIL: ${message}
+    The Log Should Hold The Whole Message    ${output}
+
 Server Runs Keywords After A Fatal Failure
     Import Library    JsonRpcRemote    tcp://127.0.0.1:${PORT}    FailureModesLib    rpc_scope=TEST
     ${result}=    Ping
@@ -42,6 +55,23 @@ Server Runs Keywords After A Fatal Failure
 
 
 *** Keywords ***
+Long Message
+    ${message}=    Evaluate    "\\n".join(f"line {number}" for number in range(1, 101))
+    RETURN    ${message}
+
+Run The Long Failure
+    [Arguments]    ${max_error_lines}=${EMPTY}
+    ${output}=    Run Nested Suite    ${CURDIR}${/}_nested${/}long_message.robot
+    ...    ${OUTPUT_DIR}${/}nested-long-message    PORT:${PORT}    allow_failures=${True}
+    ...    max_error_lines=${max_error_lines}
+    RETURN    ${output}
+
+The Log Should Hold The Whole Message
+    [Arguments]    ${output}
+    ${message}=    Long Message
+    ${messages}=    Get Messages    ${output}    Long Failure    FAIL
+    Should Be Equal    ${messages}[0]    ${message}
+
 Run The Failing Suite
     Start Jsonrpc Server    FailureModesLib    port=${PORT}    pythonpath=${CURDIR}
     ${output}=    Run Nested Suite    ${CURDIR}${/}_nested${/}failure_modes.robot

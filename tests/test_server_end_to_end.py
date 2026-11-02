@@ -60,6 +60,9 @@ class EndToEndLib:
     def fail_with_assertion(self):
         raise AssertionError("boom")
 
+    def fail_with_a_long_message(self):
+        raise AssertionError("\\n".join(f"line {number}" for number in range(1, 101)))
+
     def skip_the_test(self):
         raise SkipExecution("not today")
 
@@ -320,6 +323,14 @@ async def test_failed_keyword_reports_its_message_type_traceback_and_mode(
     assert error.traceback is not None
     assert raising_line in error.traceback
     assert "robot/running" not in error.traceback
+
+
+async def test_failed_keyword_reports_its_whole_message(port: int) -> None:
+    async with _session(port) as session:
+        error = (await session.run_keyword("Fail With A Long Message")).error
+
+    assert error is not None
+    assert error.message == "\n".join(f"line {number}" for number in range(1, 101))
 
 
 async def test_traceback_reaches_the_client_only_in_the_error(port: int) -> None:

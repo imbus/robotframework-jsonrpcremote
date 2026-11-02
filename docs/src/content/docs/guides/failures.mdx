@@ -24,6 +24,10 @@ error of a local keyword, without anything added:
 | `AssertionError("boom")`  | `boom`                  |
 | `RuntimeError("boom")`    | `boom`                  |
 
+A long message appears as for a local keyword, too: the report cuts it at the
+limit of [`--maxerrorlines`](https://robotframework.org/robotframework/latest/RobotFrameworkUserGuide.html#limiting-error-message-length-in-reports)
+of your run, and `log.html` holds the whole message.
+
 ## The traceback
 
 At the log level `DEBUG` or `TRACE`, the traceback of the error appears in

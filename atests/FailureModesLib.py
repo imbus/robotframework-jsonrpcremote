@@ -7,6 +7,9 @@ class FailureModesLib:
     def fail_with_value_error(self) -> None:
         raise ValueError("bad value")
 
+    def fail_with_a_long_message(self) -> None:
+        raise AssertionError("\n".join(f"line {number}" for number in range(1, 101)))
+
     def skip_the_test(self) -> None:
         raise SkipExecution("not today")
 
