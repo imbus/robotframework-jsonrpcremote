@@ -54,6 +54,7 @@ A Keyword That The Library No Longer Has Fails With The Message Of The Server
 
 With The Option The Log Holds The Traceback Of The Server
     [Setup]    Restart The Server    send_tracebacks=${True}
+    Import Library    JsonRpcRemote    ${URI}    ProtocolErrorsLib    rpc_scope=TEST    AS    ProtocolErrors
     Set Log Level    DEBUG
     ${error}=    Run Keyword And Expect Error    *<lambda>*    Return A Lambda
     Should Not Contain    ${error}    Traceback
