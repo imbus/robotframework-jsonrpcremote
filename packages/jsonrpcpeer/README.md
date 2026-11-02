@@ -80,8 +80,11 @@ Handlers can be registered with two types of signatures:
 
 The `params` argument type annotation is used to validate and convert the incoming JSON data. It supports:
 *   Primitive types (`str`, `int`, `bool`, `float`)
-*   `dataclasses`
-*   `dict`, `list`
+*   `dataclasses` and other classes with annotated fields
+*   `list`, `dict` and the abstract types `Sequence`, `MutableSequence`, `Collection`, `Iterable` and `Mapping`, with their element types
+*   `tuple`, as in `tuple[int, str]` and `tuple[int, ...]`, and named tuples
+*   Unions, `Optional` and `Literal`
+*   Enums
 *   `Any`
 
 ## Advanced Topics
@@ -90,8 +93,11 @@ The `params` argument type annotation is used to validate and convert the incomi
 
 `jsonrpcpeer` leverages Python's type hints to ensure that the data received from the remote peer matches what your handler expects.
 
-*   **Strict Types:** The library generally expects the incoming JSON types to match the Python type hints (e.g., `int` expects a JSON number, `str` expects a JSON string).
-*   **Dataclasses:** You can define complex data structures using `dataclasses`. The library will automatically map the incoming JSON object to your dataclass fields.
+*   **Strict Types:** The incoming JSON types must match the Python type hints (e.g., `int` expects a JSON number, `str` expects a JSON string). The only conversion between them is from an integer to a `float`. A boolean is no number: `true` fits `bool`, but neither `int` nor `float`.
+*   **Dataclasses:** You can define complex data structures using `dataclasses`. The library will automatically map the incoming JSON object to your dataclass fields, and ignores keys that the class does not have. An object only becomes a dataclass or another class with annotated fields; for any target other than those, a mapping type or `Any`, it is an error.
+*   **Collections:** An abstract type such as `Sequence[int]` gives a `list`. `tuple[int, str]` checks the length and each position, `tuple[int, ...]` checks each element, and a named tuple takes an array by position. Sets are not supported as targets.
+*   **Dict Keys:** The keys of an object are checked against the key type of a `dict[K, V]`. Keys in JSON are strings, so the key `"1"` does not fit `dict[int, V]`. An enum as the key type gives its members.
+*   **Unions:** A union tries its types in order, and the first that fits wins. Among several classes, it picks the one whose required fields are all present and that has the most of the object's keys. If several have equally many, the values decide, so a field such as `kind: Literal["a"]` tells classes apart; if several still fit, it is an error. Next to a dict type, a class wins only if it knows all keys of the object and the values fit; otherwise the dict keeps them all.
 *   **Validation:** If the incoming data cannot be converted to the specified type (e.g., missing fields in a dataclass, or wrong type), the library automatically responds with a JSON-RPC `Invalid Params` error (-32602).
 
 ### Error Handling

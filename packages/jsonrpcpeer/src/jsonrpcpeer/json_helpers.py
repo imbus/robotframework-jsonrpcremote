@@ -1,3 +1,4 @@
+import collections.abc
 import dataclasses
 import enum
 import functools
@@ -82,16 +83,6 @@ class CamelSnakeMixin:
 _T = TypeVar("_T")
 
 
-class DefaultConfig:
-    @classmethod
-    def _encode_case(cls, s: str) -> str:
-        return s
-
-    @classmethod
-    def _decode_case(cls, s: str) -> str:
-        return s
-
-
 @functools.lru_cache(maxsize=1024)
 def _encode_case_for_field_name_cached(t: Type[Any], field: dataclasses.Field[Any]) -> str:
     alias = field.metadata.get("alias", None)
@@ -156,10 +147,10 @@ def _default(o: Any) -> Any:
         }
     if isinstance(o, enum.Enum):
         return o.value
-    if isinstance(o, Set):
+    if isinstance(o, (set, frozenset)):
         return list(o)
 
-    raise TypeError(f"Cant' get default value for {type(o)} with value {o!r}")
+    raise TypeError(f"Can't get default value for {type(o)} with value {o!r}")
 
 
 def as_json(obj: Any, indent: Optional[bool] = None, compact: Optional[bool] = None) -> str:
@@ -213,16 +204,9 @@ def _get_type_hints_cached(t: Type[Any]) -> Dict[str, Any]:
 __signature_cache: Dict[Type[Any], inspect.Signature] = {}
 
 
-def add_type_signature_to_cache(t: Type[Any]) -> None:
-    origin = _get_origin_cached(t)
-    _get_signature_cached(origin or t)
-
-
 def _get_signature_cached(t: Type[Any]) -> inspect.Signature:
     r = __signature_cache.get(t, __NOT_SET)
     if r is __NOT_SET:
-        if t is bool:
-            raise ValueError
         r = __signature_cache[t] = inspect.signature(t)
     return cast(inspect.Signature, r)
 
@@ -289,6 +273,10 @@ def __from_dict_handle_enum(value: Any, t: Type[Any], strict: bool) -> Tuple[Any
 
 
 def __from_dict_handle_basic_types(value: Any, t: Type[Any], strict: bool) -> Tuple[Any, bool]:
+    # A JSON boolean is no number, although `bool` is a subclass of `int`.
+    if isinstance(value, bool):
+        return (value, True) if t is bool else (None, False)
+
     if isinstance(value, t):
         return value, True
 
@@ -299,17 +287,64 @@ def __from_dict_handle_basic_types(value: Any, t: Type[Any], strict: bool) -> Tu
     return None, False
 
 
+__ABSTRACT_LIST_TYPES = {
+    collections.abc.Sequence,
+    collections.abc.MutableSequence,
+    collections.abc.Collection,
+    collections.abc.Iterable,
+}
+
+
 def __from_dict_handle_sequence(value: Any, t: Type[Any], strict: bool) -> Tuple[Any, bool]:
     if isinstance(value, Sequence) and not isinstance(value, str):
         args = _get_args_cached(t)
-        return (_get_origin_cached(t) or t)(from_dict(v, args, strict=strict) for v in value), True
+        origin = _get_origin_cached(t) or t
+        target = list if origin in __ABSTRACT_LIST_TYPES else origin
+        return target(from_dict(v, args, strict=strict) for v in value), True
     return None, False
+
+
+def __from_dict_handle_tuple(value: Any, t: Type[Any], strict: bool) -> Tuple[Any, bool]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        return None, False
+
+    origin = _get_origin_cached(t) or t
+    args = _get_args_cached(t)
+
+    if hasattr(origin, "_fields"):
+        if len(value) > len(origin._fields):
+            return None, False
+
+        hints = _get_type_hints_cached(origin)
+        items = [from_dict(v, hints.get(n), strict=strict) for n, v in zip(origin._fields, value)]
+        try:
+            return origin(*items), True
+        except TypeError:
+            return None, False
+
+    if not args:
+        return origin(value), True
+
+    if len(args) == 2 and args[1] is Ellipsis:
+        return tuple(from_dict(v, args[0], strict=strict) for v in value), True
+
+    if len(args) != len(value):
+        return None, False
+
+    return tuple(from_dict(v, a, strict=strict) for v, a in zip(value, args)), True
 
 
 def __from_dict_handle_mapping(value: Any, t: Type[Any], strict: bool) -> Tuple[Any, bool]:
     if isinstance(value, Mapping):
         args = _get_args_cached(t)
-        return {n: _from_dict_with_name(n, v, args[1] if args else None, strict=strict) for n, v in value.items()}, True
+        key_type = args[0] if args else None
+        value_type = args[1] if len(args) > 1 else None
+        return {
+            _from_dict_with_name(str(n), n, key_type, strict=strict): _from_dict_with_name(
+                str(n), v, value_type, strict=strict
+            )
+            for n, v in value.items()
+        }, True
     return None, False
 
 
@@ -330,15 +365,19 @@ __from_dict_handlers: List[
     (lambda t: is_union(_get_origin_cached(t)), __from_dict_handle_union),
     (lambda t: _get_origin_cached(t) is Literal, __from_dict_handle_literal),
     (__is_enum, __from_dict_handle_enum),
+    (lambda t: is_subclass_cached(_get_origin_cached(t) or t, tuple), __from_dict_handle_tuple),
     (
-        lambda t: is_subclass_cached(_get_origin_cached(t) or t, Sequence),
+        lambda t: (
+            (_get_origin_cached(t) or t) in __ABSTRACT_LIST_TYPES
+            or is_subclass_cached(_get_origin_cached(t) or t, Sequence)
+        ),
         __from_dict_handle_sequence,
     ),
     (
         lambda t: is_subclass_cached(_get_origin_cached(t) or t, Mapping),
         __from_dict_handle_mapping,
     ),
-    (lambda t: t is Any or t is Ellipsis, lambda v, _t, _: (v, True)),  # type: ignore
+    (lambda t: t is Any, lambda v, _t, _: (v, True)),
 ]
 
 __from_dict_handlers_cache: Dict[Type[Any], Optional[Callable[[Any, Type[Any], bool], Tuple[Any, bool]]]] = {}
@@ -363,6 +402,17 @@ def __get_signature_keys_cached(t: Type[Any], signature: inspect.Signature) -> S
     if r is None:
         r = __signature_keys_cache[t] = set(signature.parameters.keys())
     return r
+
+
+def __from_dict_create(t: Type[Any], value: Dict[str, Any], type_hints: Dict[str, Any], strict: bool) -> Any:
+    params: Dict[str, Any] = {
+        k: _from_dict_with_name(k, v, type_hints[k], strict=strict) for k, v in value.items() if k in type_hints
+    }
+
+    try:
+        return t(**params)
+    except TypeError as ex:
+        raise TypeError(f"Can't initialize {t!r} with parameters {params!r}: {ex}") from ex
 
 
 @overload
@@ -396,6 +446,9 @@ def from_dict(
     if not types:
         return value
 
+    first_error: Optional[TypeError] = None
+    mapping_result: Any = __NOT_SET
+
     for t in types:
         func = __from_dict_handlers_cache.get(t, __NOT_SET)
         if func is __NOT_SET:
@@ -410,16 +463,25 @@ def from_dict(
         if func is None:
             continue
 
-        r, ok = func(value, t, strict)  # type: ignore[operator]
+        # An element that does not fit one type of a union says nothing about its other types.
+        try:
+            r, ok = func(value, t, strict)  # type: ignore[operator]
+        except TypeError as e:
+            first_error = first_error or e
+            continue
+
         if ok:
-            return r
+            if func is not __from_dict_handle_mapping or len(types) == 1:
+                return r
+
+            mapping_result = r
+            break
 
     if isinstance(value, Mapping):
-        match_: Optional[Type[Any]] = None
-        match_same_keys: Optional[Set[str]] = None
-        match_value: Optional[Dict[str, Any]] = None
-        match_signature: Optional[inspect.Signature] = None
-        match_type_hints: Optional[Dict[str, Any]] = None
+        matches: List[Tuple[Type[Any], Dict[str, Any], Dict[str, Any]]] = []
+        match_same_keys = -1
+        # A dict type keeps every key, so next to one, a class has to know them all.
+        known_keys_only = strict or mapping_result is not __NOT_SET
 
         for t in types:
             if t is type(None):
@@ -427,12 +489,17 @@ def from_dict(
 
             origin = _get_origin_cached(t)
 
-            if origin is Literal:
+            # A union got here because none of its types fit, and it is no class to fill.
+            if origin is Literal or is_union(origin):
+                continue
+
+            # Without declared fields, a class has nothing to fill from the keys of an object.
+            type_hints = _get_type_hints_cached(origin or t)
+            if not type_hints and not dataclasses.is_dataclass(origin or t):
                 continue
 
             cased_value: Dict[str, Any] = {_decode_case_for_member_name(t, k): v for k, v in value.items()}
 
-            type_hints = _get_type_hints_cached(origin or t)
             try:
                 signature = _get_signature_cached(origin or t)
             except ValueError:
@@ -447,40 +514,41 @@ def from_dict(
 
             same_keys = cased_value.keys() & sig_keys
 
-            if strict and any(k for k in cased_value if k not in sig_keys):
+            if known_keys_only and any(k not in sig_keys for k in cased_value):
                 continue
 
             if not all(k in same_keys for k in non_default_parameters):
                 continue
 
-            if match_same_keys is None or len(match_same_keys) < len(same_keys):
-                match_same_keys = same_keys
-                match_ = t
-                match_value = cased_value
-                match_signature = signature
-                match_type_hints = type_hints
-            elif match_same_keys is not None and len(match_same_keys) == len(same_keys):
-                raise TypeError(
-                    f"Value {value!r} of type {type(value)!r} matches to more then one types of "
-                    f"{repr(types[0].__name__) if len(types) == 1 else ' | '.join(repr(e.__name__) for e in types)}."
-                )
+            if len(same_keys) > match_same_keys:
+                match_same_keys = len(same_keys)
+                matches = []
 
-        if (
-            match_ is not None
-            and match_value is not None
-            and match_signature is not None
-            and match_type_hints is not None
-        ):
-            params: Dict[str, Any] = {
-                k: _from_dict_with_name(k, v, match_type_hints[k], strict=strict)
-                for k, v in match_value.items()
-                if k in match_type_hints
-            }
+            if len(same_keys) == match_same_keys:
+                matches.append((t, cased_value, type_hints))
 
+        # The keys decide first. Among classes with equally many of them, the values decide.
+        created: List[Any] = []
+        for match, match_value, match_type_hints in matches:
             try:
-                return match_(**params)
-            except TypeError as ex:
-                raise TypeError(f"Can't initialize {match_!r} with parameters {params!r}: {ex}") from ex
+                created.append(__from_dict_create(match, match_value, match_type_hints, strict))
+            except TypeError as e:
+                first_error = first_error or e
+
+        if len(created) == 1:
+            return created[0]
+
+        if created and mapping_result is __NOT_SET:
+            raise TypeError(
+                f"Value {value!r} of type {type(value)!r} matches more than one of the types "
+                f"{' | '.join(repr(type(e).__name__) for e in created)}."
+            )
+
+    if mapping_result is not __NOT_SET:
+        return mapping_result
+
+    if first_error is not None:
+        raise first_error
 
     raise TypeError(
         f"Value '{value}' must be of type `"
@@ -492,8 +560,6 @@ def from_dict(
                     (getattr(e, "__name__", None) or str(e) if e is not type(None) else "None")
                     if _get_origin_cached(e) is not Literal
                     else repr(e).replace("typing.", "")
-                    if e is not None
-                    else "None"
                 )
                 for e in types
             )
@@ -535,6 +601,14 @@ def _handle_basic_types(value: Any, _remove_defaults: bool, _encode: bool) -> An
     return value
 
 
+def _has_default_value(field: dataclasses.Field[Any], value: Any) -> bool:
+    if field.default is not dataclasses.MISSING:
+        return bool(value == field.default)
+    if field.default_factory is not dataclasses.MISSING:
+        return bool(value == field.default_factory())
+    return False
+
+
 def _handle_dataclass(value: Any, remove_defaults: bool, encode: bool) -> Dict[str, Any]:
     t = type(value)
     fields = __dataclasses_cache.get(t)
@@ -546,7 +620,7 @@ def _handle_dataclass(value: Any, remove_defaults: bool, encode: bool) -> Dict[s
             getattr(value, f.name), remove_defaults, encode
         )
         for f in fields
-        if not remove_defaults or getattr(value, f.name) != f.default
+        if not remove_defaults or not _has_default_value(f, getattr(value, f.name))
     }
 
 
@@ -599,17 +673,7 @@ def _as_dict_inner(value: Any, remove_defaults: bool, encode: bool) -> Any:
     t = type(value)
     func = __handlers_cache.get(t)
     if func is None:
-        if t in __handlers_cache:
-            return __handlers_cache[t](value, remove_defaults, encode)
-
-        for h in __as_dict_handlers:
-            if h[0](value):
-                __handlers_cache[t] = h[1]
-                func = h[1]
-                break
-
-    if func is None:
-        raise TypeError(f"Can't handle type {t} with value {value!r}")
+        func = __handlers_cache[t] = next(h[1] for h in __as_dict_handlers if h[0](value))
 
     return func(value, remove_defaults, encode)
 
@@ -633,6 +697,19 @@ class TypeValidationError(Exception):
         return f"{s} (errors = {self.errors!r})"
 
 
+def __validate_sequence(t: Type[Any], args: Tuple[Any, ...], value: Sequence[Any]) -> List[str]:
+    if is_subclass_cached(_get_origin_cached(t) or t, tuple):
+        if len(args) == 2 and args[1] is Ellipsis:
+            return list(itertools.chain(*(validate_types(args[0], v) for v in value)))
+
+        if len(args) != len(value):
+            return [f"Expected {len(args)} values for type {t!r} but got {len(value)}"]
+
+        return list(itertools.chain(*(validate_types(a, v) for a, v in zip(args, value))))
+
+    return list(itertools.chain(*(validate_types(args, v) for v in value)))
+
+
 def validate_types(expected_types: Union[Type[Any], Tuple[Type[Any], ...], None], value: Any) -> List[str]:
     if expected_types is None:
         return []
@@ -646,7 +723,7 @@ def validate_types(expected_types: Union[Type[Any], Tuple[Type[Any], ...], None]
         args = _get_args_cached(t)
         origin = _get_origin_cached(t)
 
-        if origin is Union:
+        if is_union(origin):
             r = validate_types(args, value)
             if r:
                 result.extend(r)
@@ -663,7 +740,6 @@ def validate_types(expected_types: Union[Type[Any], Tuple[Type[Any], ...], None]
 
         if (
             t is Any
-            or t is Ellipsis  # type: ignore
             or isinstance(value, origin or t)
             or (
                 isinstance(value, Sequence)
@@ -691,21 +767,12 @@ def validate_types(expected_types: Union[Type[Any], Tuple[Type[Any], ...], None]
                 return []
 
             if isinstance(value, Sequence) and args:
-                r = list(itertools.chain(*(validate_types(args, v) for v in value)))
+                r = __validate_sequence(t, args, value)
                 if r:
                     result.extend(r)
                     continue
 
                 return []
-
-            if t is Any:
-                return []
-
-            if isinstance(value, origin or t):
-                return []
-
-            if result:
-                continue
 
             return []
 
@@ -771,9 +838,7 @@ def jsonable_dict_to_object(d: dict[str, Any]) -> Any:
 
 
 def value_to_jsonable(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return object_to_jsonable_dict(value)
 

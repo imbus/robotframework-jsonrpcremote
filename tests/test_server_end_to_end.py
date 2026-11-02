@@ -78,6 +78,9 @@ class EndToEndLib:
     def return_a_lambda(self):
         return lambda: None
 
+    def repr_of(self, value):
+        return repr(value)
+
     @keyword("Do ${something}")
     def do_something(self, something):
         pass
@@ -439,6 +442,22 @@ async def test_return_value_that_cannot_be_transferred_is_answered_with_a_json_r
 
     assert error.code == -32603
     assert "<lambda>" in error.message
+
+
+async def test_keyword_gets_nested_json_values_unchanged(port: int) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of", [{"a": [1, 2]}])
+
+    assert result.error is None
+    assert result.result == "{'a': [1, 2]}"
+
+
+async def test_keyword_gets_a_boolean_as_a_boolean(port: int) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of", [True])
+
+    assert result.error is None
+    assert result.result == "True"
 
 
 async def test_wrong_number_of_arguments_is_a_failure_of_the_keyword(port: int) -> None:

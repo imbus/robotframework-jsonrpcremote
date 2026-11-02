@@ -163,6 +163,11 @@ Defines how `jsonrpcpeer.json_helpers` converts between JSON data and typed Pyth
 - **WHEN** `from_dict` gets the same object for the same dataclass with `strict`
 - **THEN** it fails with a `TypeError`
 
+#### Scenario: Empty key with `strict`
+
+- **WHEN** `from_dict` gets that object with the additional key `""` for that dataclass with `strict`
+- **THEN** it fails with a `TypeError`
+
 #### Scenario: Known keys with `strict`
 
 - **WHEN** `from_dict` gets `{"a": 1, "b": 2}` for that dataclass with `strict`
@@ -170,7 +175,7 @@ Defines how `jsonrpcpeer.json_helpers` converts between JSON data and typed Pyth
 
 ### Requirement: `from_dict` picks the class that fits an object best
 
-For several possible classes, `from_dict` SHALL choose the one whose required fields are all present and that has the most of the object's keys. It SHALL fail with a `TypeError` if no class fits or if several fit equally well.
+For several possible classes, `from_dict` SHALL choose the one whose required fields are all present and that has the most of the object's keys. If several have equally many, it SHALL choose the one whose values fit. It SHALL fail with a `TypeError` if no class fits or if several fit equally well.
 
 #### Scenario: Classes with different keys
 
@@ -194,6 +199,34 @@ For several possible classes, `from_dict` SHALL choose the one whose required fi
 - **WHEN** `from_dict` gets `{"x": 1}` for `(A1, B1)`
 - **THEN** it fails with a `TypeError` whose text is `Value {'x': 1} of type <class 'dict'> matches more than one of the types 'A1' | 'B1'.`
 
+#### Scenario: Classes told apart by a literal
+
+- **GIVEN** a dataclass `KindA` with the fields `kind` of type `Literal["a"]` and `value`, and a dataclass `KindB` with the fields `kind` of type `Literal["b"]` and `value`
+- **WHEN** `from_dict` gets `{"kind": "b", "value": 1}` for `KindA | KindB`
+- **THEN** it returns a `KindB`
+
+#### Scenario: Classes told apart by the type of a value
+
+- **GIVEN** a dataclass `IntX` with a field `x` of type `int` and a dataclass `StrX` with a field `x` of type `str`
+- **WHEN** `from_dict` gets `{"x": "s"}` for `IntX | StrX`
+- **THEN** it returns a `StrX`
+
+#### Scenario: No class with equally many keys has fitting values
+
+- **WHEN** `from_dict` gets `{"kind": "c", "value": 1}` for `KindA | KindB`
+- **THEN** it fails with a `NamedTypeError` with the name `kind`
+
+#### Scenario: Only the classes with fitting values count as several
+
+- **WHEN** `from_dict` gets `{"x": 1}` for `(A1, StrX, B1)`
+- **THEN** it fails with a `TypeError` whose text names `A1` and `B1`, and not `StrX`
+
+#### Scenario: A tie of classes with fewer keys does not count
+
+- **GIVEN** a dataclass `TwoAgain` with the same fields as `Two`
+- **WHEN** `from_dict` gets `{"a": 1, "b": 2, "c": 3}` for `(Two, TwoAgain, Three)`
+- **THEN** it returns a `Three`
+
 #### Scenario: No class fits
 
 - **WHEN** `from_dict` gets an object that lacks a required field of every class of a union
@@ -209,6 +242,41 @@ For several possible classes, `from_dict` SHALL choose the one whose required fi
 
 - **WHEN** `from_dict` gets `{}` for the optional form of a dataclass whose fields all have defaults
 - **THEN** it returns an instance of that dataclass, not `None`
+
+### Requirement: A class goes before a dict type in a union
+
+If a union has a class and a dict type that fits, `from_dict` SHALL return an instance of the class if the class knows all keys of the object and the values fit, whatever the order of the union. Otherwise it SHALL return the dict, so that no key gets lost.
+
+#### Scenario: Class that knows all keys
+
+- **GIVEN** a dataclass `Point` with a required field `x`
+- **WHEN** `from_dict` gets `{"x": 1}` for `Point | dict[str, Any]` or `dict[str, Any] | Point`
+- **THEN** it returns a `Point`
+
+#### Scenario: Unknown key
+
+- **WHEN** `from_dict` gets `{"x": 1, "z": 3}` for `Point | dict[str, Any]` or `dict[str, Any] | Point`
+- **THEN** it returns that dict
+
+#### Scenario: Wrong value for the class
+
+- **WHEN** `from_dict` gets `{"x": "s"}` for `Point | dict[str, Any]`
+- **THEN** it returns that dict
+
+#### Scenario: Required key missing
+
+- **WHEN** `from_dict` gets `{"z": 3}` for `Point | dict[str, Any]`
+- **THEN** it returns that dict
+
+#### Scenario: Several classes that fit
+
+- **WHEN** `from_dict` gets `{"x": 1}` for `(A1, B1, dict[str, Any])`
+- **THEN** it returns that dict
+
+#### Scenario: Dict type that does not fit
+
+- **WHEN** `from_dict` gets `{"x": 1, "z": "s"}` for `Point | dict[str, int]`
+- **THEN** it returns a `Point`, as for a union of classes
 
 ### Requirement: A union tries its other types when an element does not fit
 
@@ -238,7 +306,7 @@ If an element inside a value does not fit one type of a union, `from_dict` SHALL
 #### Scenario: No type fits
 
 - **GIVEN** a dataclass `Point` with a field `x` of type `int`
-- **WHEN** `from_dict` gets `{"a": {"x": "b"}}` for `dict[str, Point] | None`
+- **WHEN** `from_dict` gets `{"a": {"x": "b"}}` for `dict[str, Point] | None` or `Optional[dict[str, Point]]`
 - **THEN** it fails with a `NamedTypeError` with the name `a.x`
 
 ### Requirement: Errors name the path of the wrong value
@@ -251,6 +319,33 @@ If an element inside a value does not fit one type of a union, `from_dict` SHALL
 - **WHEN** `from_dict` gets `{"a": {"x": "b"}}` for `dict[str, Point]`
 - **THEN** it fails with a `NamedTypeError` with the name `a.x`
 - **AND** its text starts with `Invalid value for "a.x": `
+
+### Requirement: Nested values read back as they were written
+
+`from_json` SHALL read back what `as_json` wrote, and `from_dict` what `as_dict` wrote, as equal values of the same types, at any depth of dataclasses, lists, dicts, tuples, named tuples, unions, literals and enums. For JSON that does not fit, at any depth, `from_dict` SHALL fail with a `TypeError` that says what does not fit, and SHALL NOT invent a value.
+
+#### Scenario: Nested model
+
+- **GIVEN** a tree of dataclasses in camel case with forward references, unions of classes, tuples, named tuples, enums and free JSON values
+- **WHEN** it is written and read back, through JSON or through dicts, and with `strict`
+- **THEN** the result equals the tree, with the same types at every level
+
+#### Scenario: Wrong value below an optional field
+
+- **GIVEN** that tree
+- **WHEN** a value deep inside it, below a field with `Optional[...]`, has the wrong type
+- **THEN** `from_dict` fails with a `NamedTypeError` with the path of that value and the text about its type
+
+#### Scenario: Random nested types
+
+- **WHEN** a random nested type gets a random value, which is written and read back, through JSON or through dicts
+- **THEN** the result equals the value, with the same types at every level
+
+#### Scenario: Changed JSON
+
+- **WHEN** `from_dict` with `strict` gets the JSON of a fitting value with one place in it replaced by other JSON
+- **THEN** it fails with a `TypeError` that says what does not fit
+- **OR** its result writes the same JSON, apart from `null` for a field left out
 
 ### Requirement: Abstract collection types give a list
 

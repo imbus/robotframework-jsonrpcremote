@@ -4,6 +4,7 @@ Documentation     Server-side conversion of typed library-init arguments.
 Library           JsonRpcRemote    tcp://127.0.0.1:${PORT}    TypedInitLib
 ...                   mode=FAST    count=5    ratio=1.5    flag=true    amount=1.50
 ...                   when=2025-01-15    items=[1, 2, 3]    mapping={'a': 1, 'b': 2}    tags={'x', 'y'}    tag=hello
+...                   nested=${{ {"a": [1, 2]} }}
 
 
 *** Variables ***
@@ -26,6 +27,12 @@ Typed Init Arguments Are Converted Server-Side
 Enum Init Argument Resolves To The Member
     ${name}=    Get Mode Name
     Should Be Equal    ${name}    FAST
+
+Nested Named Init Argument Arrives As A Dict
+    ${types}=    Get Arg Types
+    Should Be Equal    ${types}[nested]    dict
+    ${nested}=    Get Value    nested
+    Should Be Equal    ${nested}    ${{ {"a": [1, 2]} }}
 
 Init Argument Values Are Correct
     [Documentation]    Also checks nested conversion (list[int], dict[str, int] items).

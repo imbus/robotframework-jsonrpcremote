@@ -1,7 +1,7 @@
 *** Settings ***
 Documentation     Library initialization arguments keep their JSON types end-to-end.
 ...               ServerProbeLib is loaded on the server via --pythonpath.
-Library           JsonRpcRemote    tcp://127.0.0.1:${PORT}    ServerProbeLib    ${42}    text
+Library           JsonRpcRemote    tcp://127.0.0.1:${PORT}    ServerProbeLib    ${42}    text    ${{[{"id": 1}]}}
 
 
 *** Variables ***
@@ -18,3 +18,7 @@ Init Arguments Are Passed Through Unchanged
     ${args}=    Get Init Args
     Should Be Equal    ${args}[0]    ${42}
     Should Be Equal    ${args}[1]    text
+
+Init Arguments Keep Their Nesting
+    ${args}=    Get Init Args
+    Should Be Equal    ${args}[2]    ${{[{"id": 1}]}}

@@ -40,6 +40,7 @@ class TypedInitLib:
         mapping: dict[str, int],
         tags: set[str],
         tag: "Tag | None" = None,
+        nested: dict[str, object] | None = None,
     ) -> None:
         self._mode = mode
         self._values: dict[str, object] = {
@@ -53,6 +54,7 @@ class TypedInitLib:
             "mapping": mapping,
             "tags": tags,
             "tag": tag,
+            "nested": nested,
         }
 
     def get_arg_types(self) -> dict[str, str]:

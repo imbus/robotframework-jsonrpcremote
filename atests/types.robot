@@ -24,6 +24,11 @@ Boolean Keeps Its Type On The Server
     ${type}=    Type Name Of    ${True}
     Should Be Equal    ${type}    bool
 
+Boolean Comes Back As A Boolean
+    [Documentation]    Checks the object itself, because Should Be Equal takes 1.0 and True as equal.
+    ${result}=    Echo Value    ${True}
+    Should Be True    $result is True
+
 None Round Trips
     ${result}=    Echo Value    ${None}
     Should Be Equal    ${result}    ${None}

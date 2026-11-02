@@ -63,7 +63,7 @@ Alternative: moving `bool` to the front of `AnyType`. That protects the protocol
 
 ### 3. Tuples get their own handler, and abstract types are an explicit set
 
-A new handler in front of the sequence handler takes everything that is a `tuple`. It reads a named tuple by position with the type hints of its fields, `tuple[T, ...]` element by element, and `tuple[A, B]` by position. A wrong length is no match, so the next type of a union gets its turn. With `...` handled here, `Ellipsis` no longer needs to pass as a type in the handler table.
+A new handler in front of the sequence handler takes everything that is a `tuple`. It reads a named tuple by position with the type hints of its fields, `tuple[T, ...]` element by element, and `tuple[A, B]` by position. A wrong length is no match, so the next type of a union gets its turn. A subclass of `tuple` without arguments keeps its type, as it did before. With `...` handled here, `Ellipsis` no longer needs to pass as a type in the handler table.
 
 The sequence handler gives a list for `Sequence`, `MutableSequence`, `Collection` and `Iterable`, listed in one set.
 
@@ -73,7 +73,11 @@ Alternative: `inspect.isabstract(origin) and issubclass(list, origin)`. It is mo
 
 The loop of the first pass catches a `TypeError` from a handler, keeps the first one, and goes on with the next type. If nothing fits, including the object path, `from_dict` raises that error. A single type or an `Optional` therefore keeps today's message with its path, and a call that succeeds pays nothing.
 
-The object path stays as it is. It picks one class by its keys, and a wrong value in that class raises at once.
+The object path skips a union that got there this way, because all of its types have been tried. Before Python 3.14, `typing.Union` is no class that `get_type_hints` can read, so the error of that call would replace the first error.
+
+The object path also picks a class by its keys first, as before, but among classes with equally many of the object's keys the values now decide. It creates each of them: the only one that works wins, several that work are the existing error about more than one type, and if none works, the first error comes out. So a field such as `kind: Literal["a"]` tells classes apart, which real JSON often does. Before, a tie failed at once, whatever came after it, so `(Two, TwoAgain, Three)` failed on an object with all the keys of `Three`.
+
+A class with more of the keys and a wrong value still fails, and does not fall back to a class with fewer keys: that class would only fit by ignoring a key that has a value.
 
 Alternatives:
 
@@ -82,7 +86,7 @@ Alternatives:
 
 ### 5. Dict keys go through `from_dict` like values
 
-The mapping handler converts each key to the key type. An enum as a key type works without further code. The path of an error uses `str(key)`, because a key no longer has to be a string. A `dict` without arguments and `dict[Any, Any]` take any key.
+The mapping handler converts each key to the key type. An enum as a key type works without further code. The path of an error uses `str(key)`, because a key no longer has to be a string. A `dict` without arguments and `dict[Any, Any]` take any key, and a mapping type with only a key type, such as `Counter[str]`, takes any value instead of raising an `IndexError`.
 
 Alternative: converting `"1"` to `1` for `dict[int, V]`, as pydantic does. It needs code for each key type that nothing here uses, and the proposal rules it out.
 
@@ -124,9 +128,34 @@ The scenario "First call in a process" runs in a subprocess, because the caches 
 
 Alternative for the large test: importing `robotcode.core.lsp.types`, which is installed here as a development tool. That ties the tests of a base package to generated types of another project.
 
+### 11. Combinations are tested with a nested model and with Hypothesis
+
+Full branch coverage and a mutation test that found 300 of 311 faults did not show one fault of this change: a wrong value below `Optional[...]` lost its error on Python 3.12 and 3.13, because no test had that combination. So a new file, `tests/test_json_helpers_nested.py`, goes through combinations.
+
+- A realistic nested model is a plain test, in both directions, with `strict`, and with a wrong value deep inside.
+- Hypothesis draws nested types from a recursive strategy and values for them with `from_type`. Three properties check the round trip through JSON, the round trip through dicts, and that changed JSON either keeps its content or fails with a useful error. Keeping the content needs no knowledge of the type, and it catches invented values such as `0.0` for an object.
+
+The built-in profile `ci` of Hypothesis applies on CI by itself and uses the same examples on each run. Locally it draws new ones.
+
+Alternative: a generator of our own with a fixed seed. It was built and compared, and found about as many faults (175 and 170 of 311 on their own), but it took about 300 lines instead of about 150, and its failures show a large random type instead of a small example such as `Optional[int]` with `{}`.
+
+### 12. A class goes before a dict type if it knows all keys
+
+A dict type fits any object in the first pass, so a class in the same union was never created. Now a fitting dict type waits for the object path, which only takes classes that know all keys of the object. If exactly one of them fits, it wins. Otherwise the dict comes back, also if several classes fit, because that dict loses nothing. A union with only a dict type returns at once, so the usual case pays nothing.
+
+The `strict` check of the object path gets the same condition. It also no longer overlooks the unknown key `""`, which is falsy and passed `any(k for k in ...)`.
+
+Alternatives:
+
+- The first type of the union wins. A class in front would then drop unknown keys in silence.
+- The behavior stays. The class of such a union is then never created, whatever the object holds.
+
 ## Risks / Trade-offs
 
 - [`from_dict` rejects what it accepted before, such as `true` for an `int` field] → That is the purpose. All protocol messages of client and server passed on the copy, and the error of a sloppy peer now names the field.
-- [Each dict key costs a conversion] → Measured on Python 3.12: the parameters of a keyword call take 23 µs instead of 18 µs, a `dict[str, int]` with 1000 keys 0.39 ms instead of 0.19 ms. That is small next to the network, so there is no shortcut for now.
+- [Each dict key costs a conversion, and each conversion a little more bookkeeping] → Measured on Python 3.12: the four conversions of a keyword call take 18 µs as before, of about 600 µs for the whole remote keyword. A `dict[str, int]` with 1000 keys takes 0.41 ms instead of 0.20 ms, and a nested model of 124 KB 9.4 ms instead of 8.6 ms. That is small next to the network, so there is no shortcut for now.
 - [Catching `TypeError` in the loop can hide a programming error in a handler while another type fits] → Handlers only raise for values that do not fit, and if nothing fits the error comes out.
+- [A tie between classes creates each of them, which runs their `__post_init__`] → Only on a tie, and creating a class from data should have no side effects anyway.
 - [RobotCode's copy keeps the bugs and drifts further from this one] → Accepted until RobotCode moves. Its test file stays usable there because the tests keep their names.
+- [A local run can fail on an example that nobody has seen before] → That is the purpose. CI stays stable, and Hypothesis keeps the example in `.hypothesis/` and tries it first on the next run.
+- [The caches take `int | float` and `float | int` as the same key, so the spelling used first in a process decides the order of the union] → Found while applying this change and not caused by it. The protocol has one spelling of each union, so it is not affected. Backlog JSON-7.

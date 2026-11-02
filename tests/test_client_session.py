@@ -31,6 +31,11 @@ from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
     RUN_KEYWORD_REQUEST,
+    ArgumentDefinition,
+    ArgumentKind,
+    ImportLibraryResult,
+    KeywordDefinition,
+    LibraryDefinition,
     RunKeywordError,
     RunKeywordResult,
 )
@@ -84,6 +89,38 @@ def test_rpc_scope_given_as_a_name_ends_the_session_with_the_test(server: FakeSe
 def test_unknown_rpc_scope_fails_the_import_naming_the_valid_scopes(server: FakeServer) -> None:
     with pytest.raises(ValueError, match=r"Available: 'GLOBAL', 'SUITE' and 'TEST'"):
         JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5, rpc_scope="weekly")
+
+
+# --- JSON values from the server keep their nesting --------------------------------
+
+
+def test_return_value_with_nested_objects_arrives_unchanged(server: FakeServer, remote: JsonRpcRemote) -> None:
+    value = [{"id": 1}, {"id": [2, 3]}]
+    server.script(RUN_KEYWORD_REQUEST, RunKeywordResult(result=value))
+
+    assert _call(remote, "x") == value
+
+
+def test_boolean_as_a_return_value_stays_a_boolean(server: FakeServer, remote: JsonRpcRemote) -> None:
+    server.script(RUN_KEYWORD_REQUEST, RunKeywordResult(result=True))
+
+    assert _call(remote, "x") is True
+
+
+def test_argument_default_with_nested_values_arrives_unchanged(server: FakeServer) -> None:
+    default = {"a": [1, 2]}
+    argument = ArgumentDefinition(
+        name="value", has_default=True, default=default, kind=ArgumentKind.POSITIONAL_OR_NAMED
+    )
+    keyword = KeywordDefinition(name="Echo", args=[argument])
+    definition = LibraryDefinition(name="FakeLib", keywords=[keyword])
+    server.script(IMPORT_LIBRARY_REQUEST, ImportLibraryResult(token="t", definition=definition))
+
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        assert remote.get_keyword_arguments("Echo") == [("value", default)]
+    finally:
+        remote._stop_session()
 
 
 # --- a failed keyword call affects only that call --------------------------------

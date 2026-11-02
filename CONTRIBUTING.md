@@ -213,6 +213,8 @@ uv run --all-packages pytest tests/test_peer.py
 uv run --all-packages pytest tests/test_peer.py::test_name -q
 ```
 
+[`tests/test_json_helpers_nested.py`](tests/test_json_helpers_nested.py) draws its values with [Hypothesis](https://hypothesis.readthedocs.io/). On CI it uses the same examples on each run. Locally it draws new ones, so a run can fail on an example nobody has seen before. It then shows the smallest failing example and keeps it in `.hypothesis/` (gitignored) to try it first next time.
+
 **Integration tests (Robot Framework):**
 
 ```bash

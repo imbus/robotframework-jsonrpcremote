@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 SimpleType: TypeAlias = str | int | float | bool | None
-AnyType: TypeAlias = SimpleType | list[SimpleType] | dict[str, SimpleType]
+AnyType: TypeAlias = SimpleType | list[Any] | dict[str, Any]
 
 
 class RobotJsonRpcErrorCode(IntEnum):

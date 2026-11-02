@@ -41,11 +41,11 @@ Library    JsonRpcRemote    tcp://127.0.0.1:8271    MyLibrary
 ...        greeting=hello    times=3    enabled=true
 ```
 
-Positional values are passed on as JSON values. Named values
-are converted on the server according to the type hints of the library's
-`__init__`, so `int`, `float`, `bool`, `Decimal`, `date`, `Enum`, `list`,
-`dict` and other types that Robot Framework converts work; without type hints,
-they arrive as strings.
+Positional values are passed on as JSON values, and lists and dicts keep their
+nesting. Named values are converted on the server according to the type hints
+of the library's `__init__`, so `int`, `float`, `bool`, `Decimal`, `date`,
+`Enum`, `list`, `dict` and other types that Robot Framework converts work;
+without type hints, they arrive as strings.
 
 ## Options of the client
 

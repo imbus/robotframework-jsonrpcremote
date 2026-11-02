@@ -1,8 +1,11 @@
+from typing import Any
+
 import pytest
 
 from jsonrpcpeer.json_helpers import as_json, from_dict, from_json
 from robot_jsonrpcremote_protocol import (
     SET_LOG_LEVEL_NOTIFICATION,
+    AnyType,
     ArgumentKind,
     ClientInfo,
     ExitParams,
@@ -12,6 +15,7 @@ from robot_jsonrpcremote_protocol import (
     LibraryDefinition,
     RobotJsonRpcErrorCode,
     RunKeywordParams,
+    RunKeywordResult,
     SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
@@ -61,6 +65,31 @@ def test_library_definition_nested_from_dict() -> None:
     assert arg.name == "a"
     assert arg.type == "str"
     assert arg.kind is ArgumentKind.VAR_NAMED
+
+
+NESTED_VALUES = [[{"id": 1}], {"a": [1, 2]}, [[1, 2]], [{}]]
+
+
+@pytest.mark.parametrize("value", NESTED_VALUES)
+def test_any_type_keeps_nested_values(value: Any) -> None:
+    assert from_dict(value, AnyType) == value
+
+
+@pytest.mark.parametrize("value", NESTED_VALUES)
+def test_run_keyword_params_keep_nested_values(value: Any) -> None:
+    data = {"library_token": "t", "name": "kw", "args": [value], "kwargs": {"a": value}}
+    params = from_dict(data, RunKeywordParams)
+    assert params.args == [value]
+    assert params.kwargs == {"a": value}
+
+
+@pytest.mark.parametrize("value", NESTED_VALUES)
+def test_run_keyword_result_keeps_nested_values(value: Any) -> None:
+    assert from_dict({"result": value}, RunKeywordResult).result == value
+
+
+def test_any_type_keeps_a_boolean() -> None:
+    assert from_dict(True, AnyType) is True
 
 
 def test_initialize_params_json_roundtrip() -> None:

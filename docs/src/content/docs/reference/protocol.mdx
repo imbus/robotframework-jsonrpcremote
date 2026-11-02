@@ -43,7 +43,8 @@ Content-Length: 60\r\n
 - Field names are the names of the dataclass fields, such as `library_token`.
   The reference implementation leaves out optional fields that are not set.
 - Arguments and return values of keywords, the argument defaults in a library
-  definition and the arguments of `robot/import_library` are JSON values.
+  definition and the arguments of `robot/import_library` are JSON values, whose
+  lists and objects may be nested to any depth.
 - In addition, the Python implementation sends Python objects as
   `{"__pickled__": "<hex>"}`, where `<hex>` is a Python pickle of the object in
   hexadecimal, so they travel unchanged between Python peers. It does so for

@@ -12,7 +12,10 @@
   - a named tuple read from a list fails or gets a generator as its first field, although `as_dict` and `as_json` write named tuples as lists;
   - `bool` is accepted for `int` and becomes `1.0` for `float`;
   - the key type of `dict[K, V]` is ignored;
-  - a union does not try its other types once an element does not fit one of them, so `["a"]` for `list[int] | list[str]` fails.
+  - a union does not try its other types once an element does not fit one of them, so `["a"]` for `list[int] | list[str]` fails;
+  - classes of a union with equally many of the object's keys fail at once, also when a value tells them apart, as a field `kind` with a `Literal` does, or when a later class has more of the keys;
+  - a dict type in a union takes every object, so a class in the same union is never created;
+  - strict mode overlooks the unknown key `""`.
 - **`validate_types` has the same gaps with tuples:** it does not check the positions of `tuple[int, str]`, and a wrong element of `tuple[int, ...]` raises `TypeError: isinstance() arg 2 must be a type...` instead of being reported.
 - **Smaller defects:** `as_json` fails for a `frozenset`, which `as_dict` handles; the `remove_defaults` option of `as_dict` does not recognize defaults from a `default_factory`; two error messages contain typos ("Cant' get default value", "matches to more then one types"); and the module contains code that can never run, for example in `_as_dict_inner` and `value_to_jsonable`.
 
@@ -26,7 +29,8 @@ Found in the project review of 2026-10-27 (items TEST-3, JSON-1, JSON-3 and JSON
   - `as_dict` and `as_json` for tuples, named tuples, sets, dicts, nested dataclasses, enums, unknown types and the field metadata `nosave`, `force_json` and `alias`, with and without `remove_defaults`;
   - `from_dict` and `from_json`, including strict mode with unknown keys, the paths in `NamedTypeError`, the texts of the errors and `bytes` input;
   - the case conversion helpers with empty names, leading underscores, dots, spaces and acronyms;
-  - `jsonable_dict_to_object` with and without the pickle marker, and values that cannot be pickled.
+  - `jsonable_dict_to_object` with and without the pickle marker, and values that cannot be pickled;
+  - combinations: a realistic nested model, and random nested types with random values from Hypothesis, as a new development dependency.
 
   Tests for unions run without a pre-filled cache.
 - **Fixes in `from_dict`:**
@@ -36,6 +40,9 @@ Found in the project review of 2026-10-27 (items TEST-3, JSON-1, JSON-3 and JSON
   - `bool` is accepted neither for `int` nor for `float`; `True` in an `AnyType` stays `True`.
   - Dict keys are checked against the key type.
   - A union tries its other types when an element does not fit one of them, and fails with the first error if none fits.
+  - Among classes of a union with equally many of the object's keys, the values decide.
+  - A class goes before a dict type if it knows all keys of the object and the values fit; otherwise the dict keeps them all.
+  - Strict mode counts the key `""` as unknown.
 - **Fixes in `validate_types`:** PEP 604 unions are accepted on every supported Python version, also by `ValidateMixin`. Tuples are checked as in `from_dict`, and a wrong element is reported instead of raising.
 - **Smaller fixes:** `as_json` writes a `frozenset` as a list, `remove_defaults` recognizes `default_factory`, the typos are fixed, and the unreachable code is removed.
 - **`AnyType` takes any JSON value:** it becomes `SimpleType | list[Any] | dict[str, Any]`, so nested lists and objects arrive unchanged.
@@ -49,6 +56,8 @@ Assumptions recorded for review:
 - JSON object keys are strings, so `dict[int, V]` accepts only keys that already are `int`; `"1"` is not converted.
 - Sets stay unsupported as targets of `from_dict`; `set[int]` fails with a clear error.
 - The module-level caches stay unbounded: they are keyed by types, which do not grow with the data.
+- `as_json` keeps leaving out a field that is `None` and has a default, also a default other than `None`, so such a field reads back with its default (backlog JSON-10).
+- A field with `force_json` and `init=False` stays one that `as_json` writes and `from_dict` cannot read back, such as `jsonrpc` of the peer's messages, which the peer reads by hand (backlog JSON-11).
 
 ## Capabilities
 
@@ -65,6 +74,7 @@ Assumptions recorded for review:
 
 - **Code:** `packages/jsonrpcpeer/src/jsonrpcpeer/json_helpers.py`; `AnyType` in `packages/protocol/src/robot_jsonrpcremote_protocol/__init__.py`.
 - **Public API:** stricter `from_dict` (see above); otherwise unchanged.
-- **Tests:** `tests/test_json_helpers.py`, with the tests taken over from RobotCode, aiming at full branch coverage of the module; `tests/test_protocol.py` for `AnyType`; a client test with `tests/fake_server.py` for a nested return value; a Robot test for a library import with a nested argument.
+- **Tests:** `tests/test_json_helpers.py`, with the tests taken over from RobotCode, aiming at full branch coverage of the module; `tests/test_json_helpers_nested.py` for combinations; `tests/test_protocol.py` for `AnyType`; a client test with `tests/fake_server.py` for a nested return value; a Robot test for a library import with a nested argument.
+- **Development:** the dependency `hypothesis` in the group `dev`, with `uv.lock`; `.hypothesis/` in `.gitignore`; a note on it in `CONTRIBUTING.md`.
 - **Docs:** the type conversion section of `packages/jsonrpcpeer/README.md`; the protocol page and the Protocol section of the roadmap say that JSON values may be nested.
 - **Order:** before `encode-json-values-natively`, which changes `value_to_jsonable`, relies on these tests and needs nested JSON to arrive unchanged.

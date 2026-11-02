@@ -20,6 +20,9 @@ wheels/
 # ruff cache
 .ruff_cache/
 
+# Hypothesis examples
+.hypothesis/
+
 # Robot Framework
 output.xml
 log.html
