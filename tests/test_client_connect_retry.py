@@ -14,11 +14,12 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from fake_server import NEVER_ANSWER, FakeServer, wait_until
+from fake_server import NEVER_ANSWER, RESET_CONNECTION, FakeServer, has_cycle, wait_until
 
 from JsonRpcRemote import JsonRpcRemote, _definition_changes, _Session, _time_option
 from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
+    INITIALIZE_REQUEST,
     RUN_KEYWORD_REQUEST,
     KeywordDefinition,
     LibraryDefinition,
@@ -200,6 +201,19 @@ def test_failed_attempts_are_repeated_every_interval(
     assert len(attempts) == 3
     # Spaced by the interval (with some slack for coarse clocks).
     assert all(later - earlier >= 0.15 for earlier, later in itertools.pairwise(attempts))
+
+
+def test_connect_retry_gives_up_on_connections_that_are_reset(
+    server: FakeServer, connect: Callable[..., JsonRpcRemote]
+) -> None:
+    remote = connect(rpc_connect_retry_timeout=0.5, rpc_connect_retry_interval=0.1)
+    remote._stop_session()  # as at the end of the session's rpc_scope
+    server.script(INITIALIZE_REQUEST, *[RESET_CONNECTION] * 100)
+
+    with pytest.raises(ConnectionError, match=r"^Could not connect to .*: JsonRpcConnectionClosedError: ") as error:
+        _call(remote, "reset")
+
+    assert not has_cycle(error.value)
 
 
 def test_connect_retry_gives_up_once_per_outage(

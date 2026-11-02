@@ -85,6 +85,6 @@ The unit tests use a new scripted answer of `tests/fake_server.py`, `RESET_CONNE
 
 ## Risks / Trade-offs
 
-- [A later change calls `close_connection()` in an `except` block again] → A unit test checks that the chain reaches no error twice, and a comment at the call says why it is where it is.
+- [A later change calls `close_connection()` in an `except` block again] → A unit test checks that the chain has no cycle, and a comment at the call says why it is where it is.
 - [Exceptions with cycles from other sources still crash Robot Framework] → Out of scope here; the missing check can be reported to Robot Framework.
 - [The 0.2 second timeout counts a very slow connection to a server that is still listening as closed] → The stop then returns early, as it does today; a test could fail as it can today, but this needs a machine that takes longer than that for a loopback connection.

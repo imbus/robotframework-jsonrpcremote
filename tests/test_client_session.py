@@ -15,10 +15,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from fake_server import NEVER_ANSWER, FakeServer, wait_until
+from fake_server import NEVER_ANSWER, RESET_CONNECTION, FakeServer, has_cycle, wait_until
 from robot.errors import RemoteError
 
-from jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer import JsonRpcConnectionClosedError, JsonRpcPeer
 from JsonRpcRemote import (
     JsonRpcRemote,
     _ClientEndpoint,
@@ -187,6 +187,40 @@ def test_failed_handshake_closes_the_connection_before_it_is_reported(
     assert session.initialized.wait(5)
     assert session.start_error is not None
     assert closed_when_reported == [True]
+
+
+# --- a connection reset while a session starts -----------------------------------
+
+
+def test_reset_while_a_session_starts_fails_only_that_call(server: FakeServer, remote: JsonRpcRemote) -> None:
+    remote._stop_session()
+    server.script(INITIALIZE_REQUEST, RESET_CONNECTION)
+
+    with pytest.raises(JsonRpcConnectionClosedError) as error:
+        _call(remote, "reset")
+
+    assert isinstance(error.value.__cause__, ConnectionResetError)
+    assert not has_cycle(error.value)
+    assert _session(remote) is None
+    assert _call(remote, "back") == "echo: back"
+
+
+def test_reset_while_a_session_starts_leaves_no_unretrieved_exception(
+    server: FakeServer, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.ERROR, logger="asyncio")
+    server.script(INITIALIZE_REQUEST, RESET_CONNECTION)
+    session = _Session(server.uri, "FakeLib", None, None, 5)
+    session.start()
+    assert session.ended.wait(5)
+    assert isinstance(session.start_error, JsonRpcConnectionClosedError)
+
+    # asyncio reports an unretrieved exception when its future goes away, so the session lets go of the peer.
+    session._finalizer()
+    del session
+    gc.collect()
+
+    assert not [record for record in caplog.records if "never retrieved" in record.getMessage()]
 
 
 # --- a call never waits on an ended session --------------------------------------

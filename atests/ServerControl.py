@@ -11,6 +11,7 @@ class ServerControl:
 
     def __init__(self) -> None:
         self._process: "subprocess.Popen[bytes] | None" = None
+        self._port: int = 0
         self._last_returncode: "int | None" = None
         self._killed: bool = False
 
@@ -42,6 +43,7 @@ class ServerControl:
         command += libraries.split()
 
         self._process = subprocess.Popen(command)
+        self._port = int(port)
         if wait:
             self._wait_for_port("127.0.0.1", int(port), float(timeout))
 
@@ -64,6 +66,7 @@ class ServerControl:
             self._last_returncode = self._process.wait(timeout=10)
         finally:
             self._process = None
+        self._wait_until_port_is_closed()
 
     def kill_jsonrpc_server(self) -> None:
         """Kill the server subprocess without letting it shut down, like a crash or a container restart.
@@ -79,6 +82,7 @@ class ServerControl:
             self._last_returncode = self._process.wait(timeout=10)
         finally:
             self._process = None
+        self._wait_until_port_is_closed()
 
     def wait_for_jsonrpc_server_to_exit(self, timeout: float = 10.0) -> int:
         """Wait until the server process exits on its own and return its exit code.
@@ -98,6 +102,7 @@ class ServerControl:
             self._last_returncode = self._process.wait(timeout=10)
         finally:
             self._process = None
+        self._wait_until_port_is_closed()
         return self._last_returncode
 
     def get_server_exit_code(self) -> int:
@@ -124,3 +129,21 @@ class ServerControl:
                 time.sleep(0.2)
 
         raise RuntimeError(f"Server not reachable on {host}:{port} within {timeout}s: {last_error}")
+
+    def _wait_until_port_is_closed(self, timeout: float = 10.0) -> None:
+        """Wait until the stopped server no longer accepts connections.
+
+        In a venv on Windows, the process is a launcher with the real interpreter as its child, and that
+        child still accepts connections for a moment after the launcher has ended.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                # A listening port on this machine answers at once, so a timeout counts as closed: on
+                # Windows, a connection attempt to a closed port takes about 2 seconds.
+                with socket.create_connection(("127.0.0.1", self._port), timeout=0.2):
+                    time.sleep(0.01)
+            except OSError:
+                return
+
+        raise RuntimeError(f"Port {self._port} still accepts connections {timeout}s after the server stopped")

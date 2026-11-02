@@ -383,6 +383,39 @@ async def test_read_error_is_the_cause_of_the_failed_request() -> None:
         await peer.completion
 
 
+async def _peer_ended_by_read_error(error: Exception) -> JsonRpcPeer:
+    reader = asyncio.StreamReader()
+    peer = JsonRpcPeer(reader, cast("asyncio.StreamWriter", _FakeWriter()))
+    peer.start()
+    reader.set_exception(error)
+    assert peer._read_task is not None
+    await asyncio.wait_for(peer._read_task, 2)
+    return peer
+
+
+async def test_read_error_nobody_waits_for_is_not_reported_as_never_retrieved() -> None:
+    loop = asyncio.get_running_loop()
+    reports: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _, context: reports.append(context))
+    try:
+        await _peer_ended_by_read_error(ConnectionResetError("reset by peer"))
+
+        gc.collect()
+        assert not [report for report in reports if "never retrieved" in str(report.get("message"))]
+    finally:
+        loop.set_exception_handler(None)
+
+
+async def test_read_error_reaches_a_later_wait_for_the_completion() -> None:
+    error = ConnectionResetError("reset by peer")
+    peer = await _peer_ended_by_read_error(error)
+    await asyncio.sleep(0)
+
+    with pytest.raises(ConnectionResetError) as exc_info:
+        await peer.completion
+    assert exc_info.value is error
+
+
 async def test_truncated_frame_is_the_cause_of_the_failed_request() -> None:
     peer, reader, request = await _peer_with_waiting_request()
 

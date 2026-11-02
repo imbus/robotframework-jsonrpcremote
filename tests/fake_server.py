@@ -47,6 +47,9 @@ from robot_jsonrpcremote_protocol import (
 NEVER_ANSWER = object()
 """A scripted answer that leaves the request unanswered."""
 
+RESET_CONNECTION = object()
+"""A scripted answer that aborts the connection of the request with a TCP reset and gives no answer."""
+
 _DEFAULT = object()
 
 
@@ -76,6 +79,22 @@ def wait_until(condition: Callable[[], bool], timeout: float = 5.0) -> None:
     while not condition():
         assert time.monotonic() < deadline, "condition not met in time"
         time.sleep(0.01)
+
+
+def has_cycle(error: BaseException | None, path: tuple[BaseException, ...] = ()) -> bool:
+    """Whether following the causes and contexts of ``error``, as Robot Framework does, never comes to an end."""
+    if error is None:
+        return False
+    if any(error is earlier for earlier in path):
+        return True
+    return has_cycle(error.__cause__, (*path, error)) or has_cycle(error.__context__, (*path, error))
+
+
+def _reset(peer: JsonRpcPeer) -> None:
+    """Abort the connection of ``peer``: with a zero linger time, closing the socket sends a reset instead of a FIN."""
+    linger = struct.pack("HH" if sys.platform == "win32" else "ii", 1, 0)
+    peer.writer.get_extra_info("socket").setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
+    peer.writer.transport.abort()
 
 
 @dataclass
@@ -130,8 +149,9 @@ class FakeServer:
     def script(self, method: str, *answers: Any) -> None:
         """Answer the next requests for ``method`` with ``answers``, in order.
 
-        An answer is a value to return, an exception to answer with a JSON-RPC error, or
-        ``NEVER_ANSWER``. Once the scripted answers are used up, the default handler answers.
+        An answer is a value to return, an exception to answer with a JSON-RPC error,
+        ``NEVER_ANSWER`` or ``RESET_CONNECTION``. Once the scripted answers are used up, the
+        default handler answers.
         """
         self._scripts[method].extend(answers)
 
@@ -170,10 +190,7 @@ class FakeServer:
     async def _close_connections(self, reset: bool) -> None:
         for peer in list(self._peers):
             if reset:
-                # With a zero linger time, closing the socket sends a reset instead of a FIN.
-                linger = struct.pack("HH" if sys.platform == "win32" else "ii", 1, 0)
-                peer.writer.get_extra_info("socket").setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
-                peer.writer.transport.abort()
+                _reset(peer)
             else:
                 peer.writer.close()
         if self._clients:
@@ -214,7 +231,9 @@ class FakeServer:
                 for message in answer.messages:
                     await peer.send_notification(LOG_NOTIFICATION, LogParams(message=message, level=LogLevel.INFO))
                 answer = answer.answer
-            if answer is NEVER_ANSWER:
+            if answer is RESET_CONNECTION:
+                _reset(peer)
+            if answer is NEVER_ANSWER or answer is RESET_CONNECTION:
                 await asyncio.Event().wait()
             if isinstance(answer, BaseException):
                 raise answer

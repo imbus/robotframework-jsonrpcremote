@@ -512,16 +512,20 @@ class _Session:
         self._res.loop = asyncio.get_event_loop()
         try:
             try:
-                await self._start_peer()
+                try:
+                    await self._start_peer()
 
-                await self._initialize_server()
-            except Exception as e:
-                self.start_error = e
-                # Release the connection and a spawned stdio server before the failure is
-                # reported, so a failed start leaves nothing behind.
-                with contextlib.suppress(Exception):
-                    await self.close_connection()
-                raise
+                    await self._initialize_server()
+                except Exception as e:
+                    self.start_error = e
+                if self.start_error is not None:
+                    # Release the connection and a spawned stdio server before the failure is
+                    # reported, so a failed start leaves nothing behind. Not in the except block:
+                    # wait_closed() can raise the cause of the start error again, and Python would
+                    # make the start error its context, a cycle that crashes Robot Framework.
+                    with contextlib.suppress(Exception):
+                        await self.close_connection()
+                    raise self.start_error
             finally:
                 self.initialized.set()
 

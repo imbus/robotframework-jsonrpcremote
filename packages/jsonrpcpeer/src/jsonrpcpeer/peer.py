@@ -84,10 +84,11 @@ async def _wait_closed(writer: asyncio.StreamWriter) -> None:
     await writer.wait_closed()
 
 
-def _closing_done(task: "asyncio.Task[None]") -> None:
+def _retrieve_exception(future: "asyncio.Future[Any]") -> None:
     # Retrieve the error, e.g. from the stdio write pipe, so asyncio does not report it as never retrieved.
-    if not task.cancelled():
-        task.exception()
+    # Whoever awaits the future still gets it.
+    if not future.cancelled():
+        future.exception()
 
 
 class JsonRpcInvalidRequestError(Exception):
@@ -195,6 +196,8 @@ class JsonRpcPeer:
         """The completion future, bound to the event loop that is running when it is first used."""
         if self._completion_future is None:
             self._completion_future = asyncio.get_running_loop().create_future()
+            # Nobody has to wait for it, for example after a session failed to start.
+            self._completion_future.add_done_callback(_retrieve_exception)
         return self._completion_future
 
     @property
@@ -428,7 +431,7 @@ class JsonRpcPeer:
             # All callers of wait_closed() share one close future. Wait for it shielded, so that
             # stop() cancelling this wait does not cancel the close for the other callers.
             self._closing = asyncio.ensure_future(_wait_closed(self.writer))
-            self._closing.add_done_callback(_closing_done)
+            self._closing.add_done_callback(_retrieve_exception)
             if wait_for_close:
                 # Some writers (e.g. the stdio stdout pipe) raise from wait_closed(); the
                 # completion future is already set, so ignore cleanup errors here.

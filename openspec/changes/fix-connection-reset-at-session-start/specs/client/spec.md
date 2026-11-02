@@ -33,7 +33,7 @@ If the connection is reset while a session starts, the client SHALL raise a conn
 
 - **WHEN** a session fails to start because of a connection reset
 - **THEN** the error has the reset as its cause
-- **AND** following the causes and contexts of the error reaches no error twice
+- **AND** following the causes and contexts of the error comes to an end
 
 #### Scenario: Asyncio reports nothing
 
