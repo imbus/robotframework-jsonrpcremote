@@ -249,7 +249,7 @@ message. The reference server answers with these codes:
 | `-32001` | `RobotJsonRpcErrorCode.KEYWORD_NOT_FOUND` | A keyword that the library does not have. |
 | `-32602` | `INVALID_PARAMS` of JSON-RPC              | The import of a library that the server does not serve, an import without a name if the server has no default library, and params that cannot be converted. |
 | `-32601` | `METHOD_NOT_FOUND` of JSON-RPC            | A method that the server does not have. |
-| `-32600` | `INVALID_REQUEST` of JSON-RPC             | A message that is not a valid JSON-RPC request. |
+| `-32600` | `INVALID_REQUEST` of JSON-RPC             | A message that is not a JSON object, an empty batch, or a message whose `jsonrpc` is not `2.0`. |
 | `-32700` | `PARSE_ERROR` of JSON-RPC                 | A message that is not valid JSON. |
 | `-32603` | `INTERNAL_ERROR` of JSON-RPC              | Anything else, such as an unknown library token, a return value that cannot be transferred, a library that fails to import, or a server that is stopping. |
 
