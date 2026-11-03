@@ -1,0 +1,57 @@
+# Tasks
+
+Every new test is run once against the code without the part of the change it covers, and must fail there. A keyword call over a broken connection can hang, so these checks and all runs on the Windows VM have a hard time limit. Copy no `__pycache__` to the VM: bytecode from Linux with the same Python version makes tests fail there with `???` as their source.
+
+## 1. The Windows path in `jsonrpcpeer`
+
+- [ ] 1.1 Create `packages/jsonrpcpeer/src/jsonrpcpeer/_win32_pipes.py` with `is_overlapped()`, `check_for_iocp()`, `private_pipe_handle()` and `set_standard_handles()`, and give `open_stdio_connection()` its Windows branch (design decisions 3 to 5 and 10). Verify in `tests/test_stdio_connection.py`, whose parent now uses a pair of overlapped pipes on Windows (task 1.2), with the `skipif(win32)` removed, so that all scenarios of `add-stdio-streams` run there, and with new tests for Windows only:
+  - **Requirement On Windows the connection over stdin and stdout uses overlapped pipes:** Large messages, No thread for the streams.
+  - **Requirement On Windows the moved streams also reach the standard handles:** Native write to the standard output handle, Child process that writes and reads.
+  - **Requirement On Windows the connection is refused without overlapped pipes or a proactor:** all four scenarios.
+
+  This adds no Robot test for the function itself, because Robot Framework sees it only through the server, which 3.1 covers.
+- [ ] 1.2 Add `create_stdio_subprocess()` to `stdio.py`, with its Windows part in `_win32_pipes.py`, and export it (design decisions 2 and 8). Verify in `tests/test_stdio_connection.py` on all platforms: the five scenarios of the requirement A process can be started with a connection over its stdin and stdout; on Windows, Command that cannot be started checks that the parent's handles are closed. Verify the three scenarios of the requirement On Windows a process started without a console opens no window with fakes for `asyncio.create_subprocess_exec` and the console check, and once on the VM with a parent started without a console, with no window in a screenshot. This adds no Robot test for the same reason as 1.1; the client's use is covered in 2.3.
+
+## 2. The client
+
+- [ ] 2.1 In `_Session._create_stdio_connection`, use `create_stdio_subprocess()`. Add `_split_command()` (design decision 7). Verify in `tests/test_client_connection.py`: the three scenarios of the requirement On Windows a backslash in a stdio command is an ordinary character, with `sys.platform` patched for the Windows cases, and `test_stdio_bad_command_raises_os_error` as it is. Remove the `skipif` markers of the stdio tests, and add `_pid_exists()` (design decision 9). The Robot test for backslashes is that `atests/stdio_vars.py` builds its commands from `sys.executable`, which has backslashes on Windows.
+- [ ] 2.2 In `_Session._run`, pass `loop_factory=asyncio.ProactorEventLoop` on Windows, with an `if` statement (design decisions 7 and 10). Verify with a test in `tests/test_client_connection.py` for Windows only, covering the scenario A library has set the selector policy: a child process sets `asyncio.WindowsSelectorEventLoopPolicy`, starts a `_Session` on a `stdio:` URI and runs a keyword. It adds no Robot test, because the policy is process-wide and a Robot test would need a nested run for the same check.
+- [ ] 2.3 Remove the tag `posix` from `atests/stdio_echo.robot`, `stdio_probe.robot`, `stdio_scope.robot`, `stdio_lost_connection.robot`, `stdio_connect_retry.robot`, `stdio_output.robot` and `stdio_own_server.robot`. Remove `atests/stdio_windows.robot` and the Windows tests of the refusal in `tests/test_server_stdio.py`. Update the comment in `robot.toml`. Remove `skipif` from the tests of `add-stdio-streams` in `tests/test_server_stdio.py` and `tests/test_example_server.py`. Verify on the VM that all these suites pass. This covers the scenarios Python server, Server that exits during a call and the requirements for stdio mode on Windows.
+- [ ] 2.4 Add `atests/node_keywords.js` and `atests/stdio_node_server.robot`, with a variable for the command in `atests/stdio_vars.py` (design decision 9): results, umlauts, a failing keyword, a log message, an asynchronous keyword, 1 MiB in both directions and 100 calls. Add a `.cmd` file for the scenario Wrapper script, used only on Windows. Verify locally and on the VM. This covers the scenarios Server in another language and Wrapper script. Against the code without `_split_command()` of 2.1, the suite must fail on the VM, because its path has backslashes. On POSIX it also passes without this change, because it guards what works there already.
+
+## 3. The server
+
+- [ ] 3.1 Remove `(POSIX only)` from the help of `--stdio` in `packages/server/src/robot_jsonrpcremote_server/__main__.py`. Verify with new tests:
+  - `tests/test_server_cli.py` for Windows, covering the requirement On Windows stdio mode needs overlapped pipes: Pipes that subprocess creates, Null device on stdin and Regular file on stdin. Remove the `skipif` of `test_stdio_server_with_a_stdin_that_cannot_be_watched_fails_to_start`, with the message for the null device depending on the platform. `test_stdio_server_with_a_closed_pipe_on_stdin_ends_normally` uses `subprocess` pipes, so on Windows it starts the server with `create_stdio_subprocess()`.
+  - `tests/test_server_stdio.py` for all platforms, covering the requirement stdio mode works on Windows: Keywords and the moved streams, with the test of `add-stdio-streams` that captures stderr, and End of the input with exit code 0.
+
+## 4. CI
+
+- [ ] 4.1 In `.github/workflows/ci.yml`, add the step `uv run mypy --platform win32` to the job `lint` (design decision 10). Verify that it passes locally, with `.venv/bin/python -m mypy --platform win32`, and that it reports an error for an obviously wrong call in `_win32_pipes.py`, which is then removed again. It adds no test, because it adds no behavior.
+
+## 5. Documentation
+
+- [ ] 5.1 In `docs/src/content/docs/guides/tcp-and-stdio.mdx`, set the row Platforms of stdio to all, remove the limit **POSIX only**, and add that on Windows a backslash in the command is an ordinary character. In `docs/src/content/docs/reference/server.mdx`, remove `on POSIX systems only`, and describe the failed start for a stdin or stdout that is not an overlapped pipe. In `packages/server/README.md`, remove `(POSIX only)`. In `docs/src/content/docs/roadmap.mdx`, drop the limit of the stdio transport to POSIX systems. Review the pages against the suites of 2.3.
+- [ ] 5.2 In `docs/src/content/docs/reference/protocol.mdx`, add the section with the rule from design decision 11. In `packages/jsonrpcpeer/README.md`, describe `create_stdio_subprocess()`. Verify by running the snippet of the README on Linux and on the VM. Verify `npm ci` and `npm run build` in `docs/`, which also check the internal links of 5.1 and 5.2.
+
+## 6. Integration checks
+
+- [ ] 6.1 Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run mypy --platform win32` and `uv run --all-packages pytest`; verify all pass.
+- [ ] 6.2 Run `uv run --all-packages robotcode run`, and with `--with "robotframework==7.2"`; verify all Robot suites pass.
+- [ ] 6.3 On the Windows VM, with `uv sync --all-packages` and hard time limits, run the unit tests and `robotcode run` on Python 3.12, 3.14, 3.15 and 3.14t, and with Robot Framework 7.2; verify all pass and that no process stays behind.
+- [ ] 6.4 Run the unit tests and all Robot suites on Linux with Python 3.14, 3.15 and 3.14t by the recipe for several Python versions; verify all pass and POSIX shows no difference.
+- [ ] 6.5 Run `uv run --all-packages bash docs/examples/<name>/run.sh` for every example; verify all pass.
+- [ ] 6.6 If docker can be installed on the VM, try `stdio:docker run -i ...` with a Node server, and record the result in the design; otherwise, the design keeps it as not tested.
+- [ ] 6.7 Commit the change, this `tasks.md` and the updated planning artifacts as one signed commit on `main` (`git commit -S`), staging only the paths of this change, because another session may work on `main`:
+  - **Subject:** `feat: support stdio on Windows with overlapped pipes`.
+  - **Body:** explains why asyncio needs overlapped handles, why the client creates them for every server, the rule for foreign servers, and why the move of the streams is mandatory there.
+  - **No** `Refs` and no co-author.
+
+  Verify with `uv run --all-packages cz check --rev-range HEAD~1..HEAD` and `git log --show-signature -1`.
+
+## Workflow follow-up
+
+- Daniel pushes `main`; check that CI and the docs workflow pass, with the stdio suites and the Node suite running on `windows-latest` in the uploaded `output.xml`, and not skipped. A failure gets its own fix commit before the archive.
+- Archive the change with `/opsx:archive` and sync its delta specs into `openspec/specs/jsonrpc-peer`, `openspec/specs/client` and `openspec/specs/server`.
+- Commit the archive as its own signed commit: `docs(openspec): archive add-windows-stdio`.
+- Update the backlog in `playground/anforderungen-und-ideen.md`. The hang from the proactor's self pipe stays an open item.
