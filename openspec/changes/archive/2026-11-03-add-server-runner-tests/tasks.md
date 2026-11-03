@@ -4,7 +4,7 @@ This change adds tests and changes no code, so there is no part of a change to t
 
 It adds no Robot test, because it changes no behavior that Robot Framework could observe, and it changes no documentation, for the same reason. The Robot suites run as a regression check in group 3, and `add-robot-integration-tests` brings the Robot tests for the default library and the allowlist.
 
-A test that reveals a bug is marked with `pytest.mark.xfail(strict=True, reason=...)`, with the reason naming the bug, and the bug goes into the backlog for a change of its own. The probes for this plan on 2026-11-03 found none. The mutation test of 3.1 led to a probe that found SERVER-21: a keyword with `sys.exit()` ends the whole server. It is no regression, so it goes to the backlog without a test here.
+A test that reveals a bug is marked with `pytest.mark.xfail(strict=True, reason=...)`, with the reason naming the bug, and the bug goes into the backlog for a change of its own. The probes for this plan on 2026-11-03 found none.
 
 ## 1. Tests over the protocol
 
