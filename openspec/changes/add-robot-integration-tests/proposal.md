@@ -39,7 +39,7 @@ _None._
 
 ## Impact
 
-- **Tests:** `atests/`; a suite that needs a server of its own gets the next free fixed port after 8282.
+- **Tests:** `atests/`; a suite that needs a server of its own gets the next free fixed port after 8283.
 - **CI:** the Robot step takes longer.
 - **Code:** `get_keyword_source` in `src/JsonRpcRemote/__init__.py`.
 - **Docs:** the roadmap and the protocol page say that the source of a keyword comes with its line.
