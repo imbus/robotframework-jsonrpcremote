@@ -4,6 +4,7 @@ Documentation     rpc_scope given as a string from Python, as by a library built
 ...               scopes. The client library is imported in the first test, once the server runs. Uses its
 ...               own server on port 8279, so the shared server used by the other suites is unaffected.
 Library           IsolatedServerControl.py
+Library           NestedRobot.py
 Suite Setup       Start Jsonrpc Server    SessionValueLib    port=${PORT}    pythonpath=${CURDIR}
 Suite Teardown    Stop Jsonrpc Server
 
@@ -32,3 +33,11 @@ An Unknown rpc_scope Fails The Import And Names The Valid Scopes
     [Documentation]    The client converts rpc_scope the way Robot Framework does, with its error.
     Run Keyword And Expect Error    *Available: 'GLOBAL', 'SUITE' and 'TEST'*
     ...    Import Library    JsonRpcRemote    ${URI}    SessionValueLib    rpc_scope=weekly
+
+A GLOBAL Session Keeps Its State Across Suites
+    Run Nested Suite    ${CURDIR}${/}_nested${/}scopes    ${OUTPUT_DIR}${/}nested-scope-global
+    ...    PORT:${PORT}    SCOPE:GLOBAL    EXPECTED:kept
+
+A SUITE Session Ends With Its Suite
+    Run Nested Suite    ${CURDIR}${/}_nested${/}scopes    ${OUTPUT_DIR}${/}nested-scope-suite
+    ...    PORT:${PORT}    SCOPE:SUITE    EXPECTED:None

@@ -6,6 +6,13 @@ from robot.api.deco import keyword
 from robot.libraries.BuiltIn import register_run_keyword
 
 
+class Thing:
+    """An object that only Python peers can exchange, and only with this module on both sides."""
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+
 class ArgumentValuesLib:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._init = (args, sorted(kwargs.items()))
@@ -25,6 +32,34 @@ class ArgumentValuesLib:
     def var_kwargs(self, **values: Any) -> str:
         """Returns the ``repr`` of what it got."""
         return repr(sorted(values.items()))
+
+    def positional_only(self, first: Any, second: Any = 2, /) -> str:
+        """Returns the ``repr`` of what it got."""
+        return repr((first, second))
+
+    def named_only(self, first: Any, *, key: Any, other: Any = "o") -> str:
+        """Returns the ``repr`` of what it got."""
+        return repr((first, key, other))
+
+    def all_kinds(self, first: Any, /, second: Any = 2, *rest: Any, key: Any = "k", **others: Any) -> str:
+        """Returns the ``repr`` of what it got."""
+        return repr((first, second, rest, key, sorted(others.items())))
+
+    def same_value(self, value: Any) -> Any:
+        """Returns the value that it got."""
+        return value
+
+    def type_name_of(self, value: Any) -> str:
+        """Returns the name of the type of the value that it got."""
+        return type(value).__name__
+
+    def make_thing(self, value: Any) -> Thing:
+        """Returns an instance of a class of this library."""
+        return Thing(value)
+
+    def value_of_thing(self, thing: Thing) -> Any:
+        """Returns the value of an instance of a class of this library."""
+        return thing.value
 
     def words_of_a_variant(self, *words: Any) -> str:
         """Returns the ``repr`` of what it got, unresolved, which is what ``Run Keywords`` looks through."""

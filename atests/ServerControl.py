@@ -24,6 +24,7 @@ class ServerControl:
         timeout: float = 20.0,
         wait: bool = True,
         send_tracebacks: bool = False,
+        variablefile: str = "",
     ) -> None:
         """Start the real server as a subprocess and wait until it accepts connections.
 
@@ -40,6 +41,8 @@ class ServerControl:
             command += ["--pythonpath", pythonpath]
         for variable in variables.split():
             command += ["--variable", variable]
+        if variablefile:
+            command += ["--variablefile", variablefile]
         command += libraries.split()
 
         self._process = subprocess.Popen(command)

@@ -68,3 +68,13 @@ class NestedRobot:
             if candidate.name == test:
                 candidate.visit(collector)
         return collector.messages
+
+    def get_messages_by_keyword(self, output: str, test: str) -> list[str]:
+        """Returns ``keyword: message`` for the messages under the keywords of ``test`` in the file ``output``."""
+        return [
+            f"{keyword.full_name}: {message.message}"
+            for candidate in ExecutionResult(output).suite.all_tests
+            if candidate.name == test
+            for keyword in candidate.body
+            for message in keyword.messages
+        ]

@@ -123,6 +123,31 @@ def test_argument_default_with_nested_values_arrives_unchanged(server: FakeServe
         remote._stop_session()
 
 
+@pytest.mark.parametrize(
+    ("source", "lineno", "expected"),
+    [
+        ("/srv/MyLibrary.py", 14, "/srv/MyLibrary.py:14"),
+        ("C:\\srv\\MyLibrary.py", 14, "C:\\srv\\MyLibrary.py:14"),
+        ("/srv/MyLibrary.py", None, "/srv/MyLibrary.py"),
+        (None, 14, None),
+        (None, None, None),
+    ],
+    ids=["source and line", "windows path and line", "source only", "line only", "neither"],
+)
+def test_keyword_source_comes_with_its_line(
+    server: FakeServer, source: str | None, lineno: int | None, expected: str | None
+) -> None:
+    keyword = KeywordDefinition(name="Echo", args=[], source=source, lineno=lineno)
+    definition = LibraryDefinition(name="FakeLib", keywords=[keyword])
+    server.script(IMPORT_LIBRARY_REQUEST, ImportLibraryResult(token="t", definition=definition))
+
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        assert remote.get_keyword_source("Echo") == expected
+    finally:
+        remote._stop_session()
+
+
 # --- a failed keyword call affects only that call --------------------------------
 
 

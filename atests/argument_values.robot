@@ -105,6 +105,56 @@ A Run Keyword Variant Finds Control Words
     ${remote}=    Remote.Words Of A Variant    first    AND    second    ELSE    C:\\temp    \${amount}
     Should Be Equal    ${remote}    ${local}
 
+Var Args Without Values
+    Var Args
+
+Var Args With Values Of Several Types
+    Var Args    a    ${1}    ${True}    ${None}
+
+Var Args From A List Variable
+    Var Args    @{{[1, "b"]}}
+
+Var Kwargs From Named Arguments
+    Var Kwargs    x=1    y=${2}
+
+Var Kwargs From A Dict Variable
+    Var Kwargs    &{{{"a": 1}}}
+
+Positional Only With One Value
+    [Documentation]    Without the template: Robot would take its empty dict variable as the second value.
+    [Template]    NONE
+    ${local}=    Local.Positional Only    a
+    ${remote}=    Remote.Positional Only    a
+    Should Be Equal    ${remote}    ${local}
+
+Positional Only With Two Values
+    [Template]    NONE
+    ${local}=    Local.Positional Only    a    b
+    ${remote}=    Remote.Positional Only    a    b
+    Should Be Equal    ${remote}    ${local}
+
+A Positional-Only Argument Given By Name Stays Text
+    [Template]    NONE
+    ${local}=    Local.Positional Only    first=a
+    ${remote}=    Remote.Positional Only    first=a
+    Should Be Equal    ${remote}    ${local}
+
+Named Only With Its Required Argument
+    Named Only    a    key=b
+
+Named Only With Its Optional Argument
+    Named Only    a    key=b    other=c
+
+All Kinds Of Arguments At Once
+    All Kinds    a    b    c    d    key=e    f=g
+
+A Missing Named-Only Argument Fails As For A Local Keyword
+    [Template]    NONE
+    Run Keyword And Expect Error    Keyword 'Local.Named Only' missing named-only argument 'key'.
+    ...    Local.Named Only    a
+    Run Keyword And Expect Error    Keyword 'Remote.Named Only' missing named-only argument 'key'.
+    ...    Remote.Named Only    a
+
 Positional Values Of A Library Import
     [Template]    NONE
     ${local}=    LocalPositional.Init Values

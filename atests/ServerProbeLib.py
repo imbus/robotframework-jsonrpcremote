@@ -58,6 +58,14 @@ class ServerProbeLib:
         logger.debug(f"{marker} at DEBUG")
         logger.info(f"{marker} at INFO")
 
+    def emit_html_log(self, message: str) -> None:
+        """Logs a message with HTML on the server."""
+        logger.info(message, html=True)
+
+    def print_html(self, message: str) -> None:
+        """Prints a message with the marker that makes it HTML."""
+        print("*HTML*" + message)
+
     def emit_log(self, message: str) -> str:
         """Logs a message on the server; it should be forwarded to the client."""
         logger.info(message)

@@ -161,8 +161,9 @@ on which the client imports one library:
   - `args`: list of `ArgumentDefinition`.
   - `doc`: string (optional).
   - `tags`: list of strings (optional).
-  - `source`: string (optional).
-  - `lineno`: integer (optional).
+  - `source`: string (optional): the path of the file that defines the keyword.
+  - `lineno`: integer (optional): the line where the keyword is defined. The
+    client passes it to Robot Framework with `source`, and ignores it without one.
 - **`ArgumentDefinition`**
   - `name`: string.
   - `type`: string (optional): the type hint as text, such as `"int"`. The

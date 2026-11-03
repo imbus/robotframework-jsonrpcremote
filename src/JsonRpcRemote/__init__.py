@@ -993,7 +993,9 @@ class JsonRpcRemote:
         return self._get_keyword_definition(name).tags
 
     def get_keyword_source(self, name: str) -> str | None:
-        return self._get_keyword_definition(name).source
+        keyword = self._get_keyword_definition(name)
+        # Without a path, Robot Framework would pair the line with the source file of this library.
+        return f"{keyword.source}:{keyword.lineno}" if keyword.source and keyword.lineno else keyword.source
 
     async def run_keyword(self, name: str, args: Sequence[Any], named: Mapping[str, Any]) -> Any:
         # Read once: the call stays with this session, and the `finally` cannot start a new one.
