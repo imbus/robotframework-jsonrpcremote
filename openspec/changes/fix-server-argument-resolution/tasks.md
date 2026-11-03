@@ -59,8 +59,9 @@ The Robot suite `atests/argument_values.robot` compares each case with a local l
 - [ ] 5.1 Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy` and `uv run --all-packages pytest`; verify all pass.
 - [ ] 5.2 Run `uv run --all-packages robotcode run`, and with `--with "robotframework==7.2"` for pytest and Robot; verify all pass.
 - [ ] 5.3 Run the unit tests on Python 3.13, 3.14 and 3.15 in scratch environments, with `UV_PROJECT_ENVIRONMENT=<scratch>/venv-<version> UV_PYTHON=<version> uv run --all-packages --dev pytest -q`, and restore the environment afterwards with `uv sync --all-extras --all-packages --dev`; verify all pass.
-- [ ] 5.4 Build the site with `npm ci` and `npm run build` in `docs/`, and run `uv run --all-packages bash docs/examples/getting-started/run.sh` and `uv run --all-packages bash docs/examples/several-libraries/run.sh`; verify all pass.
-- [ ] 5.5 Commit the change, this `tasks.md` and the updated planning artifacts as one signed commit on `main` (`git commit -S`), once Daniel has given the go:
+- [ ] 5.4 On the Windows test VM, run `uv run --all-packages pytest` and `uv run --all-packages robotcode run` in a copy of the working tree without `__pycache__`, set up with `uv sync --all-extras --all-packages --dev --python 3.12`; verify all pass, and that `test_library_from_a_path_is_imported` and `atests/library_path.robot` import from a path with real backslashes.
+- [ ] 5.5 Build the site with `npm ci` and `npm run build` in `docs/`, and run `uv run --all-packages bash docs/examples/getting-started/run.sh` and `uv run --all-packages bash docs/examples/several-libraries/run.sh`; verify all pass.
+- [ ] 5.6 Commit the change, this `tasks.md` and the updated planning artifacts as one signed commit on `main` (`git commit -S`), once Daniel has given the go:
   - **Subject:** `fix(server): keep values from a client unchanged, and run keywords with embedded arguments`.
   - **Body:** explains that the server resolved finished values a second time, so that paths and regular expressions changed silently, text with `${...}` failed or was replaced on the server, and library paths could not be imported; that keywords with embedded arguments never worked; how the fix keeps control words working; and that a name with values filled in is now answered with `KEYWORD_NOT_FOUND`.
   - **No** `Refs` and no co-author.
@@ -69,7 +70,7 @@ The Robot suite `atests/argument_values.robot` compares each case with a local l
 
 ## Workflow follow-up
 
-- Daniel pushes `main`; check that CI and the docs workflow pass. The Windows jobs are the first to run the library path with real backslashes. A failure gets its own fix commit before the archive.
+- Daniel pushes `main`; check that CI and the docs workflow pass. The Windows jobs confirm on a released Windows what 5.4 showed on the VM, which runs a preview build. A failure gets its own fix commit before the archive.
 - Archive the change with `/opsx:archive`, sync its delta spec into `openspec/specs/server`, and commit the archive as its own signed commit, once Daniel has given the go: `docs(openspec): archive fix-server-argument-resolution`.
 - In `playground/anforderungen-und-ideen.md`, set SERVER-14 and SERVER-22 to done, and add the named values of an import that are not strings as a new item.
 - In the proposal of `add-robot-integration-tests`, the next free fixed port is then the one after 8283.

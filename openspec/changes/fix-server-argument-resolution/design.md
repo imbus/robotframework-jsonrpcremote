@@ -8,7 +8,7 @@ See proposal.md for the motivation. What the server does today:
 - **Embedded arguments:** for such a keyword, `create_runner` returns an `EmbeddedArgumentsRunner`, which parses values from the name and puts them before `args`. Robot's dynamic API calls the client's `run_keyword` with the name of the definition, such as `Embedded ${value} In The Name`, and the values in `args`. So `${value}` becomes a value, and the real values come after it.
 - **Library import:** `_endpoint.py` turns named values into `name=value` strings, and `_robot_import_library` calls `context.namespace.import_library(name, args, token)`. Robot resolves the name, the arguments and the alias, which is the token.
 
-The decisions below were tried out on a copy of the server against Robot Framework 7.2 and 7.5, with the same results on both: 44 keyword cases compared with a local library, import arguments, library paths, and `BuiltIn` as a remote library.
+The decisions below were tried out on a copy of the server against Robot Framework 7.2 and 7.5 on Linux, and against 7.5 on Windows 11, with the same results on all three: 44 keyword cases compared with a local library, import arguments, library paths, and `BuiltIn` as a remote library. On Windows, the current server turns a real library path into `C:Usersdaniejsonrpc-9bprobe9PathLib.py`, and the copy imports it.
 
 ## Goals / Non-Goals
 
