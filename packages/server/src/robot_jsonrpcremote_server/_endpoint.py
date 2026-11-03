@@ -213,13 +213,9 @@ class RobotServerEndpoint:
         logger.debug("Importing library: %s", lib_name)
         token = f"{lib_name}_{self._endpoint_id}_{next(self._token_ids)}"
 
-        # Positional args keep their JSON types; keyword args are forwarded as
-        # Robot's "name=value" entries, which Robot resolves and converts using
-        # the library's __init__ signature (just like in a Library setting).
-        init_args: list[Any] = list(params.args or [])
-        init_args += [f"{name}={value}" for name, value in (params.kw_args or {}).items()]
-
-        lib_definition = await self.remote_context.import_library(lib_name, init_args, token, subscriber=self)
+        lib_definition = await self.remote_context.import_library(
+            lib_name, params.args or [], params.kw_args or {}, token, subscriber=self
+        )
         self._imported_tokens.add(token)
         return ImportLibraryResult(
             token=token,

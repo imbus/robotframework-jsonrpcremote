@@ -45,6 +45,9 @@ Content-Length: 60\r\n
 - Arguments and return values of keywords, the argument defaults in a library
   definition and the arguments of `robot/import_library` are JSON values, whose
   lists and objects may be nested to any depth.
+- Values are final: a client sends them as they are meant to arrive. The
+  reference server hands them to the library unchanged and resolves no variables
+  or escapes in them.
 - In addition, the Python implementation sends Python objects as
   `{"__pickled__": "<hex>"}`, where `<hex>` is a Python pickle of the object in
   hexadecimal, so they travel unchanged between Python peers. It does so for
@@ -178,7 +181,9 @@ on which the client imports one library:
 
 - **`RunKeywordParams`**
   - `library_token`: string: the token from `ImportLibraryResult`.
-  - `name`: string: the keyword name from the library definition.
+  - `name`: string: the keyword name from the library definition. A keyword with
+    embedded arguments goes by that name too, such as `Add ${count} Items`, and
+    `args` starts with their values.
   - `args`: list (optional): positional arguments.
   - `kwargs`: object (optional): named arguments.
 - **`RunKeywordResult`**

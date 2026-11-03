@@ -81,7 +81,7 @@ Locally, `num=${5}` gets the integer `5`. Remotely, it gets `"5"`, unless a type
 
 ### 7. The Robot suite compares with a local library
 
-`atests/argument_values.robot` imports the same library locally and remotely and compares the results. That says directly what the specs ask for. The template keyword passes the values with list variables through `BuiltIn.Run Keyword`, so that it does not resolve them once more. A value with `${...}` in the name of an embedded keyword gets a direct call, because the template would resolve the name. The unit tests state the exact values.
+`atests/argument_values.robot` imports the same library locally and remotely and compares the results. That says directly what the specs ask for. The template keyword passes the values with list variables through `Run Keyword`, so that it does not resolve them once more. Keywords with embedded arguments get a suite of their own without the template, `atests/embedded_arguments.robot`, because `Run Keyword` would resolve the values in their names a second time, locally as well, and a broken value would then pass. The unit tests state the exact values.
 
 ## Risks / Trade-offs
 

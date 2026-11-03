@@ -48,9 +48,10 @@ The server runs Robot Framework itself: it imports the libraries in an
 execution of its own and runs their keywords there. A remote keyword therefore
 sees the variables of the server's execution, set with `--variable`,
 `--variablefile` and `--outputdir`, not those of the suite that calls it; for
-example, `${TEST NAME}` is the name of the server's internal test. `BuiltIn`
-keywords that a library calls, for example to set a variable or to run another
-keyword, act on the server's execution, too.
+example, `${TEST NAME}` is the name of the server's internal test. The values
+of its arguments come finished from the client: the server resolves no variables
+or escapes in them. `BuiltIn` keywords that a library calls, for example to set a
+variable or to run another keyword, act on the server's execution, too.
 
 ## Starting
 

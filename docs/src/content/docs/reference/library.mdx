@@ -45,7 +45,8 @@ Positional values are passed on as JSON values, and lists and dicts keep their
 nesting. Named values are converted on the server according to the type hints
 of the library's `__init__`, so `int`, `float`, `bool`, `Decimal`, `date`,
 `Enum`, `list`, `dict` and other types that Robot Framework converts work;
-without type hints, they arrive as strings.
+without type hints, they arrive as strings. Strings arrive as the suite resolved
+them, so a Windows path or a regular expression stays as it is.
 
 ## Options of the client
 

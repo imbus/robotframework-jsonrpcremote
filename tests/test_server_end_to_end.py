@@ -95,6 +95,9 @@ class EndToEndLib:
     def repr_of(self, value):
         return repr(value)
 
+    def repr_of_named(self, **values):
+        return repr(values)
+
     @keyword("Do ${something}")
     def do_something(self, something):
         pass
@@ -102,6 +105,22 @@ class EndToEndLib:
     @keyword("${someone} Now")
     def someone_now(self, someone):
         pass
+
+    @keyword("Do ${what} Now")
+    def do_what_now(self, what):
+        return repr(what)
+
+    @keyword("Add ${count} Items")
+    def add_items(self, count):
+        return repr(count)
+
+    @keyword("Copy ${name} To")
+    def copy_to(self, name, target):
+        return repr((name, target))
+
+    @keyword("Wait ${seconds:\\\\d+} Seconds")
+    def wait_seconds(self, seconds: int):
+        return repr(seconds)
 """
 
 MISSING_DEPENDENCY_LIBRARY = """\
@@ -164,6 +183,21 @@ class DescribedLib:
         **others: int,
     ):
         "Documentation of the keyword."
+"""
+
+INIT_VALUES_LIBRARY = """\
+class InitValuesLib:
+    def __init__(self, *args, items: list = None, **kwargs):
+        self.values = (args, items, kwargs)
+
+    def values_of_init(self):
+        return repr(self.values)
+"""
+
+PATH_LIBRARY = """\
+class PathLib:
+    def from_a_path(self):
+        return "from a path"
 """
 
 SECOND_LIBRARY = """\
@@ -235,6 +269,7 @@ def library_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
     (directory / "ClosingLib.py").write_text(CLOSING_LIBRARY)
     (directory / "DescribedLib.py").write_text(DESCRIBED_LIBRARY)
     (directory / "SecondLib.py").write_text(SECOND_LIBRARY)
+    (directory / "InitValuesLib.py").write_text(INIT_VALUES_LIBRARY)
     return directory
 
 
@@ -289,9 +324,11 @@ class _Session:
         await self.initialize(log_level)
         await self.peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
 
-    async def import_library(self, name: str) -> ImportLibraryResult:
+    async def import_library(
+        self, name: str, args: list[Any] | None = None, kw_args: dict[str, Any] | None = None
+    ) -> ImportLibraryResult:
         imported = await self.peer.send_request_typed(
-            ImportLibraryResult, IMPORT_LIBRARY_REQUEST, ImportLibraryParams(name=name)
+            ImportLibraryResult, IMPORT_LIBRARY_REQUEST, ImportLibraryParams(name=name, args=args, kw_args=kw_args)
         )
         self.token = imported.token
         return imported
@@ -303,9 +340,13 @@ class _Session:
             FinalizeLibraryParams(token=self.token if token is None else token),
         )
 
-    async def run_keyword(self, name: str, args: list[Any] | None = None) -> RunKeywordResult:
+    async def run_keyword(
+        self, name: str, args: list[Any] | None = None, kwargs: dict[str, Any] | None = None
+    ) -> RunKeywordResult:
         return await self.peer.send_request_typed(
-            RunKeywordResult, RUN_KEYWORD_REQUEST, RunKeywordParams(library_token=self.token, name=name, args=args)
+            RunKeywordResult,
+            RUN_KEYWORD_REQUEST,
+            RunKeywordParams(library_token=self.token, name=name, args=args, kwargs=kwargs),
         )
 
     def library_messages(self) -> list[str]:
@@ -479,11 +520,51 @@ async def test_keyword_that_does_not_exist_is_answered_with_keyword_not_found(se
     assert error.message not in server.log()
 
 
-async def test_keyword_name_with_several_matches_names_the_library(port: int) -> None:
+async def test_name_with_embedded_values_is_answered_with_keyword_not_found(port: int) -> None:
     async with _session(port) as session:
         error = await _error_of(session.run_keyword("Do It Now"))
 
-    assert error.message == "Multiple keywords named 'Do It Now' found in library 'EndToEndLib'."
+    assert error.code == -32001
+    assert error.message == "Keyword 'Do It Now' not found in library 'EndToEndLib'."
+
+
+@pytest.mark.parametrize("value", ["3", [1, 2], "C:\\temp", "${amount}"])
+async def test_keyword_with_embedded_arguments_gets_the_value(port: int, value: str | list[int]) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Add ${count} Items", [value])
+
+    assert result.error is None
+    assert result.result == repr(value)
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs"), [(["a", "b"], None), (["a"], {"target": "b"})], ids=["positional", "named"]
+)
+async def test_keyword_with_embedded_arguments_gets_further_arguments(
+    port: int, args: list[str], kwargs: dict[str, str] | None
+) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Copy ${name} To", args, kwargs)
+
+    assert result.error is None
+    assert result.result == repr(("a", "b"))
+
+
+@pytest.mark.parametrize("value", ["5", 5])
+async def test_embedded_argument_with_a_type_and_its_own_pattern(port: int, value: str | int) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Wait ${seconds:\\d+} Seconds", [value])
+
+    assert result.error is None
+    assert result.result == "5"
+
+
+async def test_keyword_whose_name_fits_other_keywords_is_found(port: int) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Do ${what} Now", ["it"])
+
+    assert result.error is None
+    assert result.result == "'it'"
 
 
 async def test_library_that_the_server_does_not_serve_is_refused_with_invalid_params(server: _Server) -> None:
@@ -557,6 +638,161 @@ async def test_keyword_gets_a_boolean_as_a_boolean(port: int) -> None:
 
     assert result.error is None
     assert result.result == "True"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["C:\\temp\\new", "\\d+", "end\\", "\\", "a\\nb", "${amount}", "@{items}", "&{map}", "%{PATH}", "${{1+1}}"],
+)
+async def test_keyword_gets_a_string_unchanged(port: int, value: str) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of", [value])
+
+    assert result.error is None
+    assert result.result == repr(value)
+
+
+async def test_keyword_gets_an_equals_sign_in_a_positional_value(port: int) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of", ["value=1"])
+
+    assert result.error is None
+    assert result.result == "'value=1'"
+
+
+@pytest.mark.parametrize("value", [["C:\\temp", "${amount}"], {"path": "C:\\temp", "text": "${amount}"}])
+async def test_keyword_gets_strings_in_a_list_or_a_dict_unchanged(port: int, value: list[str] | dict[str, str]) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of", [value])
+
+    assert result.error is None
+    assert result.result == repr(value)
+
+
+@pytest.mark.parametrize("value", ["C:\\temp\\new", "${amount}"])
+async def test_keyword_gets_a_named_string_unchanged(port: int, value: str) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of", kwargs={"value": value})
+
+    assert result.error is None
+    assert result.result == repr(value)
+
+
+@pytest.mark.parametrize("name", ["a\\b", "${key}", "a=b"])
+async def test_keyword_gets_the_name_of_a_named_argument_unchanged(port: int, name: str) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of Named", kwargs={name: "1"})
+
+    assert result.error is None
+    assert result.result == repr({name: "1"})
+
+
+@asynccontextmanager
+async def _session_with_builtin(server: _Server) -> AsyncIterator[_Session]:
+    """A session with Robot's library BuiltIn imported, whose keywords run other keywords."""
+    async with _connection(server.port) as session:
+        await session.handshake()
+        await session.import_library("BuiltIn")
+        yield session
+
+
+async def test_run_keywords_finds_and(server_without_libraries: _Server) -> None:
+    async with _session_with_builtin(server_without_libraries) as session:
+        result = await session.run_keyword("Run Keywords", ["Log", "first", "AND", "Log", "second"])
+
+    assert result.error is None
+    assert "first" in session.messages
+    assert "second" in session.messages
+
+
+async def test_run_keyword_if_finds_else(server_without_libraries: _Server) -> None:
+    async with _session_with_builtin(server_without_libraries) as session:
+        result = await session.run_keyword("Run Keyword If", [False, "Fail", "no", "ELSE", "Set Variable", "fine"])
+
+    assert result.error is None
+    assert result.result == "fine"
+
+
+async def test_run_keyword_gets_a_string_unchanged(server_without_libraries: _Server) -> None:
+    async with _session_with_builtin(server_without_libraries) as session:
+        result = await session.run_keyword("Run Keyword", ["Set Variable", "C:\\temp\\new"])
+
+    assert result.error is None
+    assert result.result == "C:\\temp\\new"
+
+
+@pytest.mark.parametrize("word", ["AND", "ELSE", "ELSE IF", "AS", "WITH NAME"])
+async def test_keyword_gets_a_control_word_unchanged(port: int, word: str) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of", [word])
+
+    assert result.error is None
+    assert result.result == repr(word)
+
+
+async def _values_of_init(server: _Server, args: list[Any] | None = None, kw_args: dict[str, Any] | None = None) -> Any:
+    """What the __init__ of a library gets from an import with ``args`` and ``kw_args``."""
+    async with _connection(server.port) as session:
+        await session.handshake()
+        await session.import_library("InitValuesLib", args, kw_args)
+        result = await session.run_keyword("Values Of Init")
+
+    assert result.error is None
+    return result.result
+
+
+@pytest.mark.parametrize("value", ["C:\\temp\\new", "${amount}"])
+async def test_library_gets_a_string_unchanged(server_without_libraries: _Server, value: str) -> None:
+    assert await _values_of_init(server_without_libraries, args=[value]) == repr(((value,), None, {}))
+
+
+async def test_library_gets_an_equals_sign_in_a_positional_value(server_without_libraries: _Server) -> None:
+    assert await _values_of_init(server_without_libraries, args=["key=value"]) == repr((("key=value",), None, {}))
+
+
+@pytest.mark.parametrize("value", ["C:\\temp\\new", "${amount}"])
+async def test_library_gets_a_named_string_unchanged(server_without_libraries: _Server, value: str) -> None:
+    assert await _values_of_init(server_without_libraries, kw_args={"path": value}) == repr(((), None, {"path": value}))
+
+
+@pytest.mark.parametrize("name", ["a\\b", "${key}", "a=b"])
+async def test_library_gets_the_name_of_a_named_argument_unchanged(
+    server_without_libraries: _Server, name: str
+) -> None:
+    assert await _values_of_init(server_without_libraries, kw_args={name: "1"}) == repr(((), None, {name: "1"}))
+
+
+async def test_library_converts_a_named_list_with_a_backslash(server_without_libraries: _Server) -> None:
+    values = await _values_of_init(server_without_libraries, kw_args={"items": ["C:\\temp"]})
+
+    assert values == repr(((), ["C:\\temp"], {}))
+
+
+@pytest.mark.parametrize(
+    "folder",
+    [
+        "${folder}",
+        pytest.param(
+            "back\\new",
+            marks=pytest.mark.skipif(
+                sys.platform == "win32", reason="A name cannot hold a backslash there, and every path holds one."
+            ),
+        ),
+    ],
+)
+async def test_library_from_a_path_is_imported(server_without_libraries: _Server, tmp_path: Path, folder: str) -> None:
+    library = tmp_path / folder / "PathLib.py"
+    library.parent.mkdir()
+    library.write_text(PATH_LIBRARY)
+
+    async with _connection(server_without_libraries.port) as session:
+        await session.handshake()
+        imported = await session.import_library(str(library))
+        result = await session.run_keyword("From A Path")
+
+    assert [keyword.name for keyword in imported.definition.keywords] == ["From A Path"]
+    assert result.error is None
+    assert result.result == "from a path"
 
 
 async def test_wrong_number_of_arguments_is_a_failure_of_the_keyword(port: int) -> None:

@@ -96,7 +96,7 @@ async def test_submission_after_stop_fails_at_once(context: RobotRemoteContext, 
     with pytest.raises(JsonRpcResponseError, match=r"^RPC Error -32603: server is shutting down$"):
         await asyncio.wait_for(context.run_keyword("token", "Late", [], {}), 1)
     with pytest.raises(JsonRpcResponseError, match=r"^RPC Error -32603: server is shutting down$"):
-        await asyncio.wait_for(context.import_library("Lib", [], "token"), 1)
+        await asyncio.wait_for(context.import_library("Lib", [], {}, "token"), 1)
     with pytest.raises(JsonRpcResponseError, match=r"^RPC Error -32603: server is shutting down$"):
         await asyncio.wait_for(context.finalize_library("token"), 1)
     assert robot.calls == []
@@ -192,7 +192,7 @@ async def test_a_log_message_while_no_command_runs_reaches_no_subscriber(
 @pytest.mark.parametrize(
     ("method", "call"),
     [
-        ("import_library", lambda context: context.import_library("Lib", [], "token")),
+        ("import_library", lambda context: context.import_library("Lib", [], {}, "token")),
         ("run_keyword", lambda context: context.run_keyword("token", "Keyword", [], {})),
         ("finalize_library", lambda context: context.finalize_library("token")),
     ],
@@ -210,7 +210,7 @@ async def test_a_call_from_the_runner_thread_fails(
 @pytest.mark.parametrize(
     "call",
     [
-        lambda: _runner._robot_import_library("token", "Lib", []),
+        lambda: _runner._robot_import_library("token", "Lib", [], {}),
         lambda: _runner._robot_run_keyword("token", "Keyword", [], {}),
         lambda: _runner._robot_finalize_library("token"),
         lambda: _runner._robot_set_log_level("INFO"),

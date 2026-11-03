@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import Future, InvalidStateError
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Callable, ClassVar, Protocol, Sequence, TypeVar, cast
+from typing import Any, Callable, ClassVar, Mapping, Protocol, Sequence, TypeVar, cast
 
 from robot import result, running
 from robot.api import TestSuite, get_model
@@ -15,7 +15,8 @@ from robot.api.interfaces import ListenerV3
 from robot.conf import RobotSettings
 from robot.errors import ExecutionFailed
 from robot.output import LOGGER
-from robot.utils import NOT_SET, ErrorDetails, text
+from robot.running.librarykeywordrunner import LibraryKeywordRunner
+from robot.utils import NOT_SET, ErrorDetails, escape, text
 
 from jsonrpcpeer import JsonRpcErrorCode, JsonRpcResponseError
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
@@ -73,14 +74,33 @@ class _HookListener(ListenerV3):
         self._log_message_callable(message)
 
 
-def _robot_import_library(library_token: str | None, name: str, args: Sequence[Any]) -> LibraryDefinition:
+# `escape` also marks these words, but keywords such as Run Keywords look for them in their arguments.
+_CONTROL_WORDS = frozenset(("AND", "ELSE", "ELSE IF", "AS", "WITH NAME"))
+
+
+def _as_robot_data(value: Any) -> Any:
+    """``value`` as data for Robot: it comes out unchanged when Robot resolves it.
+
+    The client has already resolved what it sends, so Robot must not resolve it a second time.
+    """
+    if isinstance(value, str) and value in _CONTROL_WORDS:
+        return value
+    return escape(value)
+
+
+def _robot_import_library(
+    library_token: str | None, name: str, args: Sequence[Any], kw_args: Mapping[str, Any]
+) -> LibraryDefinition:
     context: "running.context._ExecutionContext" = running.context.EXECUTION_CONTEXTS.current
     if context is None:
         raise RuntimeError("No execution context available for importing library.")
 
-    # Named init args arrive as "name=value" entries in `args`; Robot resolves
-    # and converts them against the library's __init__ signature.
-    context.namespace.import_library(name, args, library_token)
+    # Positional values keep their JSON types. Named values become Robot's "name=value" entries, which
+    # Robot converts using the library's __init__ signature, just like in a Library setting.
+    robot_args = [_as_robot_data(arg) for arg in args]
+    robot_args += [f"{_as_robot_data(key)}={_as_robot_data(str(value))}" for key, value in kw_args.items()]
+
+    context.namespace.import_library(_as_robot_data(name), robot_args, _as_robot_data(library_token))
 
     lib: "running.TestLibrary" = context.namespace._kw_store.get_library(library_token or name)
     if lib is None:
@@ -157,21 +177,24 @@ def _robot_run_keyword(
     if lib is None:
         raise RuntimeError(f"Library with token '{library_token}' is not imported.")
 
-    kws: "list[running.LibraryKeyword]" = lib.find_keywords(name)
+    # A keyword with embedded arguments is called by the name from its definition, with the values as
+    # arguments. `find_keywords` also returns other keywords whose patterns fit that name, and it accepts
+    # a name with values in it, so for these keywords only the exact name counts.
+    kws: "list[running.LibraryKeyword]" = [kw for kw in lib.find_keywords(name) if not kw.embedded or kw.name == name]
     if not kws:
         raise JsonRpcResponseError(
             RobotJsonRpcErrorCode.KEYWORD_NOT_FOUND, f"Keyword '{name}' not found in library '{lib.real_name}'."
         )
-    if len(kws) > 1:
-        raise RuntimeError(f"Multiple keywords named '{name}' found in library '{lib.real_name}'.")
 
     kw: "running.LibraryKeyword" = kws[0]
 
-    runner = kw.create_runner(name)
+    runner = LibraryKeywordRunner(kw) if kw.embedded else kw.create_runner(name)
     keyword_data = running.Keyword(
         name=kw.name,
-        args=[jsonable_to_value(a) for a in args],
-        named_args={jsonable_to_value(k): jsonable_to_value(v) for k, v in kwargs.items()},
+        args=[_as_robot_data(jsonable_to_value(a)) for a in args],
+        named_args={
+            _as_robot_data(jsonable_to_value(k)): _as_robot_data(jsonable_to_value(v)) for k, v in kwargs.items()
+        },
     )
 
     keyword_result = result.Keyword(kw.name)
@@ -351,12 +374,17 @@ class RobotRemoteContext:
         self._stopped.set()
 
     async def import_library(
-        self, name: str, args: Sequence[Any], library_token: str, subscriber: LogMessageSubscriber | None = None
+        self,
+        name: str,
+        args: Sequence[Any],
+        kw_args: Mapping[str, Any],
+        library_token: str,
+        subscriber: LogMessageSubscriber | None = None,
     ) -> LibraryDefinition:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("import_library cannot be called from the runner thread.")
 
-        future = self._submit(lambda: _robot_import_library(library_token, name, args), subscriber)
+        future = self._submit(lambda: _robot_import_library(library_token, name, args, kw_args), subscriber)
 
         return await asyncio.wrap_future(future)
 

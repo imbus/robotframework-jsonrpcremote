@@ -39,7 +39,9 @@ class _StubContext:
     def __init__(self) -> None:
         self.finalized: list[str] = []
 
-    async def import_library(self, name: str, args: Any, token: str, subscriber: Any = None) -> LibraryDefinition:
+    async def import_library(
+        self, name: str, args: Any, kw_args: Any, token: str, subscriber: Any = None
+    ) -> LibraryDefinition:
         return LibraryDefinition(name=name, keywords=[])
 
     async def finalize_library(self, token: str, subscriber: Any = None) -> None:
