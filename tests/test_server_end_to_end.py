@@ -18,24 +18,34 @@ import pytest
 from fake_server import wait_until
 
 from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
+from jsonrpcpeer.json_helpers import jsonable_to_value
 from robot_jsonrpcremote_protocol import (
+    FINALIZE_LIBRARY_REQUEST,
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
     INITIALIZED_NOTIFICATION,
     LOG_NOTIFICATION,
     RUN_KEYWORD_REQUEST,
     SET_LOG_LEVEL_NOTIFICATION,
+    ArgumentKind,
+    FinalizeLibraryParams,
+    FinalizeLibraryResult,
     ImportLibraryParams,
     ImportLibraryResult,
     InitializedParams,
     InitializeParams,
     InitializeResult,
+    LibraryDefinition,
+    LogLevel,
     LogParams,
     RunKeywordErrorMode,
     RunKeywordParams,
     RunKeywordResult,
+    ServerCapabilities,
+    ServerInfo,
     SetLogLevelParams,
 )
+from robot_jsonrpcremote_server.__version__ import __version__
 
 LIBRARY = """\
 import logging
@@ -53,6 +63,10 @@ class EndToEndLib:
     def log_with_python_logging(self):
         logging.getLogger("library").debug("library at DEBUG")
         logging.getLogger("library").info("library at INFO")
+
+    def log_a_warning_and_html(self):
+        logger.warn("a warning")
+        logger.info("<b>bold</b>", html=True)
 
     def fail_with_value_error(self):
         raise ValueError("bad value")
@@ -102,6 +116,60 @@ FAILING_INIT_LIBRARY = """\
 class FailingInitLib:
     def __init__(self):
         raise ValueError("cannot start")
+"""
+
+CLOSING_LIBRARY = """\
+from robot.api import logger
+
+
+class _Closing:
+    ROBOT_LISTENER_API_VERSION = 3
+
+    def __init__(self):
+        self.ROBOT_LIBRARY_LISTENER = self
+
+    def _close(self):
+        logger.info(f"{self.ROBOT_LIBRARY_SCOPE} library was closed")
+
+
+class SuiteScope(_Closing):
+    ROBOT_LIBRARY_SCOPE = "SUITE"
+
+
+class TestScope(_Closing):
+    ROBOT_LIBRARY_SCOPE = "TEST"
+"""
+
+DESCRIBED_LIBRARY = """\
+from robot.api.deco import keyword
+
+
+class DescribedLib:
+    "Documentation of the library."
+
+    ROBOT_LIBRARY_VERSION = "1.2.3"
+    ROBOT_LIBRARY_DOC_FORMAT = "TEXT"
+    ROBOT_LIBRARY_SCOPE = "SUITE"
+
+    @keyword(tags=["first tag", "second tag"])
+    def full_signature(
+        self,
+        first: str,
+        /,
+        second: int = 5,
+        *rest: str,
+        named: bool = True,
+        plain=None,
+        nested=[1, {"a": 2}],
+        **others: int,
+    ):
+        "Documentation of the keyword."
+"""
+
+SECOND_LIBRARY = """\
+class SecondLib:
+    def second_keyword(self):
+        pass
 """
 
 # Files of the server's own code. The module search path may name the package, in a development install.
@@ -164,6 +232,9 @@ def library_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
     (directory / "EndToEndLib.py").write_text(LIBRARY)
     (directory / "MissingDependencyLib.py").write_text(MISSING_DEPENDENCY_LIBRARY)
     (directory / "FailingInitLib.py").write_text(FAILING_INIT_LIBRARY)
+    (directory / "ClosingLib.py").write_text(CLOSING_LIBRARY)
+    (directory / "DescribedLib.py").write_text(DESCRIBED_LIBRARY)
+    (directory / "SecondLib.py").write_text(SECOND_LIBRARY)
     return directory
 
 
@@ -176,6 +247,12 @@ def server(library_directory: Path) -> Iterator[_Server]:
 @pytest.fixture(scope="module")
 def server_without_libraries(library_directory: Path) -> Iterator[_Server]:
     with _running_server(library_directory) as running:
+        yield running
+
+
+@pytest.fixture(scope="module")
+def server_with_two_libraries(library_directory: Path) -> Iterator[_Server]:
+    with _running_server(library_directory, "SecondLib", "EndToEndLib") as running:
         yield running
 
 
@@ -197,22 +274,34 @@ class _Session:
         self.peer = peer
         self.token = ""
         self.messages: list[str] = []
+        self.log_params: list[LogParams] = []
 
     async def on_log(self, params: LogParams) -> None:
         self.messages.append(params.message)
+        self.log_params.append(params)
 
-    async def initialize(self, log_level: str | None = None) -> None:
-        await self.peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams(log_level=log_level))
+    async def initialize(self, log_level: str | None = None) -> InitializeResult:
+        return await self.peer.send_request_typed(
+            InitializeResult, INITIALIZE_REQUEST, InitializeParams(log_level=log_level)
+        )
 
     async def handshake(self, log_level: str | None = None) -> None:
         await self.initialize(log_level)
         await self.peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
 
-    async def import_library(self, name: str) -> None:
+    async def import_library(self, name: str) -> ImportLibraryResult:
         imported = await self.peer.send_request_typed(
             ImportLibraryResult, IMPORT_LIBRARY_REQUEST, ImportLibraryParams(name=name)
         )
         self.token = imported.token
+        return imported
+
+    async def finalize_library(self, token: str | None = None) -> FinalizeLibraryResult:
+        return await self.peer.send_request_typed(
+            FinalizeLibraryResult,
+            FINALIZE_LIBRARY_REQUEST,
+            FinalizeLibraryParams(token=self.token if token is None else token),
+        )
 
     async def run_keyword(self, name: str, args: list[Any] | None = None) -> RunKeywordResult:
         return await self.peer.send_request_typed(
@@ -291,6 +380,16 @@ async def test_clients_at_different_log_levels_get_the_messages_of_their_own_lev
 
     assert quiet.library_messages() == ["library at INFO"]
     assert verbose.library_messages() == ["library at TRACE", "library at DEBUG", "library at INFO"] * 2
+
+
+async def test_forwarded_message_keeps_its_level_and_html_and_is_not_for_the_console(port: int) -> None:
+    async with _session(port) as session:
+        await session.run_keyword("Log A Warning And Html")
+
+    assert [(params.message, params.level, params.html, params.console) for params in session.log_params] == [
+        ("a warning", LogLevel.WARN, False, False),
+        ("<b>bold</b>", LogLevel.INFO, True, False),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -502,3 +601,97 @@ async def test_server_with_the_option_sends_the_traceback_and_logs_it(server_wit
         f"The handler of request '{RUN_KEYWORD_REQUEST}' failed\nTraceback (most recent call last):"
     )
     assert error.message in logged
+
+
+async def test_finalized_library_is_gone(port: int) -> None:
+    async with _session(port) as session:
+        await session.finalize_library()
+        error = await _error_of(session.run_keyword("Ping"))
+
+    assert error.code == -32603
+    assert error.message == f"No library '{session.token}' found."
+
+
+async def test_finalizing_an_unknown_token_or_twice_is_no_error(port: int) -> None:
+    async with _session(port) as session:
+        assert await session.finalize_library() == FinalizeLibraryResult()
+        assert await session.finalize_library() == FinalizeLibraryResult()
+        assert await session.finalize_library("unknown token") == FinalizeLibraryResult()
+
+
+@pytest.mark.parametrize(("library", "scope"), [("ClosingLib.SuiteScope", "SUITE"), ("ClosingLib.TestScope", "TEST")])
+async def test_finalizing_closes_the_listener_of_a_library(
+    server_without_libraries: _Server, library: str, scope: str
+) -> None:
+    async with _connection(server_without_libraries.port) as session:
+        await session.handshake()
+        await session.import_library(library)
+        before = list(session.messages)
+        await session.finalize_library()
+
+    assert before == []
+    assert session.messages == [f"{scope} library was closed"]
+
+
+async def _definition_of_the_described_library(server: _Server) -> LibraryDefinition:
+    async with _connection(server.port) as session:
+        await session.handshake()
+        return (await session.import_library("DescribedLib")).definition
+
+
+async def test_library_definition_describes_the_library(server_without_libraries: _Server) -> None:
+    definition = await _definition_of_the_described_library(server_without_libraries)
+
+    assert definition.doc == "Documentation of the library."
+    assert definition.doc_format == "TEXT"
+    assert definition.scope == "SUITE"
+    assert definition.version == "1.2.3"
+    assert definition.source is not None
+    assert Path(definition.source).name == "DescribedLib.py"
+    assert isinstance(definition.lineno, int)
+
+
+async def test_library_definition_describes_a_keyword(server_without_libraries: _Server) -> None:
+    definition = await _definition_of_the_described_library(server_without_libraries)
+
+    keyword = definition.keywords[0]
+    assert keyword.name == "Full Signature"
+    assert keyword.doc == "Documentation of the keyword."
+    assert keyword.tags == ["first tag", "second tag"]
+    assert keyword.source is not None
+    assert Path(keyword.source).name == "DescribedLib.py"
+    assert isinstance(keyword.lineno, int)
+
+
+async def test_library_definition_describes_the_arguments(server_without_libraries: _Server) -> None:
+    definition = await _definition_of_the_described_library(server_without_libraries)
+
+    assert [
+        (arg.name, arg.type, arg.has_default, jsonable_to_value(arg.default), arg.kind)
+        for arg in definition.keywords[0].args
+    ] == [
+        ("first", "str", False, None, ArgumentKind.POSITIONAL_ONLY),
+        ("", "", False, None, ArgumentKind.POSITIONAL_ONLY_MARKER),
+        ("second", "int", True, 5, ArgumentKind.POSITIONAL_OR_NAMED),
+        ("rest", "str", False, None, ArgumentKind.VAR_POSITIONAL),
+        ("named", "bool", True, True, ArgumentKind.NAMED_ONLY),
+        ("plain", "", True, None, ArgumentKind.NAMED_ONLY),
+        ("nested", "", True, [1, {"a": 2}], ArgumentKind.NAMED_ONLY),
+        ("others", "int", False, None, ArgumentKind.VAR_NAMED),
+    ]
+
+
+async def test_import_without_a_name_takes_the_first_library_of_the_server(server_with_two_libraries: _Server) -> None:
+    async with _connection(server_with_two_libraries.port) as session:
+        await session.handshake()
+        imported = await session.import_library("")
+
+    assert [keyword.name for keyword in imported.definition.keywords] == ["Second Keyword"]
+
+
+async def test_initialize_reports_what_the_server_serves(server_with_two_libraries: _Server) -> None:
+    async with _connection(server_with_two_libraries.port) as session:
+        result = await session.initialize()
+
+    assert result.capabilities == ServerCapabilities(support_exit=True, libraries=["SecondLib", "EndToEndLib"])
+    assert result.server_info == ServerInfo(name="RobotJsonRpcRemoteServer", version=__version__)

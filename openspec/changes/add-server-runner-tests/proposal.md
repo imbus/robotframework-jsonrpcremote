@@ -6,10 +6,11 @@ The unit tests no longer replace Robot Framework completely. Since `fix-keyword-
 
 A mutation test of both files on 2026-11-03 shows what can still break without a unit test noticing:
 
-- **Finalizing a library:** that its token is gone afterwards, that the listener of a `SUITE` or `TEST` library is closed, and that an unknown token is no error. Only one Robot test notices the listener.
+- **Finalizing a library:** that its token is gone afterwards, that the listener of a `SUITE` or `TEST` library is closed, that an unknown token is no error, and that finalizing all libraries of a connection goes on after a failure. Only one Robot test notices the listener.
 - **The library definition:** the arguments of a keyword with their kinds, types and defaults, and its documentation, tags and source. The Robot suites notice only what they happen to use.
 - **The default library:** an import with an empty name takes the first library of the server. This runs nowhere, in the Robot suites neither.
 - **The result of `initialize`:** `support_exit` and the list of libraries.
+- **A forwarded log message:** its level, its HTML flag, and that it is not meant for the console.
 - **A client that is gone:** no log messages are forwarded for it, and its handshake counts as not done.
 - **Paths the protocol cannot reach:** a call from the runner thread, a command without a Robot context, `wait_idle()` before the first request, a log message while no command runs, and the mapping of Robot log levels to protocol levels.
 
@@ -19,7 +20,7 @@ Found in the project review of 2026-10-27 (item TEST-5), and checked against the
 
 ## What Changes
 
-- **Tests over the protocol:** new tests in `tests/test_server_end_to_end.py` for finalizing, the library definition, the default library and the result of `initialize`, against the real server.
+- **Tests over the protocol:** new tests in `tests/test_server_end_to_end.py` for finalizing, the library definition, the default library, the result of `initialize` and forwarded log messages, against the real server.
 - **Direct tests:** new tests in `tests/test_runner.py` and `tests/test_endpoint.py` for the paths the protocol cannot reach, without Robot Framework.
 - **Bugs found:** a test that reveals a bug is marked as an expected failure that names the bug, and the bug gets a change of its own.
 - No product code and no behavior change, so the change has no spec delta (`skip_specs: true`).

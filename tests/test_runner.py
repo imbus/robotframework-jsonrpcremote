@@ -7,10 +7,11 @@ commands are replaced by fakes.
 import asyncio
 import datetime
 import threading
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
 import pytest
+from fake_server import wait_until
 from robot.api import ContinuableFailure, FatalError, SkipExecution
 from robot.errors import ExecutionFailed, HandlerExecutionFailed
 from robot.result import Message
@@ -173,6 +174,52 @@ async def test_first_debug_message_of_a_command_is_no_traceback_of_the_command_b
     await asyncio.wait_for(context.run_keyword("token", "Second", [], {}, subscriber=subscriber), 5)
 
     assert subscriber.messages == [("FAIL", "a failure without a traceback"), ("DEBUG", "of the library")]
+
+
+async def test_a_log_message_while_no_command_runs_reaches_no_subscriber(
+    context: RobotRemoteContext, robot: _FakeRobot
+) -> None:
+    subscriber = _Subscriber()
+    await asyncio.wait_for(context.run_keyword("token", "Keyword", [], {}, subscriber=subscriber), 5)
+    # The hook loop lets go of the subscriber right after it has answered the command.
+    wait_until(lambda: context._active_subscriber is None)
+
+    _log(context, ("INFO", "between two commands"))
+
+    assert subscriber.messages == []
+
+
+@pytest.mark.parametrize(
+    ("method", "call"),
+    [
+        ("import_library", lambda context: context.import_library("Lib", [], "token")),
+        ("run_keyword", lambda context: context.run_keyword("token", "Keyword", [], {})),
+        ("finalize_library", lambda context: context.finalize_library("token")),
+    ],
+)
+async def test_a_call_from_the_runner_thread_fails(
+    method: str, call: Callable[[RobotRemoteContext], Awaitable[Any]]
+) -> None:
+    # Created here, so this thread is its runner thread.
+    context = RobotRemoteContext()
+
+    with pytest.raises(RuntimeError, match=f"^{method} cannot be called from the runner thread"):
+        await asyncio.wait_for(call(context), 1)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: _runner._robot_import_library("token", "Lib", []),
+        lambda: _runner._robot_run_keyword("token", "Keyword", [], {}),
+        lambda: _runner._robot_finalize_library("token"),
+        lambda: _runner._robot_set_log_level("INFO"),
+    ],
+    ids=["import_library", "run_keyword", "finalize_library", "set_log_level"],
+)
+def test_a_command_without_a_robot_context_fails(call: Callable[[], Any]) -> None:
+    with pytest.raises(RuntimeError, match=r"^No execution context available"):
+        call()
 
 
 def _failure_of(error: Exception) -> ExecutionFailed:

@@ -5,9 +5,11 @@ running Robot suite.
 """
 
 import asyncio
+import datetime
 import logging
 from collections.abc import Awaitable
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,6 +21,7 @@ from robot_jsonrpcremote_protocol import (
     InitializedParams,
     InitializeParams,
     LibraryDefinition,
+    LogLevel,
     RobotJsonRpcErrorCode,
     RunKeywordError,
     RunKeywordErrorMode,
@@ -26,7 +29,7 @@ from robot_jsonrpcremote_protocol import (
     SetLogLevelParams,
     ShutdownParams,
 )
-from robot_jsonrpcremote_server._endpoint import RobotServerEndpoint
+from robot_jsonrpcremote_server._endpoint import RobotServerEndpoint, _robot_log_level_to_protocol_level
 from robot_jsonrpcremote_server._runner import KeywordFailedError, RobotRemoteContext, _shutting_down
 
 
@@ -83,6 +86,27 @@ async def test_finalize_all_releases_remaining_tokens() -> None:
     assert set(context.finalized) == {r1.token, r2.token}
 
 
+class _RejectingFinalizeContext(_StubContext):
+    """A stub whose finalize fails for the first library and works for the others."""
+
+    async def finalize_library(self, token: str, subscriber: Any = None) -> None:
+        self.finalized.append(token)
+        if len(self.finalized) == 1:
+            raise RuntimeError("cannot finalize")
+
+
+async def test_finalize_all_goes_on_after_a_failure() -> None:
+    context = _RejectingFinalizeContext()
+    endpoint = await _initialized_endpoint(context)
+    r1 = await endpoint.import_library(ImportLibraryParams(name="A"))
+    r2 = await endpoint.import_library(ImportLibraryParams(name="B"))
+
+    await endpoint.finalize_all()
+
+    assert endpoint._imported_tokens == set()
+    assert set(context.finalized) == {r1.token, r2.token}
+
+
 class _FakeReader:
     def __init__(self) -> None:
         self.eof = False
@@ -106,6 +130,54 @@ async def test_exit_closes_connection() -> None:
 
     assert peer.running is False
     assert peer.reader.eof is True
+
+
+async def test_log_and_exit_without_a_connection_do_nothing() -> None:
+    endpoint = await _initialized_endpoint(_StubContext())
+    assert endpoint.rpc_peer is None
+
+    await endpoint.log("message")
+    await endpoint.exit(ExitParams())
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [
+        ("TRACE", LogLevel.TRACE),
+        ("DEBUG", LogLevel.DEBUG),
+        ("INFO", LogLevel.INFO),
+        ("WARN", LogLevel.WARN),
+        ("ERROR", LogLevel.ERROR),
+        ("CONSOLE", LogLevel.CONSOLE),
+        ("HTML", LogLevel.HTML),
+        ("warn", LogLevel.WARN),
+        ("UNKNOWN", LogLevel.INFO),
+    ],
+)
+def test_robot_log_levels_map_to_the_levels_of_the_protocol(level: str, expected: LogLevel) -> None:
+    assert _robot_log_level_to_protocol_level(level) is expected
+
+
+async def test_log_messages_for_a_client_that_is_gone_are_not_scheduled() -> None:
+    endpoint = await _initialized_endpoint(_StubContext())
+    loop = MagicMock()
+    endpoint.loop = loop
+
+    endpoint.cleanup()
+    endpoint.log_message("message", "INFO", False, datetime.datetime.now(datetime.timezone.utc))
+
+    loop.call_soon_threadsafe.assert_not_called()
+
+
+async def test_handshake_of_a_client_that_is_gone_counts_as_not_done() -> None:
+    endpoint = await _initialized_endpoint(_StubContext())
+
+    endpoint.cleanup()
+
+    assert endpoint.initialize_received is False
+    assert endpoint.initialized_received is False
+    error = await _error_of(endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword")))
+    assert error.code == RobotJsonRpcErrorCode.NOT_INITIALIZED
 
 
 class _BlockingContext(_StubContext):
@@ -147,6 +219,40 @@ async def test_wait_idle_returns_false_while_a_handler_still_runs() -> None:
 
     context.release.set()
     await call
+
+
+async def test_wait_idle_returns_at_once_before_the_first_request() -> None:
+    endpoint = RobotServerEndpoint(remote_context=cast(RobotRemoteContext, _StubContext()))
+
+    assert await endpoint.wait_idle(0) is True
+
+
+class _ReleasedByNameContext(_StubContext):
+    """A stub whose keyword calls run until the keyword of their name is released."""
+
+    def __init__(self, *names: str) -> None:
+        super().__init__()
+        self.releases = {name: asyncio.Event() for name in names}
+
+    async def run_keyword(self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None) -> str:
+        await self.releases[name].wait()
+        return "done"
+
+
+async def test_wait_idle_waits_for_the_last_of_two_running_handlers() -> None:
+    context = _ReleasedByNameContext("First", "Second")
+    endpoint = await _initialized_endpoint(context)
+    first = asyncio.ensure_future(endpoint.run_keyword(RunKeywordParams(library_token="token", name="First")))
+    second = asyncio.ensure_future(endpoint.run_keyword(RunKeywordParams(library_token="token", name="Second")))
+    await asyncio.sleep(0)
+
+    context.releases["First"].set()
+    await first
+    assert await endpoint.wait_idle(0) is False
+
+    context.releases["Second"].set()
+    await second
+    assert await endpoint.wait_idle(0) is True
 
 
 class _FailingContext(_StubContext):
