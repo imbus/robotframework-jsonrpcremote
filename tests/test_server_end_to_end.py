@@ -423,13 +423,13 @@ async def test_clients_at_different_log_levels_get_the_messages_of_their_own_lev
     assert verbose.library_messages() == ["library at TRACE", "library at DEBUG", "library at INFO"] * 2
 
 
-async def test_forwarded_message_keeps_its_level_and_html_and_is_not_for_the_console(port: int) -> None:
+async def test_forwarded_message_keeps_its_level_and_html_and_leaves_the_console_to_the_client(port: int) -> None:
     async with _session(port) as session:
         await session.run_keyword("Log A Warning And Html")
 
     assert [(params.message, params.level, params.html, params.console) for params in session.log_params] == [
-        ("a warning", LogLevel.WARN, False, False),
-        ("<b>bold</b>", LogLevel.INFO, True, False),
+        ("a warning", LogLevel.WARN, False, None),
+        ("<b>bold</b>", LogLevel.INFO, True, None),
     ]
 
 
@@ -694,6 +694,24 @@ async def _session_with_builtin(server: _Server) -> AsyncIterator[_Session]:
         await session.handshake()
         await session.import_library("BuiltIn")
         yield session
+
+
+async def test_client_that_goes_away_during_a_keyword_leaves_no_error_in_the_log(
+    server_without_libraries: _Server,
+) -> None:
+    async with _session_with_builtin(server_without_libraries) as leaving:
+        keyword = asyncio.create_task(leaving.run_keyword("Sleep", ["0.5s"]))
+        await asyncio.sleep(0.1)
+        leaving.peer.writer.transport.abort()
+        await asyncio.gather(keyword, return_exceptions=True)
+
+    # The server runs one keyword at a time, so this one ends after the other one has ended.
+    async with _session_with_builtin(server_without_libraries) as staying:
+        await staying.run_keyword("Log", ["after"])
+    await asyncio.sleep(0.2)
+
+    assert "never retrieved" not in server_without_libraries.log()
+    assert "Connection lost" not in server_without_libraries.log()
 
 
 async def test_run_keywords_finds_and(server_without_libraries: _Server) -> None:

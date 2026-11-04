@@ -23,6 +23,9 @@ class _MessageCollector(ResultVisitor):
 
 
 class NestedRobot:
+    def __init__(self) -> None:
+        self._console_output = ""
+
     def run_nested_suite(
         self,
         suite: str,
@@ -47,11 +50,16 @@ class NestedRobot:
         for variable in variables:
             command += ["--variable", variable]
         completed = subprocess.run([*command, suite], capture_output=True, text=True, timeout=120, check=False)
+        self._console_output = completed.stdout + completed.stderr
         if completed.returncode != 0:
             raise AssertionError(
                 f"Nested suite failed with exit code {completed.returncode}:\n{completed.stdout}{completed.stderr}"
             )
         return str(output)
+
+    def get_console_output(self) -> str:
+        """Returns what the last nested run wrote to the console."""
+        return self._console_output
 
     def get_execution_errors(self, output: str) -> list[str]:
         """Returns the messages that the output file ``output`` lists as execution errors."""

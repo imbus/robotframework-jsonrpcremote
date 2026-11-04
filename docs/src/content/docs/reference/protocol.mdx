@@ -23,7 +23,7 @@ this page use them.
 The protocol needs a stream that delivers bytes in order, such as a TCP
 connection or the stdin and stdout of a process. Each message starts with a
 header part, as in the
-[Language Server Protocol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#headerPart):
+[Language Server Protocol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#headerPart):
 
 ```text
 Content-Length: 60\r\n
@@ -32,11 +32,25 @@ Content-Length: 60\r\n
 ```
 
 - The headers are ASCII, each ends with `\r\n`, and an empty line ends the
-  header part.
-- `Content-Length` is the length of the content in bytes. The reference
-  implementation ends the content with `\r\n` and counts it.
+  header part. The reference implementation matches header names without regard
+  to case, and the space after the colon is optional.
+- `Content-Length` is the length of the content in bytes, and it is required.
+  The reference implementation ends the content with `\r\n` and counts it.
 - `Content-Type` may give a `charset` for the content; the default is UTF-8.
   Other headers are ignored.
+
+A message that the reference implementation cannot read does not end the
+connection. It logs the problem and goes on with the next message:
+
+- A header part without a valid `Content-Length` gets no answer, because the end
+  of its content is unknown. The bytes that follow are read as the next header
+  part.
+- A message with an unknown `charset`, or whose content is not valid in its
+  charset or as JSON, gets the error `-32700` with `id: null`.
+
+The content can also be a batch, an array of messages as in JSON-RPC 2.0. The
+reference implementation handles each element on its own and answers with one
+array of the responses. If no element needs a response, it sends nothing.
 
 ## Values
 
@@ -221,7 +235,9 @@ on which the client imports one library:
     it from its own messages at these levels.
   - `html`: boolean (optional): whether the message is HTML.
   - `console`: boolean (optional): whether the client also writes the message
-    to the console.
+    to the console. Without it, the client does as Robot Framework does for a
+    local library: `WARN` and `ERROR` go to the console, other levels do not.
+    With `false`, a warning stays off the console from Robot Framework 7.4 on.
   - `timestamp`: string (optional): when the message was logged. The client
     does not read it.
 - **`SetLogLevelParams`**
@@ -256,12 +272,16 @@ message. The reference server answers with these codes:
 | `-32001` | `RobotJsonRpcErrorCode.KEYWORD_NOT_FOUND` | A keyword that the library does not have. |
 | `-32602` | `INVALID_PARAMS` of JSON-RPC              | The import of a library that the server does not serve, an import without a name if the server has no default library, and params that cannot be converted. |
 | `-32601` | `METHOD_NOT_FOUND` of JSON-RPC            | A method that the server does not have. |
-| `-32600` | `INVALID_REQUEST` of JSON-RPC             | A message that is not a JSON object, an empty batch, or a message whose `jsonrpc` is not `2.0`. |
-| `-32700` | `PARSE_ERROR` of JSON-RPC                 | A message that is not valid JSON. |
+| `-32600` | `INVALID_REQUEST` of JSON-RPC             | A message that is not a JSON object, an empty batch, a message whose `jsonrpc` is not `2.0`, and a message without a `method` as a string, with `params` that are neither an array nor an object, or with an `id` that is neither a string nor an integer. It carries the `id` of the message if that is a string or an integer, and `null` otherwise. |
+| `-32700` | `PARSE_ERROR` of JSON-RPC                 | A message that is not valid JSON, with an unknown `charset`, or whose content is not valid in its charset. |
 | `-32603` | `INTERNAL_ERROR` of JSON-RPC              | Anything else, such as an unknown library token, a return value that cannot be transferred, a library that fails to import, or a server that is stopping. |
 
 The error of a library that fails to import has the message of Robot Framework,
 with the traceback of the library's code and the module search path.
+
+A notification and a response are never answered, not even when they are
+invalid. The reference implementation logs what is wrong with them. An invalid
+response with the `id` of a waiting request fails that request.
 
 An error response carries no traceback, unless the server was started with
 `--send-tracebacks`; see

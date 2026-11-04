@@ -8,7 +8,7 @@ This package provides the core communication logic used by `robotframework-jsonr
 
 ## Features
 
-*   **Standard Compliant:** Full JSON-RPC 2.0 support (Requests, Notifications, Errors).
+*   **Standard Compliant:** Full JSON-RPC 2.0 support (Requests, Notifications, Batches, Errors).
 *   **Asynchronous:** Built using Python's `asyncio` for high performance.
 *   **Type Safe:** Uses Python type hints for automatic parameter deserialization.
 *   **Flexible:** Works with any `asyncio.StreamReader` and `asyncio.StreamWriter`.
@@ -16,7 +16,7 @@ This package provides the core communication logic used by `robotframework-jsonr
 
 ## Protocol & Framing
 
-While this library implements the JSON-RPC 2.0 protocol for the message payload, it uses a specific framing strategy for the transport layer, similar to the [Language Server Protocol (LSP)](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#headerPart) or V8 Inspector Protocol.
+While this library implements the JSON-RPC 2.0 protocol for the message payload, it uses a specific framing strategy for the transport layer, similar to the [Language Server Protocol (LSP)](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#headerPart) or V8 Inspector Protocol.
 
 Each message consists of two parts:
 1.  **Header Part**: Contains the `Content-Length` header.
@@ -32,6 +32,8 @@ Content-Length: 45\r\n
 *   The headers are encoded in ASCII.
 *   The headers are separated from the content by `\r\n\r\n`.
 *   Currently, only `Content-Length` and `Content-Type` (for charset) are supported/parsed.
+*   Header names are matched without regard to case, and the space after the colon is optional.
+*   A message without a charset is read as UTF-8. With `JsonRpcPeer(reader, writer, default_encoding="latin-1")`, the peer sends in that charset and names it in a `Content-Type` header.
 
 ### Why use headers?
 
@@ -129,7 +131,9 @@ except JsonRpcResponseError as e:
 
 *   **Other exceptions:** any other exception in a request handler results in an `Internal Error` (-32603) with the exception message. The peer logs it at `ERROR` level with its traceback and the name of the method, on the logger `jsonrpcpeer.peer`. It does the same for an exception in a notification handler.
 *   **Tracebacks:** error responses carry no traceback, because it would show your code and paths to the remote side. With `JsonRpcPeer(reader, writer, send_tracebacks=True)`, the peer puts it into `data` when it builds a response from an exception: another exception in a handler, params that cannot be converted, or a message that cannot be parsed. An error that a handler raises stays as it is.
-*   **Errors that cannot be sent:** the `data` of an error must be writable as JSON. If an error response cannot be sent, the request gets an `Internal Error` (-32603) with the reason instead.
+*   **Responses that cannot be sent:** a result and the `data` of an error must be writable as JSON, and a response must not exceed `max_message_size`. Otherwise the request gets an `Internal Error` (-32603) with the reason instead, and the peer logs it. In a batch, this concerns only that one response. If the connection is gone when a response is written, the peer sends nothing more.
+*   **Messages that cannot be read:** the connection stays open, and the peer goes on with the next message. A header part without a valid `Content-Length` gets no answer, and the bytes that follow are read as the next header part. A message with an unknown charset, or whose content is not valid in its charset or as JSON, gets a `Parse Error` (-32700) with `id: null`. A message above `max_message_size` is skipped and gets an `Invalid Request` (-32600) with `id: null`. Requests you have sent keep waiting for their responses, because the peer cannot tell which of them such a message belonged to.
+*   **Problems that nobody gets an answer about:** the peer logs them at `ERROR` level on the logger `jsonrpcpeer.peer`, and hands their text to a callback, if you give it one with `JsonRpcPeer(reader, writer, on_problem=callback)`. An exception in the callback is logged. These are messages that cannot be read, invalid messages and responses, a failing notification handler, params of a notification that cannot be converted, and an error response with `id: null`.
 
 Requests you send fail with `JsonRpcConnectionClosedError`, a subclass of `ConnectionError`, once the connection closes, whether the remote side closed it, reading from it failed, or the peer was stopped. This applies to requests still waiting for a response and to requests sent afterwards, which fail immediately without being written. If reading from the connection failed, that error is attached as the exception's `__cause__`:
 

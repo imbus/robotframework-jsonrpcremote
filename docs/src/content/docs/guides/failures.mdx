@@ -122,3 +122,17 @@ the client while you look for a problem, start the server with
 [`--send-tracebacks`](/robotframework-jsonrpcremote/reference/server/#errors-and-tracebacks):
 at the log level `DEBUG`, such a traceback then appears in `log.html` under the
 keyword, marked with `[remote]`, and at a library import it follows the message.
+
+## Messages that cannot be read
+
+A server in another language can send a message that the client cannot read or
+use, for example with a bad `Content-Length` or with a log message whose fields
+do not fit. The session goes on, and the client writes an error to Robot
+Framework's log and to the console that names the server and the problem:
+
+```text
+[ ERROR ] Problem with a message from 'tcp://127.0.0.1:8270': Received an invalid Content-Length header: 'abc'
+```
+
+The error fails no keyword by itself. If the message was the answer to a keyword
+call, the call goes on waiting for its answer.

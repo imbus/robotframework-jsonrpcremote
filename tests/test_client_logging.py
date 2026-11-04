@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from fake_server import FakeServer, LogFirst
+from fake_server import NEVER_ANSWER, FakeServer, LogFirst, RawFirst
 
 from JsonRpcRemote import JsonRpcRemote, SessionScope, _ClientEndpoint, _LogSink, _robot_log_level, _write_log
 from robot_jsonrpcremote_protocol import (
@@ -28,7 +28,9 @@ class _RecordingLogger:
         self.writes: list[tuple[Any, ...]] = []
         self.console_messages: list[str] = []
 
-    def write_with_console(self, msg: str, level: str = "INFO", html: bool = False, console: bool = False) -> None:
+    def write_with_console(
+        self, msg: str, level: str = "INFO", html: bool = False, console: bool | None = None
+    ) -> None:
         self.writes.append((msg, level, html, console))
 
     def write_without_console(self, msg: str, level: str = "INFO", html: bool = False) -> None:
@@ -55,14 +57,15 @@ def _robot_framework_without_console(monkeypatch: pytest.MonkeyPatch, recorder: 
     monkeypatch.setattr("robot.api.logger.write", recorder.write_without_console)
 
 
-def test_console_is_passed_to_write_where_supported(
-    recorder: _RecordingLogger, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("console", [None, True, False])
+def test_console_value_is_passed_to_write_where_supported(
+    recorder: _RecordingLogger, monkeypatch: pytest.MonkeyPatch, console: bool | None
 ) -> None:
     _robot_framework_with_console(monkeypatch, recorder)
 
-    _write_log("message", "WARN", True, True)
+    _write_log("message", "WARN", True, console)
 
-    assert recorder.writes == [("message", "WARN", True, True)]
+    assert recorder.writes == [("message", "WARN", True, console)]
     assert recorder.console_messages == []
 
 
@@ -88,18 +91,31 @@ def test_message_without_console_stays_off_the_console_before_robot_framework_7_
     assert recorder.console_messages == []
 
 
+def test_message_without_a_console_value_stays_with_robot_framework_before_7_4(
+    recorder: _RecordingLogger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _robot_framework_without_console(monkeypatch, recorder)
+
+    _write_log("message", "WARN", False, None)
+
+    assert recorder.writes == [("message", "WARN", False)]
+    assert recorder.console_messages == []
+
+
 class _Written:
     """Replaces `_write_log` and records each message with the name of the thread that wrote it."""
 
     def __init__(self, fail_on: str | None = None) -> None:
         self.messages: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, bool, bool | None]] = []
         # For each message: whether an event loop was running, as during a keyword call.
         self.during_call: list[bool] = []
         self._fail_on = fail_on
 
-    def __call__(self, message: str, level: str, html: bool, console: bool) -> None:
+    def __call__(self, message: str, level: str, html: bool, console: bool | None) -> None:
         if message == self._fail_on:
             raise RuntimeError("writing failed")
+        self.calls.append((message, level, html, console))
         self.messages.append((message, threading.current_thread().name))
         try:
             asyncio.get_running_loop()
@@ -269,6 +285,58 @@ async def test_only_debug_and_trace_messages_from_the_server_are_marked(
     sink.drain()
 
     assert [message for message, _ in written.messages] == [expected]
+
+
+@pytest.mark.parametrize("console", [None, True, False])
+async def test_log_message_keeps_its_console_value(written: _Written, console: bool | None) -> None:
+    sink = _LogSink()
+
+    await _ClientEndpoint(sink)._log_notification(LogParams(message="message", level=LogLevel.WARN, console=console))
+    sink.drain()
+
+    assert written.calls == [("message", "WARN", False, console)]
+
+
+_INVALID_LENGTH = b"Content-Length: abc\r\n\r\n{}\r\n"
+
+
+def test_problem_of_the_peer_is_written_as_an_error(server: FakeServer, written: _Written) -> None:
+    server.script(RUN_KEYWORD_REQUEST, RawFirst(_INVALID_LENGTH))
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        result = asyncio.run(remote.run_keyword("Echo", ["hello"], {}))
+
+        assert result == "echo: hello"
+        assert [(level, html, console) for _, level, html, console in written.calls] == [("ERROR", False, None)]
+        message = written.calls[0][0]
+        assert server.uri in message
+        assert "'abc'" in message
+        assert written.during_call == [True]
+    finally:
+        remote._stop_session()
+
+
+def test_keyword_call_waits_on_after_a_problem_of_the_peer(server: FakeServer, written: _Written) -> None:
+    server.script(RUN_KEYWORD_REQUEST, RawFirst(_INVALID_LENGTH, answer=NEVER_ANSWER))
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=2)
+
+    async def call_and_look() -> None:
+        call = asyncio.create_task(remote.run_keyword("Echo", ["hello"], {}))
+        deadline = asyncio.get_running_loop().time() + 2
+        while not written.calls and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
+
+        assert "'abc'" in written.calls[0][0]
+        assert not call.done()
+
+        call.cancel()
+        await asyncio.gather(call, return_exceptions=True)
+
+    try:
+        asyncio.run(call_and_look())
+    finally:
+        remote._stop_session()
 
 
 class _RobotLogLevel:

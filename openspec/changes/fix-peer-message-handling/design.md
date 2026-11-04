@@ -55,7 +55,7 @@ On `LimitOverrunError`, the peer drops `error.consumed` bytes with `readexactly`
 
 It is used for invalid and missing lengths, content that cannot be read, messages above the limit, invalid messages and responses, failing notification handlers, params of a notification that cannot be converted, and error responses with `id: null`. It is not used for failures of request handlers, because their caller gets an answer, and not for a valid response that no request waits for, which is normal after a timeout.
 
-In the client, `_start_peer` passes `functools.partial(_report_peer_problem, log_sink, uri)`. It is a module function and not a bound method, because the resources hold the peer and the finalizer holds the resources: a bound method would keep the session alive. The message is written at level ERROR through `_LogSink`, which already handles the worker thread and the time between keyword calls. The server passes nothing, because its log is the right place.
+In the client, `_start_peer` passes `functools.partial(_report_peer_problem, log_sink, uri)`. It is a module function and not a bound method, because the resources hold the peer and must not refer to the session, as their docstring says. No test can tell the difference, because the worker thread holds the session while it runs. The message is written at level ERROR through `_LogSink`, which already handles the worker thread and the time between keyword calls. The server passes nothing, because its log is the right place.
 
 **Alternatives:**
 - A `logging.Handler` on the peer's logger in the client: the logger is shared by the whole module, so one session would see the problems of all others.

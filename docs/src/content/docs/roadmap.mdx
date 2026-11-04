@@ -48,6 +48,8 @@ welcome as
 - JSON-RPC 2.0 with the framing of the Language Server Protocol, defined in the
   package `robotframework-jsonrpcremote-protocol`, with a hand-written example
   server; see the [protocol](/robotframework-jsonrpcremote/reference/protocol/).
+- A message that cannot be read does not end the session: the client shows the
+  problem in Robot Framework's log and on the console.
 - Arguments and return values of keywords, argument defaults and the arguments
   of a library import are JSON values, nested to any depth.
 - Between Python peers, keyword arguments and return values that JSON cannot

@@ -157,7 +157,7 @@ class RobotServerEndpoint:
         )
 
     async def log(
-        self, message: str, level: LogLevel = LogLevel.INFO, console: bool = False, html: bool = False
+        self, message: str, level: LogLevel = LogLevel.INFO, console: bool | None = None, html: bool = False
     ) -> None:
         if self.rpc_peer:
             await self.rpc_peer.send_notification(

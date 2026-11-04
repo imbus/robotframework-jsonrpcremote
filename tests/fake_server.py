@@ -64,6 +64,17 @@ class LogFirst:
     answer: Any = _DEFAULT
 
 
+@dataclass
+class RawFirst:
+    """A scripted answer that first writes ``data`` to the connection as it is, so it can break the protocol.
+
+    The request is then answered with ``answer``, or by the default handler if none is given.
+    """
+
+    data: bytes
+    answer: Any = _DEFAULT
+
+
 _REQUESTS = (
     INITIALIZE_REQUEST,
     IMPORT_LIBRARY_REQUEST,
@@ -230,6 +241,10 @@ class FakeServer:
             if isinstance(answer, LogFirst):
                 for message in answer.messages:
                     await peer.send_notification(LOG_NOTIFICATION, LogParams(message=message, level=LogLevel.INFO))
+                answer = answer.answer
+            if isinstance(answer, RawFirst):
+                peer.writer.write(answer.data)
+                await peer.writer.drain()
                 answer = answer.answer
             if answer is RESET_CONNECTION:
                 _reset(peer)

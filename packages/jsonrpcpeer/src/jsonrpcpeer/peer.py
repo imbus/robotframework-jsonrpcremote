@@ -1,8 +1,10 @@
 import asyncio
+import codecs
 import contextlib
 import inspect
 import json
 import logging
+import re
 import traceback
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -13,6 +15,9 @@ from .json_helpers import as_json, from_dict
 T = TypeVar("T")
 
 PROTOCOL_VERSION = "2.0"
+
+# Digits only: int() also takes "+5", "1_000" and the digits of other scripts. The bound keeps int() from refusing it.
+_VALID_LENGTH = re.compile(r"[0-9]{1,18}")
 
 
 class JsonRpcErrorCode(IntEnum):
@@ -49,7 +54,8 @@ class JsonResponseBase(JsonRpcMessage):
 @dataclass(slots=True)
 class JsonRpcResponse(JsonResponseBase):
     id: str | int | None
-    result: Any = None
+    # No default: a field with a default is left out when it is None, and a response must have a result.
+    result: Any
 
 
 @dataclass(slots=True, kw_only=True)
@@ -63,6 +69,19 @@ class JsonRpcError:
 class JsonRpcErrorResponse(JsonResponseBase):
     error: JsonRpcError
     id: str | int | None
+
+
+def _is_usable_id(value: Any) -> bool:
+    # `bool` is a subclass of `int`, and JSON-RPC asks for a string or a number.
+    return isinstance(value, (str, int)) and not isinstance(value, bool)
+
+
+def _charset_of(content_type: str) -> str | None:
+    for part in content_type.split(";"):
+        name, _, value = part.partition("=")
+        if name.strip().lower() == "charset":
+            return value.strip().strip('"') or None
+    return None
 
 
 def _error_from_dict(error_data: Any) -> JsonRpcError:
@@ -91,10 +110,6 @@ def _retrieve_exception(future: "asyncio.Future[Any]") -> None:
         future.exception()
 
 
-class JsonRpcInvalidRequestError(Exception):
-    error_code = JsonRpcErrorCode.INVALID_REQUEST
-
-
 class JsonRpcConnectionClosedError(ConnectionError):
     """Raised for a request that cannot complete because the connection is closed."""
 
@@ -111,6 +126,17 @@ class JsonRpcResponseError(Exception):
         self.code = code
         self.message = message
         self.data = data
+
+
+def _failure_of_response(message: dict[str, Any]) -> JsonRpcResponseError | None:
+    """The error for a response that is invalid; ``None`` for a valid one."""
+    if message.get("jsonrpc") != PROTOCOL_VERSION:
+        return JsonRpcResponseError(
+            JsonRpcErrorCode.INVALID_REQUEST, f"Invalid JSON-RPC version in a response: {message.get('jsonrpc')!r}"
+        )
+    if message.get("error") is None and "result" not in message:
+        return JsonRpcResponseError(JsonRpcErrorCode.INTERNAL_ERROR, "Invalid response format")
+    return None
 
 
 class _InvalidParamsError(Exception):
@@ -153,6 +179,7 @@ class JsonRpcPeer:
         default_encoding: str = "utf-8",
         auto_close: bool = True,
         send_tracebacks: bool = False,
+        on_problem: Callable[[str], None] | None = None,
     ) -> None:
         self.reader = reader
         self.writer = writer
@@ -163,6 +190,13 @@ class JsonRpcPeer:
         self.default_encoding = default_encoding
         self.auto_close = auto_close
         self.send_tracebacks = send_tracebacks
+        self.on_problem = on_problem
+        # Without this field, the other side reads the content as UTF-8.
+        self._content_type_field = (
+            ""
+            if codecs.lookup(default_encoding).name == "utf-8"
+            else f"Content-Type: application/vscode-jsonrpc; charset={default_encoding}\r\n"
+        )
 
         self._request_handlers: dict[str, _HandlerEntry] = {}
         self._notification_handlers: dict[str, _HandlerEntry] = {}
@@ -191,6 +225,15 @@ class JsonRpcPeer:
     def _traceback_data(self) -> str | None:
         """The traceback of the exception being handled, as `data` of an error response, if the peer sends it."""
         return traceback.format_exc() if self.send_tracebacks else None
+
+    def _report_problem(self, problem: str, *, exc_info: bool = False) -> None:
+        """Log a problem with an incoming message, and hand it to the application."""
+        self.logger.error("%s", problem, exc_info=exc_info)
+        if self.on_problem is not None:
+            try:
+                self.on_problem(problem)
+            except Exception:
+                self.logger.exception("The callback for problems with messages failed")
 
     def _completion(self) -> asyncio.Future[bool]:
         """The completion future, bound to the event loop that is running when it is first used."""
@@ -287,19 +330,53 @@ class JsonRpcPeer:
             handler=handler, param_type=param_type, pass_peer=pass_peer
         )
 
-    async def _send_message(self, message: Any) -> None:
-        json_str = self._serialize_json(message)
-        body_bytes = (json_str + "\r\n").encode(self.default_encoding)
+    def _encode_message(self, message: Any) -> bytes:
+        """The content of a frame for ``message``. Raises if it cannot be written or is too long."""
+        body_bytes = (self._serialize_json(message) + "\r\n").encode(self.default_encoding)
 
         if self.max_message_size is not None and len(body_bytes) > self.max_message_size:
             raise ValueError(f"Outgoing message size {len(body_bytes)} exceeds maximum {self.max_message_size}")
 
-        header = f"Content-Length: {len(body_bytes)}\r\n\r\n"
-        header_bytes = header.encode("ascii")
+        return body_bytes
 
-        self.writer.write(memoryview(header_bytes + body_bytes))
+    def _write_frame(self, body_bytes: bytes) -> None:
+        header = f"Content-Length: {len(body_bytes)}\r\n{self._content_type_field}\r\n"
+        self.writer.write(memoryview(header.encode("ascii") + body_bytes))
+
+    async def _send_message(self, message: Any) -> None:
+        self._write_frame(self._encode_message(message))
 
         await self.writer.drain()
+
+    def _encode_response(self, response: "JsonRpcResponse | JsonRpcErrorResponse") -> bytes:
+        """The content of a frame for ``response``, or for an error to the same request if it cannot be sent."""
+        try:
+            return self._encode_message(response)
+        except Exception as ex:
+            self.logger.exception("The response to request %r cannot be sent: %s", response.id, ex)
+            error = JsonRpcErrorResponse(
+                id=response.id,
+                error=JsonRpcError(code=JsonRpcErrorCode.INTERNAL_ERROR, message=str(ex), data=self._traceback_data()),
+            )
+            # Without the size check, and with every character writable: this answer must get through.
+            return (self._serialize_json(error) + "\r\n").encode(self.default_encoding, "backslashreplace")
+
+    async def _write_answer(self, body_bytes: bytes) -> None:
+        """Send an answer. If that fails, the other side is gone, and nobody is left to tell."""
+        try:
+            self._write_frame(body_bytes)
+            await self.writer.drain()
+        except Exception as ex:
+            self.logger.debug("Could not send an answer: %s", ex)
+
+    async def _answer_problem(self, code: JsonRpcErrorCode, problem: str, data: Any = None) -> None:
+        """Report a message that cannot be read, and answer it with an error without an id."""
+        self._report_problem(problem)
+        await self._write_answer(
+            self._encode_response(
+                JsonRpcErrorResponse(id=None, error=JsonRpcError(code=code, message=problem, data=data))
+            )
+        )
 
     async def send_notification(self, method: str, params: Optional[Any] = None) -> None:
         message = JsonRpcNotification(method=method)
@@ -362,47 +439,7 @@ class JsonRpcPeer:
         close_error: BaseException | None = None
         try:
             while self.running:
-                content_length = 0
-                encoding = self.default_encoding
-
-                # Read headers
-                while True:
-                    line_bytes = await self.reader.readuntil(b"\r\n")
-                    line = line_bytes.decode("ascii").strip()
-
-                    if not line:
-                        break
-
-                    if line.startswith("Content-Length: "):
-                        content_length = int(line[16:])
-
-                        if self.max_message_size is not None and content_length > self.max_message_size:
-                            self.logger.warning(
-                                "Message size %d exceeds maximum %d, closing connection",
-                                content_length,
-                                self.max_message_size,
-                            )
-                            self.running = False
-                            return
-
-                    elif line.startswith("Content-Type: "):
-                        content_type = line[14:]
-                        parts = content_type.split(";")
-                        for part in parts:
-                            part = part.strip()
-                            if part.startswith("charset="):
-                                charset = part[8:].strip().strip('"')
-                                if charset:
-                                    encoding = charset
-
-                # Read body
-                body_bytes = await self.reader.readexactly(content_length)
-
-                message = body_bytes.decode(encoding)
-                task = asyncio.create_task(self.handle_message(message))
-                self._inflight.add(task)
-                task.add_done_callback(self._inflight.discard)
-
+                await self._read_message()
         except asyncio.IncompleteReadError as e:
             if e.partial or not self.reader.at_eof():
                 close_error = e
@@ -416,6 +453,79 @@ class JsonRpcPeer:
                 self._completion().set_exception(e)
         finally:
             await self._finish(close_error)
+
+    async def _read_header_line(self) -> str | None:
+        """Read a line of a header part, without its line end; ``None`` if it is too long to be a known header."""
+        too_long = False
+        while True:
+            try:
+                line_bytes = await self.reader.readuntil(b"\r\n")
+            except asyncio.LimitOverrunError as ex:
+                # The reader keeps the bytes in its buffer. Drop them, and the rest of the line with the next read.
+                await self.reader.readexactly(ex.consumed)
+                too_long = True
+            else:
+                return None if too_long else line_bytes[:-2].decode("ascii", "replace")
+
+    async def _read_header_part(self) -> tuple[str | None, str | None]:
+        """Read a header part. Returns the values of Content-Length and of the charset, if it has them."""
+        length = None
+        charset = None
+        while True:
+            line = await self._read_header_line()
+            if line == "":
+                return length, charset
+            if line is None:
+                continue
+            name, _, value = line.partition(":")
+            name = name.strip().lower()
+            if name == "content-length":
+                length = value.strip()
+            elif name == "content-type":
+                charset = _charset_of(value)
+
+    def _start_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        task = asyncio.create_task(coroutine)
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
+
+    async def _skip_content(self, length: int) -> None:
+        """Drop the next ``length`` bytes, in pieces, so that they do not pile up in memory."""
+        while length > 0:
+            chunk = await self.reader.read(min(length, 65536))
+            if not chunk:
+                return
+            length -= len(chunk)
+
+    async def _read_message(self) -> None:
+        """Read one message and start handling it. If it cannot be read, report that and go on with the next one."""
+        raw_length, charset = await self._read_header_part()
+
+        if raw_length is None:
+            self._report_problem("Received a header part without a Content-Length header")
+            return
+        if _VALID_LENGTH.fullmatch(raw_length) is None:
+            self._report_problem(f"Received an invalid Content-Length header: {raw_length[:100]!r}")
+            return
+
+        length = int(raw_length)
+        if self.max_message_size is not None and length > self.max_message_size:
+            problem = f"Message size {length} exceeds maximum {self.max_message_size}"
+            self._start_task(self._answer_problem(JsonRpcErrorCode.INVALID_REQUEST, problem))
+            await self._skip_content(length)
+            return
+
+        body_bytes = await self.reader.readexactly(length)
+
+        encoding = charset or "utf-8"
+        try:
+            message = body_bytes.decode(encoding)
+        except (LookupError, ValueError) as ex:
+            problem = f"Cannot decode a message with the charset {encoding!r}: {ex}"
+            self._start_task(self._answer_problem(JsonRpcErrorCode.PARSE_ERROR, problem, self._traceback_data()))
+            return
+
+        self._start_task(self.handle_message(message))
 
     async def _finish(self, close_error: BaseException | None, *, wait_for_close: bool = True) -> None:
         """End the peer: fail the waiting requests, resolve the completion and, with auto_close, close the writer."""
@@ -450,146 +560,108 @@ class JsonRpcPeer:
                 tcs.set_exception(error)
 
     async def handle_message(self, json_str: str) -> None:
-        response_id: str | int | None = None
         try:
             json_element = json.loads(json_str)
+        except (ValueError, RecursionError) as ex:
+            # A huge integer and deep nesting do not raise JSONDecodeError.
+            await self._answer_problem(JsonRpcErrorCode.PARSE_ERROR, f"Parse error: {ex}", self._traceback_data())
+            return
 
-            if isinstance(json_element, list):
-                if not json_element:
-                    await self._send_message(
-                        JsonRpcErrorResponse(
-                            id=None,
-                            error=JsonRpcError(
-                                code=JsonRpcErrorCode.INVALID_REQUEST,
-                                message="Invalid Request: batch must not be empty",
-                            ),
-                        )
-                    )
-                    return
+        if isinstance(json_element, list):
+            await self._handle_batch(json_element)
+            return
 
-                responses = []
+        response = await self.process_single_message(json_element)
+        if response is not None:
+            await self._write_answer(self._encode_response(response))
 
-                for element in json_element:
-                    response = await self.process_single_message(element)
-                    if response is not None:
-                        responses.append(response)
+    async def _handle_batch(self, elements: list[Any]) -> None:
+        if not elements:
+            await self._answer_problem(JsonRpcErrorCode.INVALID_REQUEST, "Invalid Request: batch must not be empty")
+            return
 
-                if responses:
-                    await self._send_message(responses)
-            else:
-                response = await self.process_single_message(json_element)
-                if response is not None:
-                    if isinstance(response, (JsonRpcResponse, JsonRpcErrorResponse)):
-                        response_id = response.id
-                    await self._send_message(response)
+        responses = []
+        for element in elements:
+            response = await self.process_single_message(element)
+            if response is not None:
+                responses.append(response)
 
-        except json.JSONDecodeError as ex:
-            error_response = JsonRpcErrorResponse(
-                error=JsonRpcError(
-                    code=JsonRpcErrorCode.PARSE_ERROR,
-                    message=str(ex),
-                    data=self._traceback_data(),
-                ),
-                id=response_id,
-            )
-            await self._send_message(error_response)
-        except JsonRpcInvalidRequestError as ex:
-            error_response = JsonRpcErrorResponse(
-                error=JsonRpcError(
-                    code=JsonRpcInvalidRequestError.error_code,
-                    message=str(ex),
-                    data=self._traceback_data(),
-                ),
-                id=response_id,
-            )
-            await self._send_message(error_response)
-        except Exception as ex:
-            error_response = JsonRpcErrorResponse(
-                error=JsonRpcError(
-                    code=JsonRpcErrorCode.INTERNAL_ERROR,
-                    message=str(ex),
-                    data=self._traceback_data(),
-                ),
-                id=response_id,
-            )
-            await self._send_message(error_response)
+        if responses:
+            # Each response on its own, so that one that cannot be sent does not take the others with it.
+            items = [self._encode_response(response).decode(self.default_encoding).rstrip() for response in responses]
+            await self._write_answer(f"[{','.join(items)}]\r\n".encode(self.default_encoding))
 
-    async def process_single_message(self, json_element: Any) -> Optional[JsonResponseBase]:
+    def _invalid_message(self, problem: str, id_value: str | int | None) -> JsonRpcErrorResponse:
+        self._report_problem(problem)
+        return JsonRpcErrorResponse(
+            id=id_value, error=JsonRpcError(code=JsonRpcErrorCode.INVALID_REQUEST, message=problem)
+        )
+
+    async def process_single_message(self, json_element: Any) -> JsonRpcResponse | JsonRpcErrorResponse | None:
+        """Handle one message. Returns the answer to it, if it gets one."""
         if not isinstance(json_element, dict):
-            return JsonRpcErrorResponse(
-                id=None,
-                error=JsonRpcError(
-                    code=JsonRpcErrorCode.INVALID_REQUEST,
-                    message="Invalid JSON-RPC payload",
-                ),
-            )
+            return self._invalid_message("Invalid JSON-RPC payload", None)
 
-        json_rpc_version = json_element.pop("jsonrpc", None)
-        if json_rpc_version != PROTOCOL_VERSION:
-            return JsonRpcErrorResponse(
-                id=json_element.get("id", None),
-                error=JsonRpcError(
-                    code=JsonRpcErrorCode.INVALID_REQUEST,
-                    message="Invalid JSON-RPC version",
-                ),
-            )
-
-        match json_element:
-            case {"id": id_value} if "method" not in json_element:
-                return await self._handle_response(json_element, id_value)
-
-            case {"id": id_value, "method": method_name} if id_value is not None:
-                request = JsonRpcRequest(method=method_name, id=id_value, params=json_element.get("params"))
-                return await self.process_request(request)
-
-            case {"method": method_name}:
-                notification = JsonRpcNotification(method=method_name, params=json_element.get("params"))
-                return await self.process_notification(notification)
-
-            case _:
-                return None
-
-    async def _handle_response(self, json_element: dict[str, Any], id_value: Any) -> Optional[JsonResponseBase]:
-        """Handle JSON-RPC response messages using pattern matching."""
-        if id_value is not None and not isinstance(id_value, (str, int)):
-            return JsonRpcErrorResponse(
-                id=None,
-                error=JsonRpcError(
-                    code=JsonRpcErrorCode.INVALID_REQUEST,
-                    message="Invalid ID type in response",
-                ),
-            )
-
-        tcs = None
-        if id_value is not None:
-            tcs = self._pending_requests.pop(id_value, None)
-
-        if tcs is not None:
-            match json_element:
-                case {"error": error_data}:
-                    error = _error_from_dict(error_data)
-                    tcs.set_exception(JsonRpcResponseError(error.code, error.message, error.data))
-                case {"result": result}:
-                    response = JsonRpcResponse(
-                        id=cast(str | int, id_value),
-                        result=result,
-                    )
-                    tcs.set_result(response)
-                case _:
-                    tcs.set_exception(JsonRpcResponseError(JsonRpcErrorCode.INTERNAL_ERROR, "Invalid response format"))
+        id_value = json_element.get("id")
+        if "id" in json_element and "method" not in json_element:
+            self._handle_response(json_element, id_value)
             return None
 
-        # Handle error with null ID
-        if id_value is None and "error" in json_element:
-            error = _error_from_dict(json_element["error"])
-            self.logger.warning(
-                "Received error with null ID: %s: %s (%s)",
-                error.code,
-                error.message,
-                error.data,
-            )
+        usable_id = id_value if _is_usable_id(id_value) else None
 
-        return None
+        if json_element.get("jsonrpc") != PROTOCOL_VERSION:
+            return self._invalid_message("Invalid JSON-RPC version", usable_id)
+
+        method = json_element.get("method")
+        if not isinstance(method, str):
+            return self._invalid_message("Invalid Request: a message needs a string as its method", usable_id)
+
+        params = json_element.get("params")
+        # A null counts as missing: some serializers write every field.
+        if params is not None and not isinstance(params, (dict, list)):
+            return self._invalid_message("Invalid Request: the params must be an array or an object", usable_id)
+
+        if "id" not in json_element:
+            await self.process_notification(JsonRpcNotification(method=method, params=params))
+            return None
+
+        if usable_id is None:
+            return self._invalid_message("Invalid Request: the id must be a string or an integer", None)
+
+        return await self.process_request(JsonRpcRequest(method=method, id=usable_id, params=params))
+
+    def _handle_response(self, message: dict[str, Any], id_value: Any) -> None:
+        """Hand a response to the request that waits for it. A response is never answered."""
+        if id_value is None:
+            error = _error_from_dict(message["error"]) if message.get("error") is not None else None
+            if error is None:
+                self._report_problem("Received a response without an id and without an error")
+            else:
+                details = "" if error.data is None else f" ({error.data})"
+                self._report_problem(f"Received an error without an id: {error.code}: {error.message}{details}")
+            return
+
+        if not _is_usable_id(id_value):
+            self._report_problem(f"Received a response with an invalid id: {id_value!r}")
+            return
+
+        waiting = self._pending_requests.pop(id_value, None)
+        if waiting is not None and waiting.done():
+            # It has just timed out or been cancelled, and its caller has not run yet.
+            waiting = None
+
+        failure = _failure_of_response(message)
+        if waiting is None:
+            # A valid response that nobody waits for is normal after a timeout.
+            if failure is not None:
+                self._report_problem(f"Received an invalid response to request {id_value!r}: {failure.message}")
+        elif failure is not None:
+            waiting.set_exception(failure)
+        elif message.get("error") is not None:
+            error = _error_from_dict(message["error"])
+            waiting.set_exception(JsonRpcResponseError(error.code, error.message, error.data))
+        else:
+            waiting.set_result(JsonRpcResponse(id=id_value, result=message["result"]))
 
     async def _call_handler(
         self,
@@ -607,7 +679,7 @@ class JsonRpcPeer:
 
         return await cast(Callable[[Any], Coroutine[Any, Any, Any]], handler.handler)(converted)
 
-    async def process_request(self, message: JsonRpcRequest) -> JsonResponseBase:
+    async def process_request(self, message: JsonRpcRequest) -> JsonRpcResponse | JsonRpcErrorResponse:
         if message.method in self._request_handlers:
             handler = self._request_handlers[message.method]
             try:
@@ -646,44 +718,20 @@ class JsonRpcPeer:
                 ),
             )
 
-    async def process_notification(self, message: JsonRpcNotification) -> Optional[JsonResponseBase]:
-        if message.method in self._notification_handlers:
-            handler = self._notification_handlers[message.method]
-            try:
-                await self._call_handler(handler, message.params)
-                return None
-            except JsonRpcResponseError as ex:
-                return JsonRpcErrorResponse(
-                    id=None,
-                    error=JsonRpcError(code=ex.code, message=ex.message, data=ex.data),
-                )
-            except _InvalidParamsError as ex:
-                return JsonRpcErrorResponse(
-                    id=None,
-                    error=JsonRpcError(
-                        code=JsonRpcErrorCode.INVALID_PARAMS,
-                        message=str(ex),
-                        data=self._traceback_data(),
-                    ),
-                )
-            except Exception as ex:
-                self.logger.exception("The handler of notification '%s' failed", message.method)
-                return JsonRpcErrorResponse(
-                    id=None,
-                    error=JsonRpcError(
-                        code=JsonRpcErrorCode.INTERNAL_ERROR,
-                        message=str(ex),
-                        data=self._traceback_data(),
-                    ),
-                )
-        else:
-            return JsonRpcErrorResponse(
-                id=None,
-                error=JsonRpcError(
-                    code=JsonRpcErrorCode.METHOD_NOT_FOUND,
-                    message=f"Method for notification `{message.method}` not found",
-                ),
-            )
+    async def process_notification(self, message: JsonRpcNotification) -> None:
+        handler = self._notification_handlers.get(message.method)
+        if handler is None:
+            self.logger.debug("No handler for notification '%s'", message.method)
+            return
+
+        try:
+            await self._call_handler(handler, message.params)
+        except _InvalidParamsError as ex:
+            self._report_problem(f"The params of notification '{message.method}' are invalid: {ex}")
+        except JsonRpcResponseError as ex:
+            self._report_problem(f"The handler of notification '{message.method}' failed: {ex.message}")
+        except Exception as ex:
+            self._report_problem(f"The handler of notification '{message.method}' failed: {ex}", exc_info=True)
 
     def attach_endpoint(self, endpoint: JsonRpcEndpointProtocol) -> None:
         endpoint.rpc_peer = self

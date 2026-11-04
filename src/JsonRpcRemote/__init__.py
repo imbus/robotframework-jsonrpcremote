@@ -77,7 +77,7 @@ _TEARDOWN_POLL_INTERVAL = 0.05
 _REMOTE_MARK = "[remote] "
 
 
-def _write_log(message: str, level: str, html: bool, console: bool) -> None:
+def _write_log(message: str, level: str, html: bool, console: bool | None) -> None:
     """Write a log message forwarded by the server, on every supported Robot Framework version."""
     if _LOGGER_WRITE_HAS_CONSOLE:
         logger.write(message, level, html, console)  # type: ignore[arg-type]
@@ -99,9 +99,9 @@ class _LogSink:
     def __init__(self) -> None:
         self._lock = Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._pending: list[tuple[str, str, bool, bool]] = []
+        self._pending: list[tuple[str, str, bool, bool | None]] = []
 
-    def submit(self, message: str, level: str, html: bool, console: bool) -> None:
+    def submit(self, message: str, level: str, html: bool, console: bool | None) -> None:
         with self._lock:
             if self._loop is not None:
                 try:
@@ -212,6 +212,11 @@ def _definition_changes(registered: LibraryDefinition | None, current: LibraryDe
     return "" if registered.keywords == current.keywords else "the order of the keywords changed"
 
 
+def _report_peer_problem(log_sink: _LogSink, uri: str, problem: str) -> None:
+    """Write a problem that the peer reports to Robot Framework: it drops what the peer logs on the worker thread."""
+    log_sink.submit(f"Problem with a message from '{uri}': {problem}", "ERROR", False, None)
+
+
 class _ClientEndpoint:
     def __init__(self, log_sink: _LogSink | None = None, log_level: str | None = None) -> None:
         self.log_sink = log_sink if log_sink is not None else _LogSink()
@@ -227,7 +232,7 @@ class _ClientEndpoint:
     async def _log_notification(self, params: LogParams) -> None:
         level = params.level.value if params.level is not None else "INFO"
         message = _REMOTE_MARK + params.message if level in ("DEBUG", "TRACE") else params.message
-        self.log_sink.submit(message, level, params.html or False, params.console or False)
+        self.log_sink.submit(message, level, params.html or False, params.console)
 
     async def initialize(self) -> InitializeResult:
         if self.rpc_peer is None:
@@ -544,7 +549,11 @@ class _Session:
             self._res.thread = None
 
     async def _start_peer(self) -> None:
-        self._res.peer = JsonRpcPeer(*await self.create_connection())
+        self._res.peer = JsonRpcPeer(
+            *await self.create_connection(),
+            # Not a bound method of the session: the resources hold the peer and must not refer to the session.
+            on_problem=functools.partial(_report_peer_problem, self.client_endpoint.log_sink, self._uri),
+        )
 
         self._res.peer.attach_endpoint(self.client_endpoint)
 
