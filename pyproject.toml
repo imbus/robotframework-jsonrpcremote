@@ -71,7 +71,7 @@ simple-robot-jsonrpcserver = { workspace = true }
 dev = [
     "commitizen>=4.16.3",
     "hypothesis>=6.170",
-    "mypy>=1.19.1",
+    "mypy>=2.4.1",
     "pre-commit>=4.6.0",
     "pyright>=1.1.409",
     "pytest>=8.0",
@@ -155,7 +155,6 @@ disallow_untyped_calls = false
 disallow_subclassing_any = false
 explicit_package_bases = true
 namespace_packages = true
-enable_incomplete_feature = ["TypeForm"]
 files = [
     "src",
     "packages/jsonrpcpeer/src",
