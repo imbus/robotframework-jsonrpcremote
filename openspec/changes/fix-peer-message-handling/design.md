@@ -2,7 +2,7 @@
 
 ## Context
 
-See `proposal.md` for the motivation and the decisions, and the delta specs for the behavior. These facts shape the approach:
+See `proposal.md` for the motivation and the decisions, and the delta specs for the behavior. The reference is LSP 3.18 together with JSON-RPC 2.0. These facts shape the approach:
 
 - `io_loop` in `peer.py` reads headers and content in one loop and ends on any exception. `handle_message` parses, dispatches and sends, and its last `except Exception` catches failures of serializing and of writing alike.
 - The peer logs through a module logger. On the client it runs on the session's worker thread, where Robot Framework drops log messages. `_LogSink` exists for that reason.
@@ -10,7 +10,7 @@ See `proposal.md` for the motivation and the decisions, and the delta specs for 
 - The resources of a client session are held by its finalizer, so nothing reachable from them may refer to the session.
 - `logger.write` takes `console` since Robot Framework 7.4. `None` is its default and leaves the choice to the level; `False` keeps even a warning off the console.
 
-The approach was tried out as a prototype on copies of the packages. Over real sockets the scenarios of the delta specs behave as described. All 157 Robot tests pass against it, and 7 of the 708 unit tests fail, those named under decision 11. What a Robot user sees was checked on Robot Framework 7.5 and 7.2.
+The approach was tried out as a prototype on copies of the packages. Over real sockets the scenarios of the delta specs behave as described. All 157 Robot tests pass against it, and 7 of the 708 unit tests fail, those named under decision 11. What a Robot user sees was checked on Robot Framework 7.5 and 7.2. The examples in section 7 of JSON-RPC 2.0 all give the expected answers, and a whole session works with `vscode-jsonrpc` on the other side, in both directions.
 
 ## Goals / Non-Goals
 
@@ -25,6 +25,8 @@ The approach was tried out as a prototype on copies of the packages. Over real s
 - Timeouts for keyword calls. They are a topic of their own (CLIENT-1); this change only makes sure that a waiting call has a reason in the log.
 - Typed endpoints: `add-typed-endpoints` comes next and leaves this design as it is.
 - Finding the next message by searching for a header in unreadable bytes. `vscode-jsonrpc` does not do it either, and a body can hold any text.
+- `NaN` and `Infinity` on the wire, which are no JSON: `encode-json-values-natively` handles them.
+- The lifecycle rules of the LSP for `robot/*`, such as the answer to a request after `robot/shutdown`. They are not part of JSON-RPC, and only a foreign client can run into them (backlog SERVER-24).
 - Forwarding the `console` value of Robot Framework's own message, for example of `logger.info(..., also_console=True)`. That needs a change to the subscriber interface and works only from Robot Framework 7.4 on, and the reported problem does not need it.
 
 ## Decisions
@@ -69,7 +71,9 @@ The read loop must not block on a full write buffer. `-32700` and `-32600` are t
 
 ### 7. Messages are told apart in one place
 
-`process_single_message` decides in this order: not an object, invalid; an `id` and no `method`, `_handle_response`; wrong `jsonrpc`, invalid; `method` not a string, invalid; no `id`, notification; `id` not usable, invalid; otherwise a request. `_is_usable_id` accepts `str` and `int`, but not `bool`, which is a subclass of `int`.
+`process_single_message` decides in this order: not an object, invalid; an `id` and no `method`, `_handle_response`; wrong `jsonrpc`, invalid; `method` not a string, invalid; `params` neither an array nor an object, invalid; no `id`, notification; `id` not usable, invalid; otherwise a request. `_is_usable_id` accepts `str` and `int`, but not `bool`, which is a subclass of `int`. `"params": null` counts as missing, as `"error": null` does, because some serializers write every field.
+
+Such `params` get `-32600`, because JSON-RPC requires a structured value, so the message is no valid Request object. **Alternative:** `-32602`, which a handler with a type answers today. That would leave a handler without a type to check it.
 
 `_handle_response` becomes synchronous and returns nothing, so it cannot answer. A request that has just timed out can still be registered while its future is already done, so the peer treats a done future as no waiting request. `error` is checked with `is not None` and `result` with `in`, which covers both null cases of the spec.
 
@@ -105,6 +109,12 @@ These existing tests change on purpose:
 - `test_oversized_incoming_message_fails_the_request_without_a_cause` turns into its opposite: the request keeps waiting.
 - `test_error_that_a_notification_handler_raises_is_not_logged` now expects a report, because nobody else can learn of the error.
 - `test_forwarded_message_keeps_its_level_and_html_and_is_not_for_the_console` expects no `console` instead of `False`.
+
+### 12. `default_encoding` sets only what the peer sends
+
+`_write_frame` names the charset in a `Content-Type` field unless it is UTF-8. The peer decides this once when it is created, with `codecs.lookup`, so `utf8` and `UTF-8` count as UTF-8 and an unknown name fails at once. A message without a charset is read as UTF-8, which is what the LSP says about such content.
+
+**Alternative:** going on reading such a message with `default_encoding`. A peer with `latin-1` would then misread the messages of every peer with the default.
 
 ## Risks / Trade-offs
 

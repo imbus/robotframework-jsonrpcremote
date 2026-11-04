@@ -367,6 +367,16 @@ The peer SHALL treat a JSON object with a string `method` and a string or intege
 - **AND** a message arrives with the `id` `"1"`, a `result` and no `method`
 - **THEN** the request gets that result
 
+#### Scenario: Array as params
+
+- **WHEN** a request arrives with the `method` `echo` and the `params` `[1, 2]`
+- **THEN** the handler of `echo` gets the array
+
+#### Scenario: Null params count as missing
+
+- **WHEN** a request arrives with the `method` `echo` and `"params": null`
+- **THEN** the handler of `echo` is called as for a request without `params`
+
 ### Requirement: An invalid message is answered with an invalid-request error
 
 The peer SHALL NOT call a handler for an invalid message. It SHALL report the problem and SHALL answer with the code `-32600`, with the `id` of the message if that is a string or an integer, and with `id: null` otherwise. A message whose `jsonrpc` is not `2.0` SHALL be invalid.
@@ -387,6 +397,18 @@ The peer SHALL NOT call a handler for an invalid message. It SHALL report the pr
 
 - **WHEN** the message `{"jsonrpc":"2.0","method":1,"params":"bar"}` arrives
 - **THEN** the response carries the code `-32600` and `id: null`
+
+#### Scenario: Params that are neither an array nor an object, with an id
+
+- **WHEN** a message arrives with the `method` `echo`, the `id` `1` and `params` that are a string, a number or a boolean
+- **THEN** the response carries the code `-32600` and the `id` `1`
+- **AND** the handler of `echo` is not called
+
+#### Scenario: Params that are neither an array nor an object, without an id
+
+- **WHEN** a message arrives with the `method` `changed`, no `id` and the `params` `"bar"`
+- **THEN** the response carries the code `-32600` and `id: null`
+- **AND** the notification handler of `changed` is not called
 
 #### Scenario: Id of another type
 
@@ -576,3 +598,33 @@ When the peer has a request timeout configured, it SHALL fail a request that get
 - **AND** its response arrives later
 - **THEN** the peer sends nothing
 - **AND** the peer reports no problem
+
+### Requirement: The charset of a message is named if it is not UTF-8
+
+A message without a charset SHALL be read as UTF-8, whatever the default encoding of the peer is. A peer whose default encoding is not UTF-8 SHALL name it in a `Content-Type` field of every message that it sends. A peer whose default encoding is UTF-8 SHALL send no `Content-Type`.
+
+#### Scenario: Peer with another default encoding sends a message
+
+- **WHEN** a peer with the default encoding `latin-1` sends a message
+- **THEN** the header part holds `Content-Type: application/vscode-jsonrpc; charset=latin-1`
+- **AND** the content is in that charset
+
+#### Scenario: Peer with UTF-8 sends a message
+
+- **WHEN** a peer with the default encoding `utf-8`, `utf8` or `UTF-8` sends a message
+- **THEN** the header part holds only `Content-Length`
+
+#### Scenario: Message without a charset reaches a peer with another default encoding
+
+- **WHEN** a peer with the default encoding `latin-1` gets a message without a charset, whose content is `ä` in UTF-8
+- **THEN** the peer reads it as `ä`
+
+#### Scenario: Two peers with different default encodings
+
+- **WHEN** a peer with the default encoding `latin-1` and a peer with UTF-8 send each other requests that hold `ä`
+- **THEN** each request and each response arrives with `ä`
+
+#### Scenario: Unknown default encoding
+
+- **WHEN** a peer is created with a default encoding that Python does not know
+- **THEN** creating it fails with `LookupError`

@@ -31,6 +31,9 @@ The peer's behavior can be seen from Robot Framework only through a server that 
 - [ ] 2.1 Rewrite `process_single_message` with the order of design decision 7, and add `_is_usable_id` and `_invalid_message`. Add:
   - `test_message_with_neither_a_method_nor_an_id_is_invalid`, over `{"jsonrpc":"2.0"}` and `{"jsonrpc":"2.0","params":{}}`;
   - `test_method_that_is_no_string_is_invalid`: `[]` with the `id` `1` keeps its `id`, and `1` without an `id` gets `id: null`;
+  - `test_params_that_are_neither_an_array_nor_an_object_are_invalid`, over a string, a number and a boolean, with and without an `id`: no handler is called;
+  - `test_array_as_params_reaches_the_handler`, which pins what stays;
+  - `test_null_params_count_as_missing`, which pins what stays;
   - `test_id_of_another_type_is_invalid`, over an object, `true` and `1.5`: the handler is not called;
   - `test_null_id_with_a_method_is_invalid`: the handler is not called;
   - `test_message_that_is_no_object_is_invalid`;
@@ -62,6 +65,7 @@ The peer's behavior can be seen from Robot Framework only through a server that 
 - [ ] 3.3 Answer a batch with `_handle_batch`, with each response encoded on its own (design decision 9). Add `test_batch_with_requests_and_notifications`, `test_batch_of_notifications_sends_nothing`, `test_batch_with_a_failing_notification`, `test_batch_with_an_invalid_element`, `test_batch_of_responses_gives_each_request_its_response` and `test_batch_with_a_result_that_cannot_be_written`. Change `test_empty_batch_returns_error` to read what is written. Verify that the last new test fails in a copy that encodes the array as a whole. The others pin what stays, except for the answer to the failing notification.
 - [ ] 3.4 In `tests/test_server_end_to_end.py`, add `test_client_that_goes_away_during_a_keyword_leaves_no_error_in_the_log`: a raw client aborts its connection while a keyword runs, and the stderr of the server has neither `never retrieved` nor `Connection lost` after the keyword has ended. Verify that it fails in a copy that sends a second error. It adds no Robot test, because it shows only in the log of the server.
 - [ ] 3.5 In `docs/src/content/docs/reference/protocol.mdx`, say that a batch is an array, as in JSON-RPC 2.0, and that it is answered with one array. In `packages/jsonrpcpeer/README.md`, change the entry on errors that cannot be sent to cover results and batches. Verify in 5.5 that the site builds.
+- [ ] 3.6 Let `default_encoding` set only what the peer sends (design decision 12): decide on the `Content-Type` field with `codecs.lookup` when the peer is created, write it in `_write_frame`, and read a message without a charset as UTF-8. Add `test_peer_with_another_encoding_names_its_charset`, `test_peer_with_utf8_sends_no_content_type`, over `utf-8`, `utf8` and `UTF-8`, `test_message_without_a_charset_is_read_as_utf8`, by a peer with `latin-1`, `test_peers_with_different_encodings_understand_each_other` and `test_unknown_default_encoding_fails_when_the_peer_is_created`. Verify that the first and the fourth fail in a copy without the field, and the third and the fourth in a copy that reads with `default_encoding`. In `packages/jsonrpcpeer/README.md`, describe `default_encoding`. It adds no Robot test, because neither the client nor the server offers the option.
 
 ## 4. What a Robot user sees
 
@@ -87,10 +91,10 @@ The peer's behavior can be seen from Robot Framework only through a server that 
 - [ ] 5.2 Run `uv run --all-packages robotcode run`, and with `--with "robotframework==7.2"` for pytest and Robot; verify all pass.
 - [ ] 5.3 Run the unit tests on Python 3.13, 3.14 and 3.15 in scratch environments, with `UV_PROJECT_ENVIRONMENT=<scratch>/venv-<version> UV_PYTHON=<version> uv run --all-packages --dev pytest -q`, and restore the environment afterwards with `uv sync --all-extras --all-packages --dev`; verify all pass.
 - [ ] 5.4 On the Windows test VM, run `uv run --all-packages pytest` and `uv run --all-packages robotcode run` in a copy of the working tree without `__pycache__`, set up with `uv sync --all-extras --all-packages --dev --python 3.12`; verify all pass, also the raw server on port 8285.
-- [ ] 5.5 Build the site with `npm ci` and `npm run build` in `docs/`, and run `uv run --all-packages bash docs/examples/getting-started/run.sh`, `uv run --all-packages bash docs/examples/own-server/run.sh` and `uv run --all-packages bash docs/examples/failures/run.sh`; verify all pass. Compare the implementation with the pages of 1.6, 2.6, 3.5 and 4.5.
+- [ ] 5.5 Build the site with `npm ci` and `npm run build` in `docs/`, and run `uv run --all-packages bash docs/examples/getting-started/run.sh`, `uv run --all-packages bash docs/examples/own-server/run.sh` and `uv run --all-packages bash docs/examples/failures/run.sh`; verify all pass. Compare the implementation with the pages of 1.6, 2.6, 3.5, 3.6 and 4.5.
 - [ ] 5.6 Commit the change, this `tasks.md` and the updated planning artifacts as one signed commit on `main` (`git commit -S`), once Daniel has given the go:
   - **Subject:** `fix(peer): handle malformed messages as the LSP does, and keep the connection open`.
-  - **Body:** explains that notifications were answered, that header names and spacing were matched exactly, that malformed input closed the connection or put the stream out of step without a trace, that problems in the client never reached Robot Framework, that responses with `"error": null` or without `jsonrpc` were misread, that `None` sent no `result`, that invalid messages got a wrong answer or none, that a client going away left a traceback in the server's log, and that warnings of remote keywords were missing on the console from Robot Framework 7.4 on. It names the removal of `JsonRpcInvalidRequestError` and the new option `on_problem`.
+  - **Body:** explains that notifications were answered, that header names and spacing were matched exactly, that malformed input closed the connection or put the stream out of step without a trace, that problems in the client never reached Robot Framework, that responses with `"error": null` or without `jsonrpc` were misread, that `None` sent no `result`, that invalid messages got a wrong answer or none, also `params` that are neither an array nor an object, that a peer with another `default_encoding` did not name its charset, that a client going away left a traceback in the server's log, and that warnings of remote keywords were missing on the console from Robot Framework 7.4 on. It names the removal of `JsonRpcInvalidRequestError` and the new option `on_problem`.
   - **No** `Refs` and no co-author.
 
   Verify with `uv run --all-packages cz check --rev-range HEAD~1..HEAD` and `git log --show-signature -1`.
@@ -99,7 +103,7 @@ The peer's behavior can be seen from Robot Framework only through a server that 
 
 - Daniel pushes `main`; check that CI and the docs workflow pass. A failure gets its own fix commit before the archive.
 - Archive the change with `/opsx:archive`, sync its delta specs into `openspec/specs/jsonrpc-peer`, `openspec/specs/client` and `openspec/specs/server`, and commit the archive as its own signed commit, once Daniel has given the go: `docs(openspec): archive fix-peer-message-handling`.
-- In `playground/anforderungen-und-ideen.md`, set PEER-2, PEER-3, PEER-8 to PEER-12, PEER-14, PEER-15, TEST-4 and CLIENT-18 to done.
+- In `playground/anforderungen-und-ideen.md`, set PEER-2, PEER-3, PEER-8 to PEER-12, PEER-14 to PEER-17, TEST-4 and CLIENT-18 to done.
 - Next is `add-typed-endpoints` (`playground/umsetzungsplan-review.md`, section 11b).
 - The proposal of `harden-server-network-defaults` still says that a larger message closes the connection; adapt it at its `/opsx:update`.
 - The next free fixed port for a Robot suite is then the one after 8285.
