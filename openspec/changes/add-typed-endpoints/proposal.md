@@ -23,10 +23,12 @@ class ServerEndpoint(JsonRpcEndpoint):
     @abstractmethod
     async def initialize(self, params: InitializeParams) -> InitializeResult: ...
 
+
 # One side implements it
 class RobotServerEndpoint(ServerEndpoint):
     async def initialize(self, params: InitializeParams) -> InitializeResult:
         return InitializeResult(...)
+
 
 peer.attach_endpoint(RobotServerEndpoint())
 
