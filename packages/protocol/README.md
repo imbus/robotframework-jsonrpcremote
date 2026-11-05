@@ -30,3 +30,25 @@ This package defines the **JSON-RPC 2.0** protocol between the client library `J
 ## Usage
 
 End users do not use this package directly; it is a dependency of the client and the server.
+
+A server in Python can use it to implement the protocol. `ServerEndpoint` states what a client calls, and `ClientEndpoint` what a server calls, each with the name and the types of every message. The package depends on [`jsonrpcpeer`](https://pypi.org/project/jsonrpcpeer/) for that.
+
+```python
+from jsonrpcpeer import JsonRpcPeer
+from robot_jsonrpcremote_protocol import ClientEndpoint, LogParams, RunKeywordParams, RunKeywordResult, ServerEndpoint
+
+
+class MyServer(ServerEndpoint):
+    async def run_keyword(self, params: RunKeywordParams) -> RunKeywordResult:
+        await self.remote(ClientEndpoint).log(LogParams(message=f"Running {params.name}"))
+        return RunKeywordResult(result="done")
+
+    # And the other methods of ServerEndpoint: creating an object fails if one is missing.
+
+
+peer = JsonRpcPeer(reader, writer)
+peer.attach_endpoint(MyServer())
+await peer.run()
+```
+
+The [example server](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/examples/simple-robot-jsonrpcserver) is a complete one.

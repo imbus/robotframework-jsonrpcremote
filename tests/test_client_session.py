@@ -33,6 +33,7 @@ from robot_jsonrpcremote_protocol import (
     RUN_KEYWORD_REQUEST,
     ArgumentDefinition,
     ArgumentKind,
+    ClientEndpoint,
     ImportLibraryResult,
     KeywordDefinition,
     LibraryDefinition,
@@ -593,3 +594,8 @@ def test_ending_a_session_without_a_peer_kills_the_recorded_server_process() -> 
 
     process.kill.assert_called_once_with()
     assert resources.process is None
+
+
+def test_client_endpoint_implements_the_definition() -> None:
+    assert issubclass(_ClientEndpoint, ClientEndpoint)
+    assert isinstance(_ClientEndpoint(), ClientEndpoint)

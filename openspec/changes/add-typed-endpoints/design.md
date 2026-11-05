@@ -51,17 +51,19 @@ Alternatives, all tried with `mypy` and `pyright`:
 - A plain class with `...` as the body: `mypy` reports `empty-body` on each method, and nobody reports a missing method.
 - A plain class with `raise NotImplementedError`: nobody reports a missing method until it is called.
 
-### 2. `remote` takes a `TypeForm`, not a `type`
+### 2. `remote` takes a `Callable`, not a `type`
 
 ```python
-def remote(self, definition: TypeForm[E]) -> E: ...
+def remote(self, definition: Callable[..., E]) -> E: ...
 ```
 
-With `type[E]`, `mypy` refuses an abstract class and a protocol at the call: `Only concrete class can be given where "type[...]" is expected [type-abstract]`. Every caller would have to switch off that error. `TypeForm[E]` has no such rule, and `json_helpers.from_dict` already uses it, so the package already depends on it through `typing_extensions`.
+With `type[E]`, `mypy` refuses an abstract class and a protocol at the call: `Only concrete class can be given where "type[...]" is expected [type-abstract]`. Every caller would have to switch off that error.
 
-Tried on a project that has the packages installed as wheels, in strict mode and without a setting of its own, with the current `mypy` 2.4.1 and with `pyright` 1.1.414. Both accept the abstract definition, give the definition as the type of the result, and report wrong params and unknown methods.
+`TypeForm[E]`, which `json_helpers.from_dict` uses, has no such rule and says more exactly what is meant. But the Mypy extension of VS Code brings `mypy` 1.15.0 by default, also in its newest version, and that does not know `TypeForm`. With its default settings, every call of `remote` would report `"Never" has no attribute ...`.
 
-`Callable[..., E]` passes too, but it says something else: any function that returns an `E` would be accepted.
+`Callable[..., E]` has neither problem. Tried in strict mode and without a setting in the calling project, with the current `mypy` 2.4.1, with the 1.15.0 of the extension and with `pyright` 1.1.414: each accepts the abstract definition, gives the definition as the type of the result, and reports wrong params and unknown methods.
+
+The price is that a type checker also accepts a function that returns an endpoint. `remote` refuses it at runtime with its `TypeError`.
 
 ### 3. The call is named `remote`, on the peer and on the endpoint
 
@@ -73,13 +75,13 @@ Alternative: `peer(ServerEndpoint)` as in the first sketch of this idea. It is s
 
 ### 4. The object from `remote` is an instance of a generated subclass
 
-`remote` builds one subclass of the definition for each definition, with `types.new_class` and `functools.cache`, whose marked methods send. It creates a new object of that class for each call of `remote`, with `object.__new__`, so an `__init__` of the definition does not run. The object only holds the peer in `rpc_peer`.
+`remote` builds one subclass of the definition for each definition, with `type` and `functools.cache`, whose marked methods send. A server has one peer for each connection, so the class is shared between peers. Each peer keeps one object for each definition, created with `object.__new__`, so an `__init__` of the definition does not run. The object only holds the peer in `rpc_peer`, so it can be used again, and `peer.remote(A)` always gives the same one.
 
 - For a type checker the object is a `ServerEndpoint`, and with a subclass that is also true at runtime.
-- The peer holds no reference to these objects, so they add nothing to what the garbage collector has to deal with, and the requirement on freeing an ended peer stays easy to keep.
+- The peer and the object refer to each other, as a peer and an attached endpoint do. The garbage collector frees such a cycle, so the requirement on freeing an ended peer still holds.
 - The name and the result type are read once, when the class is built. A definition with a marked method that does not take exactly one parameter fails there, with a `TypeError` that names it.
 
-Alternatives: an object with `__getattr__` is not an instance of the definition, and it reads the type hints for each call or needs a cache of its own. An object cached on the peer saves very little and adds a cycle.
+Alternatives: an object with `__getattr__` is not an instance of the definition, and it reads the type hints for each call or needs a cache of its own. A new object for each call of `remote` needs no state on the peer and costs little: 0.19 µs instead of 0.05 µs, for a request of about 40 µs. But it creates objects that are all alike.
 
 ### 5. A sending method binds its arguments to the signature of the definition
 
@@ -90,6 +92,8 @@ The sending method takes `*args, **kwargs` and binds them with `inspect.signatur
 One helper goes through the attribute names of a class and, for each name, through its `__mro__`, and takes the nearest mark. `attach_endpoint` and `remote` both use it.
 
 - An override without a mark gets the name from its definition. An override with a mark of its own replaces it.
+- A mark in a class that the nearer one does not derive from belongs to another definition, and counts too. So one class that implements `log` once for two definitions answers both names. Through `remote`, the nearest mark decides.
+- A `staticmethod` or a `classmethod` holds the marked function in `__func__`, so the helper looks there.
 - It reads `vars(cls)` instead of `getattr(endpoint, name)`, so it runs no property of the endpoint. Today attaching an endpoint runs all of them.
 - A marked function stored on an instance is no longer found. Nothing does that.
 
@@ -107,9 +111,9 @@ Alternative: a submodule with an optional extra, so that the package itself keep
 
 ### 9. What happens to the code that uses the peer
 
-- **`_ClientEndpoint`** derives from `ClientEndpoint`. `_log_notification` becomes `log`. It keeps its state, `report_log_level` and `graceful_shutdown`, which call through `self.remote(ServerEndpoint)`. `initialize`, `initialized`, `import_library`, `run_keyword`, `finalize_library`, `shutdown` and `exit` go away.
-- **`_Session`** calls through `self.client_endpoint.remote(ServerEndpoint)` and builds the params itself. The values for `robot/initialize` move to `_initialize_server`. A session without a peer still raises a `RuntimeError`.
-- **`RobotServerEndpoint`** and **`SimpleRobotServerEndpoint`** derive from `ServerEndpoint` and lose their marks. `_counted` stays. `log()` keeps its check and sends through `self.rpc_peer.remote(ClientEndpoint)`.
+- **`_ClientEndpoint`** derives from `ClientEndpoint`. `_log_notification` becomes `log`. It keeps its state, `report_log_level` and `graceful_shutdown`, and gets a property `server` for `self.remote(ServerEndpoint)`, which these two call through. `initialize`, `initialized`, `import_library`, `run_keyword`, `finalize_library`, `shutdown` and `exit` go away.
+- **`_Session`** calls through `self.client_endpoint.server` and builds the params itself. The values for `robot/initialize` move to `_initialize_server`. A session without a peer still raises a `RuntimeError`.
+- **`RobotServerEndpoint`** and **`SimpleRobotServerEndpoint`** derive from `ServerEndpoint` and lose their marks. `_counted` stays. `log()` of the server keeps its check and sends through `self.rpc_peer.remote(ClientEndpoint)`, and that of the example sends through `self.remote(ClientEndpoint)`.
 - **`packages/jsonrpcpeer/examples/class_based_*`** share a definition in a new file `class_based_api.py`. `simple_*` and `typed_*` stay as examples of the calls without definitions.
 - **Tests that check the wire** keep using `send_request_typed` and `send_notification`, so that they do not depend on the definitions they check. Test classes that use marks derive from `JsonRpcEndpoint`.
 
@@ -132,9 +136,13 @@ return await result if inspect.isawaitable(result) else result
 - It checks the result and not `inspect.iscoroutinefunction`, so that a `functools.partial` of an async function and a function that returns a coroutine keep working.
 - A plain function runs on the event loop and holds up the other messages while it runs. That adds no new risk: an `async def` without an `await` does the same. A function that takes long belongs in a thread or an executor, also today.
 - `vscode-jsonrpc` also takes a value or a promise from a handler, and RobotCode has more plain handlers than async ones.
-- A definition stays `async def`, because a call through `remote` always waits. So a plain function only fits where no definition states the method: with `register_request_handler`, `register_notification_handler` and marks on a class without a separate definition. Over a definition, type checkers report it as an incompatible override.
+- A definition stays `async def`, because a call through `remote` always waits. So a plain function only fits where no definition states the method: with `register_request_handler`, `register_notification_handler` and marks on a class without a separate definition. Over a definition, type checkers report it as an incompatible override. `remote` refuses a class with a plain marked method: for a type checker the call would return the result, and at runtime a coroutine.
 
 Alternative: refuse a plain function at registration with a `TypeError`. That also ends the late failure, but every plain function would have to become `async def` without gaining anything.
+
+### 13. A notification on a closed connection fails like a request
+
+`send_notification` raises `JsonRpcConnectionClosedError` once the connection has closed, as `send_request_typed` does. Without that check, it raised a `ConnectionResetError` from the transport, and a call through `remote` raised another error for a notification than for a request. Both are a `ConnectionError`, so code that catches that keeps working.
 
 ## Risks / Trade-offs
 

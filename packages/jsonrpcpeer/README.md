@@ -11,6 +11,7 @@ This package provides the core communication logic used by `robotframework-jsonr
 *   **Standard Compliant:** Full JSON-RPC 2.0 support (Requests, Notifications, Batches, Errors).
 *   **Asynchronous:** Built using Python's `asyncio` for high performance.
 *   **Type Safe:** Uses Python type hints for automatic parameter deserialization.
+*   **Endpoints:** One definition of an interface for both sides of a connection, which type checkers hold both sides to.
 *   **Flexible:** Works with any `asyncio.StreamReader` and `asyncio.StreamWriter`.
 *   **Data Helpers:** Includes utilities for converting Python `dataclasses` to/from JSON.
 
@@ -53,7 +54,7 @@ You can find complete examples in the [examples](examples/) directory.
 
 ### Creating a Server
 
-You can register handlers using simple functions or organize them in a class using decorators.
+You can register handlers using simple functions, or state an interface once and implement it in a class.
 
 #### 1. Function-based Registration (Simple)
 
@@ -61,11 +62,80 @@ This approach is good for simple scripts or when you don't need complex paramete
 
 See [examples/simple_server.py](examples/simple_server.py) and [examples/simple_client.py](examples/simple_client.py).
 
-#### 2. Class-based Registration (Recommended)
+#### 2. Endpoints (Recommended)
 
-For larger applications, use classes and `dataclasses` to define your API. This example also demonstrates bidirectional communication (server calling client).
+For larger applications, state an interface once, in a definition. One side of a connection implements it, the other side calls it. The name of each method on the wire and the types of its params and its result are written only here:
 
-See [examples/class_based_server.py](examples/class_based_server.py) and [examples/class_based_client.py](examples/class_based_client.py).
+```python
+from abc import abstractmethod
+from dataclasses import dataclass
+
+from jsonrpcpeer import JsonRpcEndpoint, rpc_notification, rpc_request
+
+
+@dataclass
+class AddParams:
+    a: float
+    b: float
+
+
+@dataclass
+class AddResult:
+    result: float
+
+
+@dataclass
+class LogParams:
+    message: str
+
+
+class Calculator(JsonRpcEndpoint):
+    @rpc_request("add")
+    @abstractmethod
+    async def add(self, params: AddParams) -> AddResult: ...
+
+
+class CalculatorLog(JsonRpcEndpoint):
+    @rpc_notification("log")
+    @abstractmethod
+    async def log(self, params: LogParams) -> None: ...
+```
+
+A method of a definition carries `rpc_request` or `rpc_notification`, is `async def` and takes one parameter, the params.
+
+**Implementing it:** a subclass overrides the methods, without a mark of its own, and `attach_endpoint` registers them. If a method is missing, creating the object raises a `TypeError` that names it. Inside an endpoint, `self.remote(...)` calls the other side:
+
+```python
+class WorkingCalculator(Calculator):
+    async def add(self, params: AddParams) -> AddResult:
+        await self.remote(CalculatorLog).log(LogParams(message=f"Adding {params.a} and {params.b}"))
+        return AddResult(result=params.a + params.b)
+
+
+server_peer.attach_endpoint(WorkingCalculator())
+```
+
+**Calling it:** `remote` gives an object of the definition whose methods send, the same one each time for a definition on a peer. A request method waits for the response and converts its result to the return annotation; a notification method sends without waiting. Type checkers such as `mypy` and `pyright` see a `Calculator`, so they report params of the wrong type and methods that the definition does not have, and the calling project needs no setting for that:
+
+```python
+class PrintingLog(CalculatorLog):
+    async def log(self, params: LogParams) -> None:
+        print(params.message)
+
+
+client_peer.attach_endpoint(PrintingLog())
+
+result = await client_peer.remote(Calculator).add(AddParams(a=10, b=20))
+print(result.result)  # 30.0
+```
+
+An error response raises a `JsonRpcResponseError`, and a closed connection a `JsonRpcConnectionClosedError`, as with `send_request` and `send_notification`.
+
+*   **Several endpoints on one peer:** call `attach_endpoint` once for each, or let one class derive from several definitions. Two handlers for the same name on the wire raise `JsonRpcMethodAlreadyRegisteredError`. On the calling side, the definition selects the interface, as in `peer.remote(Calculator)` and `peer.remote(CalculatorLog)`. `remote` always goes to the other side, also when the peer implements that definition itself.
+*   **Default implementations:** a marked method with a body and without `abstractmethod` answers unless a subclass overrides it. Through `remote`, it still goes to the other side.
+*   **Without a separate definition:** a subclass of `JsonRpcEndpoint` can also carry marks on methods with a body, as in `@rpc_request("add")`, when only one side needs the method.
+
+See [examples/class_based_api.py](examples/class_based_api.py), [examples/class_based_server.py](examples/class_based_server.py) and [examples/class_based_client.py](examples/class_based_client.py).
 
 #### 3. Typed Registration
 
@@ -79,6 +149,8 @@ Handlers can be registered with two types of signatures:
 
 1.  **(params) -> result**: Simple handler receiving only parameters.
 2.  **(peer, params) -> result**: Handler that also receives the `JsonRpcPeer` instance (useful for context or sending callbacks).
+
+A handler can be an `async` function or a plain function. A plain function runs on the event loop and holds up the other messages while it runs, as does an `async` function without an `await`, so anything slow belongs in a thread or an executor. If a plain function returns an awaitable, the peer waits for it. A method of a definition stays `async def`, because a call over the connection always waits: type checkers report a plain method as an override of it, and `remote` refuses a definition with a plain method.
 
 The `params` argument type annotation is used to validate and convert the incoming JSON data. It supports:
 *   Primitive types (`str`, `int`, `bool`, `float`)
@@ -135,7 +207,7 @@ except JsonRpcResponseError as e:
 *   **Messages that cannot be read:** the connection stays open, and the peer goes on with the next message. A header part without a valid `Content-Length` gets no answer, and the bytes that follow are read as the next header part. A message with an unknown charset, or whose content is not valid in its charset or as JSON, gets a `Parse Error` (-32700) with `id: null`. A message above `max_message_size` is skipped and gets an `Invalid Request` (-32600) with `id: null`. Requests you have sent keep waiting for their responses, because the peer cannot tell which of them such a message belonged to.
 *   **Problems that nobody gets an answer about:** the peer logs them at `ERROR` level on the logger `jsonrpcpeer.peer`, and hands their text to a callback, if you give it one with `JsonRpcPeer(reader, writer, on_problem=callback)`. An exception in the callback is logged. These are messages that cannot be read, invalid messages and responses, a failing notification handler, params of a notification that cannot be converted, and an error response with `id: null`.
 
-Requests you send fail with `JsonRpcConnectionClosedError`, a subclass of `ConnectionError`, once the connection closes, whether the remote side closed it, reading from it failed, or the peer was stopped. This applies to requests still waiting for a response and to requests sent afterwards, which fail immediately without being written. If reading from the connection failed, that error is attached as the exception's `__cause__`:
+Requests you send fail with `JsonRpcConnectionClosedError`, a subclass of `ConnectionError`, once the connection closes, whether the remote side closed it, reading from it failed, or the peer was stopped. This applies to requests still waiting for a response and to requests and notifications sent afterwards, which fail immediately without being written. If reading from the connection failed, that error is attached as the exception's `__cause__`:
 
 ```python
 from jsonrpcpeer import JsonRpcConnectionClosedError
@@ -151,7 +223,7 @@ except JsonRpcConnectionClosedError as e:
 *   **Creating:** a peer can be created before an event loop runs; it binds to the loop that is running when it is first used, for example by `start()`.
 *   **Starting:** `start()` starts reading from the connection in a background task and returns at once; `await peer.run()` starts the peer and waits until it has ended.
 *   **Completion:** `peer.completion` is a future that resolves with `True` once the peer has ended, whether the remote side closed the connection or the peer was stopped. If reading from the connection failed, awaiting it raises that error instead.
-*   **Stopping:** `await peer.stop()` ends the peer at any time, also before or right after `start()`. Requests still waiting for a response fail with `JsonRpcConnectionClosedError`, and new requests are rejected. `stop()` does not wait for the writer to finish closing.
+*   **Stopping:** `await peer.stop()` ends the peer at any time, also before or right after `start()`. Requests still waiting for a response fail with `JsonRpcConnectionClosedError`, and new requests and notifications are rejected. `stop()` does not wait for the writer to finish closing.
 *   **Closing the writer:** with `auto_close=True`, the default, the peer closes its writer when it ends. Pass `auto_close=False` to close the writer yourself.
 *   **Memory:** a peer that has ended keeps nothing alive that refers back to it, so it is freed once your code no longer references it.
 

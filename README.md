@@ -8,7 +8,7 @@ A modern alternative to Robot Framework's [Remote library](https://robotframewor
 
 ## Features
 
-*   **Language-agnostic:** the protocol is JSON-RPC 2.0, which every common programming language supports, so a server that offers keywords can be written in any of them; with a JSON-RPC library, that takes only a few lines of code. Messages and values are JSON; between Python peers, Python objects also travel unchanged, as pickles.
+*   **Language-agnostic:** the protocol is JSON-RPC 2.0, which every common programming language supports, so a server that offers keywords can be written in any of them; with a JSON-RPC library, that takes only a few lines of code. In Python, the package [`jsonrpcpeer`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/packages/jsonrpcpeer) does the JSON-RPC part, and it can be used on its own. Messages and values are JSON; between Python peers, Python objects also travel unchanged, as pickles.
 *   **JSON-RPC 2.0** over one persistent connection per session, framed as in the Language Server Protocol.
 *   **Both directions:** log messages of a remote keyword reach the Robot Framework log while the keyword runs.
 *   **Transports:** TCP; stdio, where the client starts the server for a session and stops it again; named pipes, Unix domain sockets, WebSockets and Streamable HTTP; encryption with TLS.

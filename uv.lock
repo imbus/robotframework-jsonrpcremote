@@ -1177,6 +1177,12 @@ dev = [
 name = "robotframework-jsonrpcremote-protocol"
 version = "0.2.0"
 source = { editable = "packages/protocol" }
+dependencies = [
+    { name = "jsonrpcpeer" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "jsonrpcpeer", editable = "packages/jsonrpcpeer" }]
 
 [[package]]
 name = "robotframework-jsonrpcremote-server"

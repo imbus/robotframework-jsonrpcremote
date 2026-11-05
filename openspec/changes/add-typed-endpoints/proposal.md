@@ -48,7 +48,7 @@ result = await peer.remote(ServerEndpoint).initialize(InitializeParams(...))
 Out of scope, to keep this simple:
 
 - Methods without params, or calls with several arguments. As with handlers today, a method takes one params object.
-- A shortcut such as an attribute `self.server` for `self.remote(ServerEndpoint)`.
+- A shortcut in `jsonrpcpeer` such as an attribute `self.server` for `self.remote(ServerEndpoint)`. An endpoint that wants one writes a property, as the client does.
 - Handlers in threads and cancelling a request. Both can follow later without changing the definitions.
 - Changes to RobotCode and to the minimum Python version of this project.
 
@@ -71,5 +71,5 @@ Out of scope, to keep this simple:
 - **Client:** `src/JsonRpcRemote/__init__.py`.
 - **Server:** `packages/server/src/robot_jsonrpcremote_server/_endpoint.py`.
 - **Examples:** `examples/simple-robot-jsonrpcserver` and `packages/jsonrpcpeer/examples/class_based_*`.
-- **Documentation:** `packages/jsonrpcpeer/README.md`, `packages/protocol/README.md`, `examples/simple-robot-jsonrpcserver/README.md`, the pages `reference/protocol.mdx` and `roadmap.mdx`, and `CONTRIBUTING.md`.
-- **Tests:** `tests/test_peer.py`, `tests/test_protocol.py`, `tests/test_endpoint.py`, `tests/test_client_logging.py`, `tests/test_client_session.py`, `tests/test_example_server.py`. Nothing can be observed from Robot Framework, so the Robot suites run as a regression check and get no new test.
+- **Documentation:** `packages/jsonrpcpeer/README.md`, `packages/protocol/README.md`, `examples/simple-robot-jsonrpcserver/README.md`, the root `README.md`, the pages `index.mdx`, `reference/protocol.mdx` and `roadmap.mdx`, and `CONTRIBUTING.md`.
+- **Tests:** the new files `tests/test_typed_endpoints.py` and `tests/connected_peers.py`, and `tests/test_peer.py`, `tests/test_protocol.py`, `tests/test_endpoint.py`, `tests/test_client_logging.py`, `tests/test_client_session.py`, `tests/test_example_server.py`. Nothing can be observed from Robot Framework, so the Robot suites run as a regression check and get no new test.

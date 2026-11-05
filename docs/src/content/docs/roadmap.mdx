@@ -46,14 +46,24 @@ welcome as
 **Protocol**
 
 - JSON-RPC 2.0 with the framing of the Language Server Protocol, defined in the
-  package `robotframework-jsonrpcremote-protocol`, with a hand-written example
-  server; see the [protocol](/robotframework-jsonrpcremote/reference/protocol/).
+  package `robotframework-jsonrpcremote-protocol`, where the classes
+  `ServerEndpoint` and `ClientEndpoint` state both sides for servers in Python,
+  with a hand-written example server; see the
+  [protocol](/robotframework-jsonrpcremote/reference/protocol/).
 - A message that cannot be read does not end the session: the client shows the
   problem in Robot Framework's log and on the console.
 - Arguments and return values of keywords, argument defaults and the arguments
   of a library import are JSON values, nested to any depth.
 - Between Python peers, keyword arguments and return values that JSON cannot
   carry travel as pickles, so they keep their type.
+
+**Package `jsonrpcpeer`**
+
+- A JSON-RPC 2.0 peer on asyncio that can be used on its own: requests,
+  notifications and batches, in both directions; see its
+  [README](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/packages/jsonrpcpeer).
+- Endpoints: one definition of an interface for both sides of a connection,
+  which type checkers hold both sides to.
 
 ## Planned
 

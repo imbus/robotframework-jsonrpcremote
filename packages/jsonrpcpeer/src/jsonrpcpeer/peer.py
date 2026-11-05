@@ -1,6 +1,8 @@
+import abc
 import asyncio
 import codecs
 import contextlib
+import functools
 import inspect
 import json
 import logging
@@ -8,11 +10,12 @@ import re
 import traceback
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable, Coroutine, Optional, Protocol, Type, TypeAlias, TypeVar, cast, get_type_hints
+from typing import Any, Callable, Coroutine, Iterator, Optional, Type, TypeAlias, TypeVar, cast, get_type_hints
 
 from .json_helpers import as_json, from_dict
 
 T = TypeVar("T")
+E = TypeVar("E", bound="JsonRpcEndpoint")
 
 PROTOCOL_VERSION = "2.0"
 
@@ -143,9 +146,7 @@ class _InvalidParamsError(Exception):
     """Internal marker: request/notification params could not be converted to the handler's type."""
 
 
-THandlerCallable: TypeAlias = (
-    Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]] | Callable[[Any], Coroutine[Any, Any, Any]]
-)
+THandlerCallable: TypeAlias = Callable[["JsonRpcPeer", Any], Any] | Callable[[Any], Any]
 
 
 @dataclass(slots=True)
@@ -153,10 +154,6 @@ class _HandlerEntry:
     handler: THandlerCallable
     param_type: Type[Any]
     pass_peer: bool = True
-
-
-class JsonRpcEndpointProtocol(Protocol):
-    rpc_peer: "JsonRpcPeer | None"
 
 
 class JsonRpcPeer:
@@ -203,6 +200,8 @@ class JsonRpcPeer:
 
         self._pending_requests: dict[str | int, asyncio.Future[Any]] = {}
         self._id_counter = 1
+        # What `remote` gave out: one object for each definition.
+        self._remotes: dict[type, Any] = {}
 
         self.running = False
         # Set once the read loop has ended: no response can arrive after that.
@@ -379,6 +378,9 @@ class JsonRpcPeer:
         )
 
     async def send_notification(self, method: str, params: Optional[Any] = None) -> None:
+        if self._closed:
+            raise JsonRpcConnectionClosedError(f"Cannot send notification '{method}': the connection is closed")
+
         message = JsonRpcNotification(method=method)
         if params is not None:
             message.params = params
@@ -674,10 +676,12 @@ class JsonRpcPeer:
             raise _InvalidParamsError(str(ex)) from ex
 
         if handler.pass_peer:
-            handler_with_peer = cast(Callable[["JsonRpcPeer", Any], Coroutine[Any, Any, Any]], handler.handler)
-            return await handler_with_peer(self, converted)
+            result = cast(Callable[["JsonRpcPeer", Any], Any], handler.handler)(self, converted)
+        else:
+            result = cast(Callable[[Any], Any], handler.handler)(converted)
 
-        return await cast(Callable[[Any], Coroutine[Any, Any, Any]], handler.handler)(converted)
+        # A plain function has its result already; one that returns an awaitable counts as async.
+        return await result if inspect.isawaitable(result) else result
 
     async def process_request(self, message: JsonRpcRequest) -> JsonRpcResponse | JsonRpcErrorResponse:
         if message.method in self._request_handlers:
@@ -733,40 +737,105 @@ class JsonRpcPeer:
         except Exception as ex:
             self._report_problem(f"The handler of notification '{message.method}' failed: {ex}", exc_info=True)
 
-    def attach_endpoint(self, endpoint: JsonRpcEndpointProtocol) -> None:
+    def attach_endpoint(self, endpoint: "JsonRpcEndpoint") -> None:
         endpoint.rpc_peer = self
-        for name in dir(endpoint):
-            attr = getattr(endpoint, name)
-            if hasattr(attr, "rpc_request_method"):
-                self.register_request_handler(attr.rpc_request_method, attr)
-            if hasattr(attr, "rpc_notification_method"):
-                self.register_notification_handler(attr.rpc_notification_method, attr)
+        for name, request_method, notification_method in _rpc_members(type(endpoint)):
+            if request_method is not None:
+                self.register_request_handler(request_method, getattr(endpoint, name))
+            if notification_method is not None:
+                self.register_notification_handler(notification_method, getattr(endpoint, name))
+
+    # A `Callable`, because mypy refuses an abstract class where a `type[E]` is expected.
+    def remote(self, definition: Callable[..., E]) -> E:
+        """The other side of this connection, as ``definition`` states it: calling a marked method sends it."""
+        if not (isinstance(definition, type) and issubclass(definition, JsonRpcEndpoint)):
+            raise TypeError(f"{definition!r} is not a subclass of JsonRpcEndpoint")
+
+        known = self._remotes.get(definition)
+        if known is not None:
+            return cast(E, known)
+
+        remote: E = object.__new__(_remote_class(definition))
+        remote.rpc_peer = self
+        self._remotes[definition] = remote
+        return remote
 
 
-class JsonRpcEndpoint:
-    def __init__(self) -> None:
-        self._request_handlers: dict[str, Any] = {}
-        self._notification_handlers: dict[str, Any] = {}
+def _rpc_members(owner: Type[Any]) -> Iterator[tuple[str, str | None, str | None]]:
+    """The marked methods of a class: the attribute, and the name of the request or the notification.
 
-    def request(self, method: str) -> Any:
-        def decorator(func: Any) -> Any:
-            self._request_handlers[method] = func
-            return func
+    An override has no mark of its own and implements the method of its definition, so the mark comes
+    from the nearest class that has one. A mark that a class does not override belongs to another
+    definition of that name, and counts too. Reading the classes runs no property of an endpoint.
+    """
+    for name in dir(owner):
+        marked: list[Type[Any]] = []
+        for cls in owner.__mro__:
+            member = vars(cls).get(name)
+            # A staticmethod or a classmethod holds the marked function.
+            function = getattr(member, "__func__", member)
+            request_method = getattr(function, "rpc_request_method", None)
+            notification_method = getattr(function, "rpc_notification_method", None)
+            if request_method is None and notification_method is None:
+                continue
+            if not any(issubclass(nearer, cls) for nearer in marked):
+                marked.append(cls)
+                yield name, request_method, notification_method
 
-        return decorator
 
-    def notification(self, method: str) -> Any:
-        def decorator(func: Any) -> Any:
-            self._notification_handlers[method] = func
-            return func
+def _remote_method(
+    definition: Type[Any], name: str, request_method: str | None, notification_method: str | None
+) -> Callable[..., Any]:
+    """What a marked method does on the object from ``remote``: it sends."""
+    method = getattr(definition, name)
+    signature = inspect.signature(method)
+    if len(signature.parameters) != 2:
+        raise TypeError(f"{definition.__name__}.{name} must take one parameter besides self, the params")
+    if not inspect.iscoroutinefunction(method):
+        raise TypeError(f"{definition.__name__}.{name} must be async: a call over the connection always waits")
+    parameter = list(signature.parameters)[1]
+    result_type = get_type_hints(method).get("return")
 
-        return decorator
+    async def send(self: "JsonRpcEndpoint", *args: Any, **kwargs: Any) -> Any:
+        # As the definition states it: a type checker accepts the params as a keyword.
+        arguments = signature.bind(self, *args, **kwargs)
+        arguments.apply_defaults()
+        params = arguments.arguments[parameter]
+        peer = cast(JsonRpcPeer, self.rpc_peer)
+        if request_method is not None:
+            return await peer.send_request_typed(result_type, request_method, params)
+        await peer.send_notification(cast(str, notification_method), params)
+        return None
 
-    def register(self, peer: JsonRpcPeer) -> None:
-        for method, handler in self._request_handlers.items():
-            peer.register_request_handler(method, handler)
-        for method, handler in self._notification_handlers.items():
-            peer.register_notification_handler(method, handler)
+    return send
+
+
+@functools.cache
+def _remote_class(definition: Type[Any]) -> Type[Any]:
+    """A subclass of ``definition`` whose marked methods send. Built once for each definition."""
+    members: dict[str, Any] = {"__module__": definition.__module__}
+    for name, request_method, notification_method in _rpc_members(definition):
+        # With several marks for a name, the nearest decides.
+        if name not in members:
+            members[name] = _remote_method(definition, name, request_method, notification_method)
+    return type(f"Remote{definition.__name__}", (definition,), members)
+
+
+class JsonRpcEndpoint(abc.ABC):
+    """An interface of RPC methods. One side of a connection implements it, the other side calls it.
+
+    A definition is a subclass whose methods carry ``rpc_request`` or ``rpc_notification``, and usually
+    ``abstractmethod``. Each takes one parameter, the params. A subclass of the definition implements it,
+    and ``JsonRpcPeer.attach_endpoint`` registers its methods. ``JsonRpcPeer.remote`` calls it.
+    """
+
+    rpc_peer: JsonRpcPeer | None = None
+
+    def remote(self, definition: Callable[..., E]) -> E:
+        """The other side of the peer that this endpoint is attached to."""
+        if self.rpc_peer is None:
+            raise RuntimeError(f"{type(self).__name__} is not attached to a peer")
+        return self.rpc_peer.remote(definition)
 
 
 F = TypeVar("F", bound=THandlerCallable | Callable[..., Any])

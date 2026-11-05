@@ -1,6 +1,9 @@
+from abc import abstractmethod
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import Any, TypeAlias
+
+from jsonrpcpeer import JsonRpcEndpoint, rpc_notification, rpc_request
 
 SimpleType: TypeAlias = str | int | float | bool | None
 AnyType: TypeAlias = SimpleType | list[Any] | dict[str, Any]
@@ -209,3 +212,47 @@ EXIT_NOTIFICATION = "robot/exit"
 LOG_NOTIFICATION = "robot/log"
 SET_LOG_LEVEL_NOTIFICATION = "robot/set_log_level"
 TRACE_NOTIFICATION = "robot/trace"
+
+
+class ServerEndpoint(JsonRpcEndpoint):
+    """What a server implements and a client calls."""
+
+    @rpc_request(INITIALIZE_REQUEST)
+    @abstractmethod
+    async def initialize(self, params: InitializeParams) -> InitializeResult: ...
+
+    @rpc_notification(INITIALIZED_NOTIFICATION)
+    @abstractmethod
+    async def initialized(self, params: InitializedParams) -> None: ...
+
+    @rpc_notification(SET_LOG_LEVEL_NOTIFICATION)
+    @abstractmethod
+    async def set_log_level(self, params: SetLogLevelParams) -> None: ...
+
+    @rpc_request(IMPORT_LIBRARY_REQUEST)
+    @abstractmethod
+    async def import_library(self, params: ImportLibraryParams) -> ImportLibraryResult: ...
+
+    @rpc_request(RUN_KEYWORD_REQUEST)
+    @abstractmethod
+    async def run_keyword(self, params: RunKeywordParams) -> RunKeywordResult: ...
+
+    @rpc_request(FINALIZE_LIBRARY_REQUEST)
+    @abstractmethod
+    async def finalize_library(self, params: FinalizeLibraryParams) -> FinalizeLibraryResult: ...
+
+    @rpc_request(SHUTDOWN_REQUEST)
+    @abstractmethod
+    async def shutdown(self, params: ShutdownParams) -> ShutdownResult: ...
+
+    @rpc_notification(EXIT_NOTIFICATION)
+    @abstractmethod
+    async def exit(self, params: ExitParams) -> None: ...
+
+
+class ClientEndpoint(JsonRpcEndpoint):
+    """What a client implements and a server calls."""
+
+    @rpc_notification(LOG_NOTIFICATION)
+    @abstractmethod
+    async def log(self, params: LogParams) -> None: ...

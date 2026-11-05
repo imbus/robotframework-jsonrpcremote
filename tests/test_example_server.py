@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from simple_robot_jsonrpcserver.__main__ import handle_client
+from simple_robot_jsonrpcserver.__main__ import SimpleRobotServerEndpoint, handle_client
 
 from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
 from robot_jsonrpcremote_protocol import (
@@ -28,6 +28,7 @@ from robot_jsonrpcremote_protocol import (
     InitializeResult,
     RobotJsonRpcErrorCode,
     RunKeywordParams,
+    ServerEndpoint,
     SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
@@ -47,6 +48,10 @@ async def _connection_to_the_example_server() -> AsyncIterator[JsonRpcPeer]:
         await peer.stop()
         server.close()
         await asyncio.wait_for(server.wait_closed(), 5)
+
+
+def test_the_example_server_implements_the_definition() -> None:
+    assert issubclass(SimpleRobotServerEndpoint, ServerEndpoint)
 
 
 async def test_the_example_server_handles_a_whole_session(caplog: pytest.LogCaptureFixture) -> None:

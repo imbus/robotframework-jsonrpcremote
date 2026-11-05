@@ -13,10 +13,12 @@ language that reads and writes JSON over a stream, and JSON-RPC libraries that
 support the framing of the Language Server Protocol handle the transport part.
 
 This page describes the messages, for implementing a server of your own. The
-package `robotframework-jsonrpcremote-protocol` defines them as Python
-dataclasses in the module `robot_jsonrpcremote_protocol`; the client, the
-server and the [example server](#example-a-hand-written-server) at the end of
-this page use them.
+package `robotframework-jsonrpcremote-protocol` defines them in the module
+`robot_jsonrpcremote_protocol`: the params and results as Python dataclasses,
+and both sides as the classes `ServerEndpoint` and `ClientEndpoint`, with the
+name and the types of each message in use. The client, the server and the
+[example server](#example-a-hand-written-server) at the end of this page use
+them.
 
 ## Framing
 
@@ -293,12 +295,14 @@ cause.
 
 The example server in the repository,
 [`examples/simple-robot-jsonrpcserver`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/examples/simple-robot-jsonrpcserver),
-implements the protocol by hand with
-[`jsonrpcpeer`](https://pypi.org/project/jsonrpcpeer/) and the dataclasses of
-`robot_jsonrpcremote_protocol`, without the server package. It handles every
-message that the client sends and serves the library `SimpleRobotLibrary` with
-the keyword `Echo`, which returns its argument and sends a few log messages
-while it runs:
+implements the protocol by hand with `jsonrpcpeer` and
+`robot_jsonrpcremote_protocol`, without the server package. Its class derives
+from `ServerEndpoint`, which states every message that the client sends, so
+creating an object fails if a method is missing; the
+[README of `jsonrpcpeer`](https://github.com/imbus/robotframework-jsonrpcremote/blob/main/packages/jsonrpcpeer/README.md#2-endpoints-recommended)
+explains these endpoints. The example serves the library `SimpleRobotLibrary`
+with the keyword `Echo`, which returns its argument and sends a few log
+messages through `ClientEndpoint` while it runs:
 
 <Code code={server} lang="python" title="examples/simple-robot-jsonrpcserver/src/simple_robot_jsonrpcserver/__main__.py" />
 

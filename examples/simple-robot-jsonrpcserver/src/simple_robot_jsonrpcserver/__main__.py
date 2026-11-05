@@ -1,18 +1,10 @@
 import asyncio
 import itertools
 
-from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError, rpc_notification, rpc_request
+from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
 from robot_jsonrpcremote_protocol import (
-    EXIT_NOTIFICATION,
-    FINALIZE_LIBRARY_REQUEST,
-    IMPORT_LIBRARY_REQUEST,
-    INITIALIZE_REQUEST,
-    INITIALIZED_NOTIFICATION,
-    LOG_NOTIFICATION,
-    RUN_KEYWORD_REQUEST,
-    SET_LOG_LEVEL_NOTIFICATION,
-    SHUTDOWN_REQUEST,
     ArgumentDefinition,
+    ClientEndpoint,
     ExitParams,
     FinalizeLibraryParams,
     FinalizeLibraryResult,
@@ -29,6 +21,7 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordParams,
     RunKeywordResult,
     ServerCapabilities,
+    ServerEndpoint,
     ServerInfo,
     SetLogLevelParams,
     ShutdownParams,
@@ -36,23 +29,17 @@ from robot_jsonrpcremote_protocol import (
 )
 
 
-class SimpleRobotServerEndpoint:
+class SimpleRobotServerEndpoint(ServerEndpoint):
     def __init__(self) -> None:
         self.initialize_received: bool = False
         self.initialized_received: bool = False
-        self.rpc_peer: JsonRpcPeer | None = None
         self._token_ids = itertools.count()
 
     async def log(
         self, message: str, level: LogLevel = LogLevel.INFO, console: bool | None = None, html: bool = False
     ) -> None:
-        if self.rpc_peer:
-            await self.rpc_peer.send_notification(
-                LOG_NOTIFICATION,
-                LogParams(message=message, level=level, console=console, html=html),
-            )
+        await self.remote(ClientEndpoint).log(LogParams(message=message, level=level, console=console, html=html))
 
-    @rpc_request(INITIALIZE_REQUEST)
     async def initialize(self, params: InitializeParams) -> InitializeResult:
         print(f"Initializing client: {params}")
         self.initialize_received = True
@@ -62,17 +49,14 @@ class SimpleRobotServerEndpoint:
             server_info=ServerInfo(name="SimpleRobotServer", version="1.0"),
         )
 
-    @rpc_notification(INITIALIZED_NOTIFICATION)
     async def initialized(self, params: InitializedParams) -> None:
         print(f"Client initialized with params: {params}")
         self.initialized_received = True
 
-    @rpc_notification(SET_LOG_LEVEL_NOTIFICATION)
     async def set_log_level(self, params: SetLogLevelParams) -> None:
         # This server sends all its log messages: the client logs those from its log level on.
         print(f"Client log level: {params.log_level}")
 
-    @rpc_request(IMPORT_LIBRARY_REQUEST)
     async def import_library(self, params: ImportLibraryParams) -> ImportLibraryResult:
         if not self.initialize_received or not self.initialized_received:
             raise JsonRpcResponseError(
@@ -99,7 +83,6 @@ class SimpleRobotServerEndpoint:
             ),
         )
 
-    @rpc_request(RUN_KEYWORD_REQUEST)
     async def run_keyword(self, params: RunKeywordParams) -> RunKeywordResult:
         if not self.initialize_received or not self.initialized_received:
             raise JsonRpcResponseError(
@@ -124,17 +107,14 @@ class SimpleRobotServerEndpoint:
             f"Keyword '{params.name}' not found in library 'SimpleRobotLibrary'.",
         )
 
-    @rpc_request(FINALIZE_LIBRARY_REQUEST)
     async def finalize_library(self, params: FinalizeLibraryParams) -> FinalizeLibraryResult:
         print(f"Finalizing library: {params.token}")
         return FinalizeLibraryResult()
 
-    @rpc_request(SHUTDOWN_REQUEST)
     async def shutdown(self, params: ShutdownParams) -> ShutdownResult:
         print("Shutdown requested")
         return ShutdownResult()
 
-    @rpc_notification(EXIT_NOTIFICATION)
     async def exit(self, params: ExitParams) -> None:
         print("Exit received, closing the connection")
         # The end of the input ends the peer's read loop, and the peer closes the connection.

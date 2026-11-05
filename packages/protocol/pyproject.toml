@@ -34,7 +34,7 @@ classifiers = [
     "Framework :: Robot Framework",
     "Framework :: Robot Framework :: Library",
 ]
-dependencies = []
+dependencies = ["jsonrpcpeer"]
 
 [project.urls]
 Homepage = "https://github.com/imbus/robotframework-jsonrpcremote"
@@ -44,6 +44,9 @@ Documentation = "https://imbus.github.io/robotframework-jsonrpcremote/"
 
 [tool.uv.build-backend]
 module-name = "robot_jsonrpcremote_protocol"
+
+[tool.uv.sources]
+jsonrpcpeer = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]

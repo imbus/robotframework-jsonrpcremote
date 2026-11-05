@@ -281,7 +281,7 @@ async def test_only_debug_and_trace_messages_from_the_server_are_marked(
 ) -> None:
     sink = _LogSink()
 
-    await _ClientEndpoint(sink)._log_notification(LogParams(message="from the server", level=level))
+    await _ClientEndpoint(sink).log(LogParams(message="from the server", level=level))
     sink.drain()
 
     assert [message for message, _ in written.messages] == [expected]
@@ -291,7 +291,7 @@ async def test_only_debug_and_trace_messages_from_the_server_are_marked(
 async def test_log_message_keeps_its_console_value(written: _Written, console: bool | None) -> None:
     sink = _LogSink()
 
-    await _ClientEndpoint(sink)._log_notification(LogParams(message="message", level=LogLevel.WARN, console=console))
+    await _ClientEndpoint(sink).log(LogParams(message="message", level=LogLevel.WARN, console=console))
     sink.drain()
 
     assert written.calls == [("message", "WARN", False, console)]

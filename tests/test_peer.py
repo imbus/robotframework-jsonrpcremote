@@ -4,7 +4,8 @@ import json
 import logging
 import warnings
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable
+from abc import abstractmethod
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -15,6 +16,7 @@ import pytest_asyncio
 import jsonrpcpeer.peer
 from jsonrpcpeer import (
     JsonRpcConnectionClosedError,
+    JsonRpcEndpoint,
     JsonRpcErrorCode,
     JsonRpcPeer,
     JsonRpcResponseError,
@@ -518,9 +520,7 @@ async def test_peer_whose_connection_the_remote_side_closed_is_freed() -> None:
     assert ref() is None
 
 
-class _EchoEndpoint:
-    rpc_peer: JsonRpcPeer | None = None
-
+class _EchoEndpoint(JsonRpcEndpoint):
     @rpc_request("echo")
     async def echo(self, params: Any) -> Any:
         return params
@@ -553,6 +553,60 @@ async def test_peer_with_an_attached_endpoint_is_freed_together_with_it() -> Non
 
         assert peer_ref() is None
         assert endpoint_ref() is None
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_notification_after_the_connection_closed_fails_and_is_not_written() -> None:
+    writer = _FakeWriter()
+    reader = asyncio.StreamReader()
+    peer = JsonRpcPeer(reader, cast("asyncio.StreamWriter", writer))
+    peer.start()
+    reader.feed_eof()
+    await asyncio.wait_for(peer.completion, 2)
+
+    with pytest.raises(JsonRpcConnectionClosedError, match="changed"):
+        await peer.send_notification("changed", {"a": 1})
+
+    assert writer.written == []
+
+
+class _EchoDefinition(JsonRpcEndpoint):
+    @rpc_request("echo")
+    @abstractmethod
+    async def echo(self, params: Any) -> Any: ...
+
+
+async def test_peer_called_through_a_definition_is_freed() -> None:
+    accepted: asyncio.Queue[tuple[asyncio.StreamReader, asyncio.StreamWriter]] = asyncio.Queue()
+
+    async def on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await accepted.put((reader, writer))
+
+    server = await asyncio.start_server(on_client, "127.0.0.1", 0)
+    try:
+        client = JsonRpcPeer(*await asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1]))
+        other = JsonRpcPeer(*await asyncio.wait_for(accepted.get(), 2))
+
+        async def echo(params: Any) -> Any:
+            return params
+
+        other.register_request_handler("echo", echo)
+        client.start()
+        other.start()
+        assert await asyncio.wait_for(client.remote(_EchoDefinition).echo({"x": 1}), 2) == {"x": 1}
+
+        # The other side closes the connection; the client ends on its own.
+        await other.stop()
+        await asyncio.wait_for(client.completion, 2)
+        await _wait_for_read_loop_end(client)
+        ref = weakref.ref(client)
+        del client
+
+        gc.collect()
+
+        assert ref() is None
     finally:
         server.close()
         await server.wait_closed()
@@ -1483,9 +1537,7 @@ async def test_unknown_notification_is_ignored(raw_peer: _RawPeer, caplog: pytes
     ]
 
 
-class _NotifiedEndpoint:
-    rpc_peer: JsonRpcPeer | None = None
-
+class _NotifiedEndpoint(JsonRpcEndpoint):
     def __init__(self) -> None:
         self.notified: list[Any] = []
 
@@ -1503,6 +1555,97 @@ async def test_attached_endpoint_gets_its_notifications(raw_peer: _RawPeer) -> N
     assert answers == []
     assert endpoint.notified == [{"a": 1}]
     assert endpoint.rpc_peer is raw_peer.peer
+
+
+# --- plain functions as handlers ---------------------------------------------
+
+
+@dataclass
+class _PlainParams:
+    value: int
+
+
+async def test_plain_function_answers_a_request_once_with_converted_params(raw_peer: _RawPeer) -> None:
+    calls: list[Any] = []
+
+    def plain(params: _PlainParams) -> dict[str, int]:
+        calls.append(params)
+        return {"value": params.value + 1}
+
+    raw_peer.peer.register_request_handler("plain", plain)
+
+    answers = await raw_peer.answers_to(_raw_frame(_rpc(id=1, method="plain", params={"value": 1})))
+
+    assert answers == [{"jsonrpc": "2.0", "id": 1, "result": {"value": 2}}]
+    assert calls == [_PlainParams(1)]
+
+
+async def test_plain_function_that_takes_the_peer(raw_peer: _RawPeer) -> None:
+    def plain(peer: JsonRpcPeer, params: _PlainParams) -> dict[str, Any]:
+        return {"is_the_peer": peer is raw_peer.peer, "value": params.value}
+
+    raw_peer.peer.register_request_handler("plain", plain)
+
+    answers = await raw_peer.answers_to(_raw_frame(_rpc(id=1, method="plain", params={"value": 1})))
+
+    assert answers[0]["result"] == {"is_the_peer": True, "value": 1}
+
+
+async def test_plain_function_handles_a_notification_and_reports_nothing(raw_peer: _RawPeer) -> None:
+    calls: list[Any] = []
+
+    def plain(params: _PlainParams) -> None:
+        calls.append(params)
+
+    raw_peer.peer.register_notification_handler("plain", plain)
+
+    answers = await raw_peer.answers_to(_raw_frame(_rpc(method="plain", params={"value": 1})))
+
+    assert answers == []
+    assert calls == [_PlainParams(1)]
+    assert raw_peer.problems == []
+
+
+async def test_plain_function_that_raises_is_answered_and_logged(
+    raw_peer: _RawPeer, caplog: pytest.LogCaptureFixture
+) -> None:
+    def plain(params: _PlainParams) -> None:
+        raise ValueError("bad value")
+
+    raw_peer.peer.register_request_handler("plain", plain)
+
+    with caplog.at_level(logging.ERROR, logger="jsonrpcpeer.peer"):
+        answers = await raw_peer.answers_to(_raw_frame(_rpc(id=1, method="plain", params={"value": 1})))
+
+    assert answers[0]["error"]["code"] == JsonRpcErrorCode.INTERNAL_ERROR
+    assert answers[0]["error"]["message"] == "bad value"
+    assert "plain" in caplog.text
+    assert "ValueError" in caplog.text
+
+
+async def test_plain_function_that_raises_a_response_error_keeps_its_fields(raw_peer: _RawPeer) -> None:
+    def plain(params: _PlainParams) -> None:
+        raise JsonRpcResponseError(-32099, "my own", {"a": 1})
+
+    raw_peer.peer.register_request_handler("plain", plain)
+
+    answers = await raw_peer.answers_to(_raw_frame(_rpc(id=1, method="plain", params={"value": 1})))
+
+    assert answers[0]["error"] == {"code": -32099, "message": "my own", "data": {"a": 1}}
+
+
+async def test_plain_function_that_returns_a_coroutine_is_awaited(raw_peer: _RawPeer) -> None:
+    async def later(value: int) -> dict[str, int]:
+        return {"value": value * 2}
+
+    def plain(params: _PlainParams) -> Coroutine[Any, Any, dict[str, int]]:
+        return later(params.value)
+
+    raw_peer.peer.register_request_handler("plain", plain)
+
+    answers = await raw_peer.answers_to(_raw_frame(_rpc(id=1, method="plain", params={"value": 2})))
+
+    assert answers[0]["result"] == {"value": 4}
 
 
 # --- responses --------------------------------------------------------------

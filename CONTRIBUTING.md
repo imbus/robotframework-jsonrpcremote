@@ -176,7 +176,7 @@ uv run pre-commit run --all-files
 The repository is a uv workspace organized into a client library, several supporting packages, examples, and tests:
 
 - **[`src/JsonRpcRemote`](src/JsonRpcRemote)** — the Robot Framework client library (the importable `JsonRpcRemote` library / proxy).
-- **[`packages/protocol`](packages/protocol)** — JSON-RPC 2.0 protocol messages, data structures, and types.
+- **[`packages/protocol`](packages/protocol)** — JSON-RPC 2.0 protocol messages, data structures, and types, and the endpoint definitions of both sides.
 - **[`packages/jsonrpcpeer`](packages/jsonrpcpeer)** — an asynchronous JSON-RPC 2.0 peer implementation built on `asyncio`.
 - **[`packages/server`](packages/server)** — the server runtime that hosts Robot Framework libraries (`robot-jsonrpcremote-server` CLI).
 - **[`examples/`](examples)** — runnable usage examples, e.g. a minimal hand-written server.
@@ -335,6 +335,9 @@ A good PR description:
 
 3. **VS Code doesn't find the interpreter:**
    - Select the `.venv` interpreter via the Command Palette → "Python: Select Interpreter".
+
+4. **VS Code reports type errors that `uv run mypy` does not:**
+   - The Mypy extension brings its own, older `mypy` by default. Set `"mypy-type-checker.importStrategy": "fromEnvironment"` in your settings, so that it uses the one in `.venv`.
 
 ### Improving The Documentation
 

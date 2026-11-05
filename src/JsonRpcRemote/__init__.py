@@ -23,29 +23,17 @@ from robot.utils import secs_to_timestr, timestr_to_secs
 
 from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
-from jsonrpcpeer.peer import rpc_notification
 from robot_jsonrpcremote_protocol import (
-    EXIT_NOTIFICATION,
-    FINALIZE_LIBRARY_REQUEST,
-    IMPORT_LIBRARY_REQUEST,
-    INITIALIZE_REQUEST,
-    INITIALIZED_NOTIFICATION,
-    LOG_NOTIFICATION,
-    RUN_KEYWORD_REQUEST,
-    SET_LOG_LEVEL_NOTIFICATION,
-    SHUTDOWN_REQUEST,
     ArgumentDefinition,
     ArgumentKind,
     ClientCapabilities,
+    ClientEndpoint,
     ClientInfo,
     ExitParams,
     FinalizeLibraryParams,
-    FinalizeLibraryResult,
     ImportLibraryParams,
-    ImportLibraryResult,
     InitializedParams,
     InitializeParams,
-    InitializeResult,
     KeywordDefinition,
     LibraryDefinition,
     LogParams,
@@ -54,10 +42,10 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordParams,
     RunKeywordResult,
     ServerCapabilities,
+    ServerEndpoint,
     ServerInfo,
     SetLogLevelParams,
     ShutdownParams,
-    ShutdownResult,
 )
 
 from .__version__ import __version__
@@ -217,103 +205,33 @@ def _report_peer_problem(log_sink: _LogSink, uri: str, problem: str) -> None:
     log_sink.submit(f"Problem with a message from '{uri}': {problem}", "ERROR", False, None)
 
 
-class _ClientEndpoint:
+class _ClientEndpoint(ClientEndpoint):
     def __init__(self, log_sink: _LogSink | None = None, log_level: str | None = None) -> None:
         self.log_sink = log_sink if log_sink is not None else _LogSink()
         # The log level to report when the session starts, and from then on the one reported last.
         self.log_level = log_level
-        self.rpc_peer: JsonRpcPeer | None = None
         # Set after initialize/import so the graceful teardown can finalize the
         # library and decide whether the server supports the exit notification.
         self.library_token: str | None = None
         self.server_capabilities: ServerCapabilities | None = None
 
-    @rpc_notification(LOG_NOTIFICATION)
-    async def _log_notification(self, params: LogParams) -> None:
+    @property
+    def server(self) -> ServerEndpoint:
+        """The server at the other end of the connection; the peer keeps this one object."""
+        return self.remote(ServerEndpoint)
+
+    async def log(self, params: LogParams) -> None:
         level = params.level.value if params.level is not None else "INFO"
         message = _REMOTE_MARK + params.message if level in ("DEBUG", "TRACE") else params.message
         self.log_sink.submit(message, level, params.html or False, params.console)
-
-    async def initialize(self) -> InitializeResult:
-        if self.rpc_peer is None:
-            raise RuntimeError("RPC peer is not initialized yet")
-
-        return await self.rpc_peer.send_request_typed(
-            InitializeResult,
-            INITIALIZE_REQUEST,
-            InitializeParams(
-                capabilities=ClientCapabilities(),
-                client_info=ClientInfo(name="RobotFramework JsonRpcRemote Client", version=__version__),
-                log_level=self.log_level,
-            ),
-        )
-
-    async def initialized(self) -> None:
-        if self.rpc_peer is None:
-            raise RuntimeError("RPC peer is not initialized yet")
-
-        await self.rpc_peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
 
     async def report_log_level(self, log_level: str | None) -> None:
         """Tell the server ``log_level`` if it is not the level reported last."""
         if log_level is None or log_level == self.log_level:
             return
 
-        if self.rpc_peer is None:
-            raise RuntimeError("RPC peer is not initialized yet")
-
         self.log_level = log_level
-        await self.rpc_peer.send_notification(SET_LOG_LEVEL_NOTIFICATION, SetLogLevelParams(log_level=log_level))
-
-    async def import_library(
-        self, name: str, args: Sequence[Any] | None, kw_args: Mapping[str, Any] | None
-    ) -> ImportLibraryResult:
-        if self.rpc_peer is None:
-            raise RuntimeError("RPC peer is not initialized yet")
-
-        return await self.rpc_peer.send_request_typed(
-            ImportLibraryResult,
-            IMPORT_LIBRARY_REQUEST,
-            ImportLibraryParams(
-                name=name,
-                args=list(args) if args is not None else None,
-                kw_args=dict(kw_args) if kw_args is not None else None,
-            ),
-        )
-
-    async def run_keyword(
-        self, library_token: str, name: str, args: list[Any], named: dict[str, Any]
-    ) -> RunKeywordResult:
-        if self.rpc_peer is None:
-            raise RuntimeError("Peer is not initialized yet")
-
-        return await self.rpc_peer.send_request_typed(
-            RunKeywordResult,
-            RUN_KEYWORD_REQUEST,
-            RunKeywordParams(library_token=library_token, name=name, args=args, kwargs=named),
-        )
-
-    async def finalize_library(self, token: str) -> FinalizeLibraryResult:
-        if self.rpc_peer is None:
-            raise RuntimeError("RPC peer is not initialized yet")
-
-        return await self.rpc_peer.send_request_typed(
-            FinalizeLibraryResult,
-            FINALIZE_LIBRARY_REQUEST,
-            FinalizeLibraryParams(token=token),
-        )
-
-    async def shutdown(self) -> ShutdownResult:
-        if self.rpc_peer is None:
-            raise RuntimeError("RPC peer is not initialized yet")
-
-        return await self.rpc_peer.send_request_typed(ShutdownResult, SHUTDOWN_REQUEST, ShutdownParams())
-
-    async def exit(self) -> None:
-        if self.rpc_peer is None:
-            raise RuntimeError("RPC peer is not initialized yet")
-
-        await self.rpc_peer.send_notification(EXIT_NOTIFICATION, ExitParams())
+        await self.server.set_log_level(SetLogLevelParams(log_level=log_level))
 
     async def graceful_shutdown(self, timeout: float | None) -> None:
         """Best-effort protocol teardown: finalize_library -> shutdown -> exit.
@@ -327,14 +245,16 @@ class _ClientEndpoint:
 
         if self.library_token is not None:
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(self.finalize_library(self.library_token), timeout)
+                await asyncio.wait_for(
+                    self.server.finalize_library(FinalizeLibraryParams(token=self.library_token)), timeout
+                )
 
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(self.shutdown(), timeout)
+            await asyncio.wait_for(self.server.shutdown(ShutdownParams()), timeout)
 
         if self.server_capabilities is not None and self.server_capabilities.support_exit:
             with contextlib.suppress(Exception):
-                await self.exit()
+                await self.server.exit(ExitParams())
 
 
 class _SessionResources:
@@ -560,21 +480,26 @@ class _Session:
         self._res.peer.start()
 
     async def _initialize_server(self) -> None:
-        if self._res.peer is None:
-            raise RuntimeError("Peer is not initialized yet")
-
-        initialize_result = await self.client_endpoint.initialize()
+        initialize_result = await self.client_endpoint.server.initialize(
+            InitializeParams(
+                capabilities=ClientCapabilities(),
+                client_info=ClientInfo(name="RobotFramework JsonRpcRemote Client", version=__version__),
+                log_level=self.client_endpoint.log_level,
+            )
+        )
 
         self.server_capabilities = initialize_result.capabilities
         self.server_info = initialize_result.server_info
         self.client_endpoint.server_capabilities = initialize_result.capabilities
 
-        await self.client_endpoint.initialized()
+        await self.client_endpoint.server.initialized(InitializedParams())
 
-        import_result = await self.client_endpoint.import_library(
-            self._library_name or "",
-            list(self._library_args) if self._library_args is not None else None,
-            self._library_kw_args or None,
+        import_result = await self.client_endpoint.server.import_library(
+            ImportLibraryParams(
+                name=self._library_name or "",
+                args=list(self._library_args) if self._library_args is not None else None,
+                kw_args=dict(self._library_kw_args) if self._library_kw_args else None,
+            )
         )
         self.library_definition = import_result.definition
         self.library_token = import_result.token
@@ -731,7 +656,9 @@ class _Session:
             raise RuntimeError("Library token is not initialized yet")
 
         await self.client_endpoint.report_log_level(log_level)
-        return await self.client_endpoint.run_keyword(self.library_token, name, args, named)
+        return await self.client_endpoint.server.run_keyword(
+            RunKeywordParams(library_token=self.library_token, name=name, args=args, kwargs=named)
+        )
 
 
 class SessionScope(Enum):

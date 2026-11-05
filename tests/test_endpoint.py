@@ -26,6 +26,7 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordError,
     RunKeywordErrorMode,
     RunKeywordParams,
+    ServerEndpoint,
     SetLogLevelParams,
     ShutdownParams,
 )
@@ -121,6 +122,10 @@ class _FakePeer:
     def __init__(self) -> None:
         self.running = True
         self.reader = _FakeReader()
+
+
+def test_server_endpoint_implements_the_definition() -> None:
+    assert issubclass(RobotServerEndpoint, ServerEndpoint)
 
 
 async def test_exit_closes_connection() -> None:

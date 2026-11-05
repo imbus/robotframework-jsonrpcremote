@@ -95,6 +95,12 @@ A definition SHALL be a subclass of `JsonRpcEndpoint`, which the `jsonrpcpeer` p
 - **THEN** a request with the name of the override's mark calls it
 - **AND** a request with the name from the definition is answered with `-32601`
 
+#### Scenario: A static or a class method
+
+- **WHEN** a marked method of an endpoint is a `staticmethod` or a `classmethod`
+- **AND** an object of that class is attached to a peer
+- **THEN** a request with the name of the mark calls the method
+
 #### Scenario: A marked method without a separate definition
 
 - **WHEN** a subclass of `JsonRpcEndpoint` has a marked method with a body and is the only class that names it
@@ -137,7 +143,7 @@ A definition SHALL be a subclass of `JsonRpcEndpoint`, which the `jsonrpcpeer` p
 #### Scenario: The connection is closed
 
 - **WHEN** the connection of a peer has closed
-- **AND** a caller calls a request method through `remote`
+- **AND** a caller calls a request method or a notification method through `remote`
 - **THEN** the call raises a connection-closed error
 
 #### Scenario: The result does not fit the annotation
@@ -152,6 +158,12 @@ A definition SHALL be a subclass of `JsonRpcEndpoint`, which the `jsonrpcpeer` p
 - **WHEN** a caller gets an object from `remote` for a definition
 - **THEN** the object is an instance of that definition
 
+#### Scenario: One object for each definition
+
+- **WHEN** a caller gets an object from `remote` for a definition, and later again from the same peer
+- **THEN** both are the same object
+- **AND** another definition or another peer gives another object
+
 #### Scenario: A method with a default implementation
 
 - **WHEN** a marked method of a definition has a body and is not marked `abstractmethod`
@@ -160,7 +172,7 @@ A definition SHALL be a subclass of `JsonRpcEndpoint`, which the `jsonrpcpeer` p
 
 ### Requirement: `remote` refuses what is not a definition
 
-`remote` SHALL raise a `TypeError` when it gets something that is not a subclass of `JsonRpcEndpoint`, or a definition with a marked method that does not take exactly one parameter. The message SHALL name what it refuses.
+`remote` SHALL raise a `TypeError` when it gets something that is not a subclass of `JsonRpcEndpoint`, or a definition with a marked method that does not take exactly one parameter or is not async. The message SHALL name what it refuses.
 
 #### Scenario: A class that is not an endpoint
 
@@ -170,6 +182,12 @@ A definition SHALL be a subclass of `JsonRpcEndpoint`, which the `jsonrpcpeer` p
 #### Scenario: A method with two parameters
 
 - **WHEN** a marked method of a definition takes two parameters besides `self`
+- **AND** a caller passes that definition to `remote`
+- **THEN** `remote` raises a `TypeError` that names the method
+
+#### Scenario: A plain method
+
+- **WHEN** a marked method of a definition is a plain `def`
 - **AND** a caller passes that definition to `remote`
 - **THEN** `remote` raises a `TypeError` that names the method
 
@@ -213,7 +231,7 @@ For a type checker such as `mypy` or `pyright`, the result of `remote` SHALL be 
 
 ### Requirement: Several endpoints share one peer
 
-A peer SHALL answer the methods of every endpoint attached to it, and SHALL call any definition through `remote`. The definition SHALL select the interface. Two handlers for the same name on the wire SHALL raise `JsonRpcMethodAlreadyRegisteredError`, and the message SHALL name the method.
+A peer SHALL answer the methods of every endpoint attached to it, and SHALL call any definition through `remote`. The definition SHALL select the interface. Two handlers for the same name on the wire SHALL raise `JsonRpcMethodAlreadyRegisteredError`, which the package exports, and the message SHALL name the method.
 
 #### Scenario: Two endpoints on one peer
 
@@ -225,6 +243,12 @@ A peer SHALL answer the methods of every endpoint attached to it, and SHALL call
 - **WHEN** one class derives from two definitions and implements both
 - **AND** an object of that class is attached to a peer
 - **THEN** it answers the methods of both
+
+#### Scenario: One method for two definitions
+
+- **WHEN** one class derives from two definitions that each have a method `log`, with different names on the wire, and implements `log` once
+- **AND** an object of that class is attached to a peer
+- **THEN** a message with either name calls that method
 
 #### Scenario: Two handlers for one method
 
@@ -297,3 +321,14 @@ A request or notification handler SHALL be an async function or a plain function
 
 - **WHEN** a class overrides an `async def` of a definition with a plain method
 - **THEN** a type checker such as `mypy` or `pyright` reports an error
+
+### Requirement: New notifications fail after the connection closed
+
+Once the connection has closed, the peer SHALL reject every new notification immediately with a connection-closed error and SHALL NOT write it to the connection, as it does for a request.
+
+#### Scenario: Notification sent after the connection closed
+
+- **WHEN** the connection of a peer has closed
+- **AND** a caller sends a notification
+- **THEN** the call raises a connection-closed error that names the method
+- **AND** nothing is written to the connection

@@ -6,17 +6,9 @@ import uuid
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from typing import Any, TypeVar, cast
 
-from jsonrpcpeer import JsonRpcErrorCode, JsonRpcPeer, JsonRpcResponseError, rpc_notification, rpc_request
+from jsonrpcpeer import JsonRpcErrorCode, JsonRpcPeer, JsonRpcResponseError
 from robot_jsonrpcremote_protocol import (
-    EXIT_NOTIFICATION,
-    FINALIZE_LIBRARY_REQUEST,
-    IMPORT_LIBRARY_REQUEST,
-    INITIALIZE_REQUEST,
-    INITIALIZED_NOTIFICATION,
-    LOG_NOTIFICATION,
-    RUN_KEYWORD_REQUEST,
-    SET_LOG_LEVEL_NOTIFICATION,
-    SHUTDOWN_REQUEST,
+    ClientEndpoint,
     ExitParams,
     FinalizeLibraryParams,
     FinalizeLibraryResult,
@@ -31,6 +23,7 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordParams,
     RunKeywordResult,
     ServerCapabilities,
+    ServerEndpoint,
     ServerInfo,
     SetLogLevelParams,
     ShutdownParams,
@@ -85,7 +78,7 @@ def _robot_log_level_to_protocol_level(level: str) -> LogLevel:
     return level_map.get(level.upper(), LogLevel.INFO)
 
 
-class RobotServerEndpoint:
+class RobotServerEndpoint(ServerEndpoint):
     def __init__(
         self, remote_context: RobotRemoteContext, libraries: Sequence[str] | None = None, verbose: bool = False
     ) -> None:
@@ -96,7 +89,6 @@ class RobotServerEndpoint:
         self.log_level: str = "INFO"
         self.initialize_received: bool = False
         self.initialized_received: bool = False
-        self.rpc_peer: JsonRpcPeer | None = None
         # Per-endpoint token source: a unique prefix keeps tokens distinct across
         # connections (they share one RobotRemoteContext keyword store), and the
         # per-endpoint counter keeps them readable and unique per import.
@@ -160,12 +152,10 @@ class RobotServerEndpoint:
         self, message: str, level: LogLevel = LogLevel.INFO, console: bool | None = None, html: bool = False
     ) -> None:
         if self.rpc_peer:
-            await self.rpc_peer.send_notification(
-                LOG_NOTIFICATION,
-                LogParams(message=message, level=level, console=console, html=html),
+            await self.rpc_peer.remote(ClientEndpoint).log(
+                LogParams(message=message, level=level, console=console, html=html)
             )
 
-    @rpc_request(INITIALIZE_REQUEST)
     @_counted
     async def initialize(self, params: InitializeParams) -> InitializeResult:
         logger.debug("Initializing client: %s", params)
@@ -178,17 +168,14 @@ class RobotServerEndpoint:
             server_info=ServerInfo(name="RobotJsonRpcRemoteServer", version=__version__),
         )
 
-    @rpc_notification(INITIALIZED_NOTIFICATION)
     async def initialized(self, params: InitializedParams) -> None:
         logger.debug("Client initialized with params: %s", params)
         self.initialized_received = True
 
-    @rpc_notification(SET_LOG_LEVEL_NOTIFICATION)
     async def set_log_level(self, params: SetLogLevelParams) -> None:
         logger.debug("Client log level: %s", params.log_level)
         self.log_level = params.log_level
 
-    @rpc_request(IMPORT_LIBRARY_REQUEST)
     @_counted
     async def import_library(self, params: ImportLibraryParams) -> ImportLibraryResult:
         if not self.initialize_received or not self.initialized_received:
@@ -222,7 +209,6 @@ class RobotServerEndpoint:
             definition=lib_definition,
         )
 
-    @rpc_request(RUN_KEYWORD_REQUEST)
     @_counted
     async def run_keyword(self, params: RunKeywordParams) -> RunKeywordResult:
         if not self.initialize_received or not self.initialized_received:
@@ -242,7 +228,6 @@ class RobotServerEndpoint:
             logger.debug("Keyword '%s' failed: %s", params.name, failure.error.message)
             return RunKeywordResult(error=failure.error)
 
-    @rpc_request(FINALIZE_LIBRARY_REQUEST)
     @_counted
     async def finalize_library(self, params: FinalizeLibraryParams) -> FinalizeLibraryResult:
         logger.debug("Finalizing library token: %s", params.token)
@@ -250,7 +235,6 @@ class RobotServerEndpoint:
         self._imported_tokens.discard(params.token)
         return FinalizeLibraryResult()
 
-    @rpc_request(SHUTDOWN_REQUEST)
     @_counted
     async def shutdown(self, params: ShutdownParams) -> ShutdownResult:
         # Graceful shutdown handshake: the client signals it is about to close.
@@ -259,7 +243,6 @@ class RobotServerEndpoint:
         self._shutdown_received = True
         return ShutdownResult()
 
-    @rpc_notification(EXIT_NOTIFICATION)
     async def exit(self, params: ExitParams) -> None:
         # Close only this connection (multi-client server). Feeding EOF lets the
         # peer's read loop finish cleanly. We deliberately do NOT call peer.stop()
