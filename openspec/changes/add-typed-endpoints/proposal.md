@@ -7,6 +7,7 @@ Both sides of a connection spell out every method by hand, and nothing ties the 
 - **Calls are long and unchecked.** A call in the client reads `self.rpc_peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams(...))`. `params` is `Any`, and the result type is whatever the caller names, so `ShutdownParams()` in that call passes `mypy` and `pyright`, and so does a wrong result type.
 - **The same facts are written twice.** The handler on the other side repeats the method name and the types.
 - **The client needs wrappers for this.** `_ClientEndpoint` has seven methods that do little more than send one message, and eight checks of `if self.rpc_peer is None: raise RuntimeError(...)`.
+- **A plain function as a handler fails late.** It runs, and then the request gets `-32603 object dict can't be used in 'await' expression`, and a notification is reported as failed.
 - **`jsonrpcpeer` should work for larger protocols too.** The package is meant to be reused, for example in RobotCode, where this repetition grows with every method.
 
 `JsonRpcEndpoint` in `peer.py` marks this idea so far: it only collects handlers, and nothing uses it.
@@ -37,6 +38,7 @@ result = await peer.remote(ServerEndpoint).initialize(InitializeParams(...))
 - **Implementing:** a subclass of a definition overrides its methods, written as handlers are today, without a mark of their own. `attach_endpoint` finds the mark in the definition. If a method is missing, creating the object raises a `TypeError` that names it, and `mypy` and `pyright` report it too.
 - **Calling:** `peer.remote(ServerEndpoint)` gives an object whose methods send: a request waits for its result and converts it to the declared type, and a notification is sent without waiting. Inside an endpoint, `self.remote(ClientEndpoint)` does the same and raises a `RuntimeError` if the endpoint is not attached. For `mypy` and `pyright`, the object is a `ServerEndpoint`, so wrong params and unknown methods are found.
 - **Several endpoints on one peer:** the definition selects the interface, as in `peer.remote(A)` and `peer.remote(B)`. On the receiving side, `attach_endpoint` can be called several times, as today, or one class implements several definitions. Two handlers for the same method still raise `JsonRpcMethodAlreadyRegisteredError`.
+- **Plain functions as handlers:** a handler can be a plain function as well as an async one. It runs on the event loop, as an async handler without an `await` does. A definition stays `async def`, because a call over the wire always waits, and type checkers report a plain method as an override of it.
 - **The Robot protocol:** `robot_jsonrpcremote_protocol` gets the definitions `ServerEndpoint` and `ClientEndpoint`, so that package now depends on `jsonrpcpeer`. The client, the server and the example server use them. The wrappers in `_ClientEndpoint` go away; what holds logic stays there, `report_log_level` and `graceful_shutdown`.
 - **Replaced:** the old `JsonRpcEndpoint` that collects handlers, and `JsonRpcEndpointProtocol`. `attach_endpoint` takes a `JsonRpcEndpoint`.
 - **Unchanged:** nothing changes on the wire. `rpc_request` and `rpc_notification` also work on a class without a separate definition. `send_request`, `send_request_typed`, `send_notification` and `register_request_handler` and `register_notification_handler` stay for code without definitions, and the tests that check messages on the wire keep using them.
@@ -45,6 +47,7 @@ Out of scope, to keep this simple:
 
 - Methods without params, or calls with several arguments. As with handlers today, a method takes one params object.
 - A shortcut such as an attribute `self.server` for `self.remote(ServerEndpoint)`.
+- Handlers in threads and cancelling a request. Both can follow later without changing the definitions.
 - Changes to RobotCode and to the minimum Python version of this project.
 
 ## Capabilities
@@ -55,7 +58,7 @@ Out of scope, to keep this simple:
 
 ### Modified Capabilities
 
-- `jsonrpc-peer`: endpoint definitions, implementing them through `attach_endpoint`, calling them through `remote`, and several endpoints on one peer.
+- `jsonrpc-peer`: endpoint definitions, implementing them through `attach_endpoint`, calling them through `remote`, several endpoints on one peer, and plain functions as handlers.
 
 `client` and `server` have no delta: they use the definitions, but they behave as before. Their requirements and both test suites cover that.
 

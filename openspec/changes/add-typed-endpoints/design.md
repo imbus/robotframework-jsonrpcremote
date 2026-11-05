@@ -6,6 +6,7 @@ See `proposal.md` for the motivation and the delta specs for the behavior. These
 
 - `rpc_request` and `rpc_notification` only set an attribute on the function. `attach_endpoint` goes through `dir(endpoint)`, reads every attribute and looks for that mark. An override in a subclass has no mark, so it would not be found.
 - `_get_and_check_handler_param_type` reads the annotations of the handler it gets, which takes `(params)` or `(peer, params)`.
+- `_call_handler` always awaits what a handler returns. So a plain function runs and then fails with `-32603 object dict can't be used in 'await' expression`, while `THandlerCallable` only describes async functions.
 - `send_request_typed` takes the result type, the name and `params: Any`. It raises what a call can raise, so the new calls need no error handling of their own.
 - `JsonRpcEndpoint` collects handlers and nothing uses it. `JsonRpcEndpointProtocol` only says that an endpoint has `rpc_peer`.
 - `packages/protocol` has no dependency. The client, the server and the example server depend on it and on `jsonrpcpeer`.
@@ -26,6 +27,8 @@ The approach was tried out as a prototype on a copy of the repository, with the 
 - Comparing the signature of an override with its definition at runtime. Type checkers do that.
 - Checking the type of the params at runtime when sending. `send_request_typed` takes anything that can be written as JSON, and that stays.
 - A method for `robot/trace`. The message is defined, but nothing sends it.
+- Handlers in threads. They can come later as a decorator around the handler, with no change to the peer and to the definitions: the peer sees an async handler, and a type checker accepts `@threaded def` as an override of an `async def`.
+- Cancelling a request. It can come later in the peer, with no change to the definitions, because an async handler gets the `CancelledError` of its task and needs no token.
 
 ## Decisions
 
@@ -117,6 +120,21 @@ Alternative: a submodule with an optional extra, so that the package itself keep
 ### 11. The new code stays readable on Python 3.10
 
 RobotCode supports Python 3.10, and `jsonrpcpeer` is meant to be reused there later. The new code uses `TypeVar` instead of the generics syntax of Python 3.12, as the rest of `peer.py` does. The minimum version of this project stays 3.12.
+
+### 12. A handler can be a plain function
+
+`_call_handler` calls the handler and waits only if the result is awaitable, and `THandlerCallable` describes any function:
+
+```python
+return await result if inspect.isawaitable(result) else result
+```
+
+- It checks the result and not `inspect.iscoroutinefunction`, so that a `functools.partial` of an async function and a function that returns a coroutine keep working.
+- A plain function runs on the event loop and holds up the other messages while it runs. That adds no new risk: an `async def` without an `await` does the same. A function that takes long belongs in a thread or an executor, also today.
+- `vscode-jsonrpc` also takes a value or a promise from a handler, and RobotCode has more plain handlers than async ones.
+- A definition stays `async def`, because a call through `remote` always waits. So a plain function only fits where no definition states the method: with `register_request_handler`, `register_notification_handler` and marks on a class without a separate definition. Over a definition, type checkers report it as an incompatible override.
+
+Alternative: refuse a plain function at registration with a `TypeError`. That also ends the late failure, but every plain function would have to become `async def` without gaining anything.
 
 ## Risks / Trade-offs
 

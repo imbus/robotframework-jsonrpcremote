@@ -247,3 +247,53 @@ A peer SHALL answer the methods of every endpoint attached to it, and SHALL call
 - **WHEN** an object that implements a definition is attached to a peer
 - **AND** a caller calls a method of that definition through `remote` of that peer
 - **THEN** the call goes to the other side, and the attached object is not called
+
+### Requirement: A handler can be a plain function
+
+A request or notification handler SHALL be an async function or a plain function. The peer SHALL call a plain function on its event loop, once, with the params converted as for any handler, and SHALL use what it returns as the result. If what it returns is awaitable, the peer SHALL wait for it.
+
+#### Scenario: A plain function answers a request
+
+- **WHEN** a plain function is registered as the handler of a request
+- **AND** that request arrives
+- **THEN** the function is called once with the params converted to its annotation
+- **AND** the request is answered with what the function returns
+
+#### Scenario: A plain function that takes the peer
+
+- **WHEN** a plain function with the parameters `(peer, params)` is registered as the handler of a request
+- **AND** that request arrives
+- **THEN** the function is called with the peer and the converted params
+
+#### Scenario: A plain function handles a notification
+
+- **WHEN** a plain function is registered as the handler of a notification
+- **AND** that notification arrives
+- **THEN** the function is called once, and no problem is reported
+
+#### Scenario: A plain function raises an unexpected exception
+
+- **WHEN** a plain function that handles a request raises `ValueError("bad value")`
+- **THEN** the request is answered with `-32603` and that message
+- **AND** the peer logs an error that names the method
+
+#### Scenario: A plain function raises an error of its choice
+
+- **WHEN** a plain function that handles a request raises a `JsonRpcResponseError`
+- **THEN** the request is answered with the code, message and data of that error
+
+#### Scenario: A plain function returns an awaitable
+
+- **WHEN** a plain function that handles a request returns a coroutine
+- **THEN** the peer waits for it, and the request is answered with its result
+
+#### Scenario: A marked plain method
+
+- **WHEN** a subclass of `JsonRpcEndpoint` has a plain method with a mark and no separate definition
+- **AND** an object of that class is attached to a peer
+- **THEN** a message with the name of the mark calls the method
+
+#### Scenario: A plain method as an override of a definition
+
+- **WHEN** a class overrides an `async def` of a definition with a plain method
+- **THEN** a type checker such as `mypy` or `pyright` reports an error

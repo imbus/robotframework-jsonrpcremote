@@ -31,6 +31,15 @@ Nothing in this change can be observed from Robot Framework: the messages on the
   - `test_two_handlers_for_one_method_raise`, which checks that the message names the method.
 
   Verify that they pass. Check by making the helper stop at the first class of the hierarchy: `test_one_class_implements_two_definitions` fails.
+- [ ] 1.4 Let `_call_handler` wait only for a result that is awaitable, and let `THandlerCallable` describe any function (design decision 12). Add to `tests/test_peer.py`:
+  - `test_plain_function_answers_a_request_once_with_converted_params`;
+  - `test_plain_function_that_takes_the_peer`;
+  - `test_plain_function_handles_a_notification_and_reports_nothing`;
+  - `test_plain_function_that_raises_is_answered_and_logged`;
+  - `test_plain_function_that_raises_a_response_error_keeps_its_fields`;
+  - `test_plain_function_that_returns_a_coroutine_is_awaited`.
+
+  Add `test_marked_plain_method_answers` to `tests/test_typed_endpoints.py`, for a request and a notification. Verify that they pass. Check with the old `await` in `_call_handler`, which fails them with `-32603`, and with `inspect.iscoroutinefunction` instead of `inspect.isawaitable`, which fails the test with the coroutine.
 
 ## 2. Calling a definition
 
@@ -60,8 +69,8 @@ Nothing in this change can be observed from Robot Framework: the messages on the
   - `test_definition_that_the_peer_also_implements_goes_to_the_other_side`.
 
   Verify that they pass. Check the first with `functools.cache` keyed on the method name instead of the definition, and the last by letting `remote` return the attached endpoint.
-- [ ] 2.4 Add `_calls_for_the_type_checker` to `tests/test_typed_endpoints.py`, a function that `mypy` checks and no test runs (design decision 10): `assert_type` for the definition and for the result, an abstract definition without an error, and wrong params and an unknown method with `# type: ignore[arg-type]` and `# type: ignore[attr-defined]`. Verify with `uv run mypy`. Check with `type[E]` instead of `TypeForm[E]`: `mypy` reports `type-abstract`.
-- [ ] 2.5 Document endpoints in `packages/jsonrpcpeer/README.md`: a definition, implementing it, calling it with `remote`, several endpoints on one peer, and what happens when a method is missing. The section replaces "Class-based Registration". Rewrite `packages/jsonrpcpeer/examples/class_based_server.py` and `class_based_client.py` on a shared definition in a new file `class_based_api.py` (design decision 9). Add `test_class_based_example_answers_its_definition` to `tests/test_typed_endpoints.py`, which loads the example modules from their directory and calls the server's endpoint over a connection. Verify that it passes, that the code in the README runs as written, and that both example scripts print the expected sums when run by hand. Check by leaving out a method in the example's server class and seeing the test fail.
+- [ ] 2.4 Add `_calls_for_the_type_checker` to `tests/test_typed_endpoints.py`, a function that `mypy` checks and no test runs (design decision 10): `assert_type` for the definition and for the result, an abstract definition without an error, wrong params and an unknown method with `# type: ignore[arg-type]` and `# type: ignore[attr-defined]`, and a plain method as an override of a definition with `# type: ignore[override]`. Verify with `uv run mypy`. Check with `type[E]` instead of `TypeForm[E]`: `mypy` reports `type-abstract`.
+- [ ] 2.5 Document endpoints in `packages/jsonrpcpeer/README.md`: a definition, implementing it, calling it with `remote`, several endpoints on one peer, and what happens when a method is missing. The section replaces "Class-based Registration". The section "Handler Signatures" says that a handler can be a plain function, and that it runs on the event loop. Rewrite `packages/jsonrpcpeer/examples/class_based_server.py` and `class_based_client.py` on a shared definition in a new file `class_based_api.py` (design decision 9). Add `test_class_based_example_answers_its_definition` to `tests/test_typed_endpoints.py`, which loads the example modules from their directory and calls the server's endpoint over a connection. Verify that it passes, that the code in the README runs as written, and that both example scripts print the expected sums when run by hand. Check by leaving out a method in the example's server class and seeing the test fail.
 
 ## 3. The Robot protocol
 
@@ -82,13 +91,13 @@ Nothing in this change can be observed from Robot Framework: the messages on the
 - [ ] 4.1 Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy` and `uv run --all-packages pytest`; verify all pass.
 - [ ] 4.2 Run `uv run --all-packages robotcode run`, and with `--with "robotframework==7.2"` for pytest and Robot; verify all pass, as a regression check of the session flow.
 - [ ] 4.3 Run the unit tests on Python 3.13, 3.14 and 3.15 in scratch environments, with `UV_PROJECT_ENVIRONMENT=<scratch>/venv-<version> UV_PYTHON=<version> uv run --all-packages --dev pytest -q`, and restore the environment afterwards with `uv sync --all-extras --all-packages --dev`; verify all pass.
-- [ ] 4.4 Run `pyright` once on a scratch file that holds the calls of `_calls_for_the_type_checker` without the `type: ignore` comments (design decision 10); verify that it reports the wrong params and the unknown method, and nothing on the abstract definition and on `assert_type`.
+- [ ] 4.4 Run `pyright` once on a scratch file that holds the calls of `_calls_for_the_type_checker` without the `type: ignore` comments (design decision 10); verify that it reports the wrong params, the unknown method and the plain override, and nothing on the abstract definition and on `assert_type`.
 - [ ] 4.5 On the Windows test VM, run `uv run --all-packages pytest` and `uv run --all-packages robotcode run` in a copy of the working tree without `__pycache__`, set up with `uv sync --all-extras --all-packages --dev --python 3.12`; verify all pass.
 - [ ] 4.6 Build the wheels with `uv build --all-packages` and install the three of `jsonrpcpeer`, the protocol and the server into an empty scratch environment; verify that `robot-jsonrpcremote-server --help` runs there and that `from robot_jsonrpcremote_protocol import ServerEndpoint` works.
 - [ ] 4.7 Build the site with `npm ci` and `npm run build` in `docs/`, and run `uv run --all-packages bash docs/examples/getting-started/run.sh`, `uv run --all-packages bash docs/examples/own-server/run.sh` and `uv run --all-packages bash docs/examples/failures/run.sh`; verify all pass.
 - [ ] 4.8 Commit the change, this `tasks.md` and the updated planning artifacts as one signed commit on `main` (`git commit -S`), once Daniel has given the go:
   - **Subject:** `feat(peer): add typed endpoints, and use them for the Robot protocol`.
-  - **Body:** explains that a call named the method, the params and the result type by hand and nothing tied them together, that an abstract definition now states them once for both sides, that `remote` calls a definition and type checkers see it, that `attach_endpoint` finds the marks through the class hierarchy, that the protocol package defines `ServerEndpoint` and `ClientEndpoint` and therefore depends on `jsonrpcpeer`, that the client, the server and the example server use them, and that nothing changes on the wire. It names the removal of the old `JsonRpcEndpoint` and of `JsonRpcEndpointProtocol`.
+  - **Body:** explains that a call named the method, the params and the result type by hand and nothing tied them together, that an abstract definition now states them once for both sides, that `remote` calls a definition and type checkers see it, that `attach_endpoint` finds the marks through the class hierarchy, that the protocol package defines `ServerEndpoint` and `ClientEndpoint` and therefore depends on `jsonrpcpeer`, that the client, the server and the example server use them, that a plain function as a handler no longer runs and then fails, and that nothing changes on the wire. It names the removal of the old `JsonRpcEndpoint` and of `JsonRpcEndpointProtocol`.
   - **No** `Refs` and no co-author.
 
   Verify with `uv run --all-packages cz check --rev-range HEAD~1..HEAD` and `git log --show-signature -1`.
