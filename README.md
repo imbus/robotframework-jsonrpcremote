@@ -67,7 +67,7 @@ Greet Returns A Greeting
     Should Be Equal    ${greeting}    Hello, World!
 ```
 
-[Getting started](https://imbus.github.io/robotframework-jsonrpcremote/getting-started/) runs this example step by step. The guides cover TCP and stdio, sessions, lost connections and connect retry, the server in a container, and several libraries on one server.
+[Getting started](https://imbus.github.io/robotframework-jsonrpcremote/getting-started/) runs this example step by step. The guides cover TCP and stdio, sessions, failures of remote keywords, lost connections and connect retry, the server in a container, and several libraries on one server.
 
 ## Contributing
 

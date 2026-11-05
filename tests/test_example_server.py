@@ -1,6 +1,7 @@
 """The hand-written example server handles every message that the client sends in a session."""
 
 import asyncio
+import inspect
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -77,6 +78,17 @@ async def test_the_example_server_handles_a_whole_session(caplog: pytest.LogCapt
         assert await asyncio.wait_for(peer.completion, 5)
         # An error for a notification would mean that the server does not handle it.
         assert "Received error" not in caplog.text
+
+
+async def test_the_example_server_gives_the_path_of_its_file_as_the_source_of_a_keyword() -> None:
+    async with _connection_to_the_example_server() as peer:
+        await peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams())
+        await peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
+        library = await peer.send_request_typed(
+            ImportLibraryResult, IMPORT_LIBRARY_REQUEST, ImportLibraryParams(name="SimpleRobotLibrary")
+        )
+
+    assert library.definition.keywords[0].source == inspect.getsourcefile(SimpleRobotServerEndpoint)
 
 
 @pytest.mark.parametrize(

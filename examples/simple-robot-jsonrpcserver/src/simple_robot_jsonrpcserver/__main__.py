@@ -77,7 +77,7 @@ class SimpleRobotServerEndpoint(ServerEndpoint):
                         args=[ArgumentDefinition(name="message", type="Any", doc="Message to echo back.")],
                         doc="Echoes the given message.",
                         tags=["example"],
-                        source=__file__ + ":19",
+                        source=__file__,
                     )
                 ],
             ),
