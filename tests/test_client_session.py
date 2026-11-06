@@ -124,6 +124,24 @@ def test_argument_default_with_nested_values_arrives_unchanged(server: FakeServe
         remote._stop_session()
 
 
+def test_argument_default_that_holds_a_pickle_arrives_unchanged(server: FakeServer) -> None:
+    # Decoding this pickle would import a module that the client does not have.
+    default = {"__pickled__": b"cmodule_that_the_client_does_not_have\nButton\n.".hex()}
+    argument = ArgumentDefinition(
+        name="button", has_default=True, default=default, kind=ArgumentKind.POSITIONAL_OR_NAMED
+    )
+    keyword = KeywordDefinition(name="Click", args=[argument])
+    definition = LibraryDefinition(name="FakeLib", keywords=[keyword])
+    server.script(IMPORT_LIBRARY_REQUEST, ImportLibraryResult(token="t", definition=definition))
+
+    remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+    try:
+        assert remote.get_keyword_names() == ["Click"]
+        assert remote.get_keyword_arguments("Click") == [("button", default)]
+    finally:
+        remote._stop_session()
+
+
 @pytest.mark.parametrize(
     ("source", "lineno", "expected"),
     [

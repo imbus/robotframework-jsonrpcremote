@@ -97,6 +97,8 @@ class RobotServerEndpoint(ServerEndpoint):
         # Tokens of libraries imported on this connection, so they can be finalized
         # on disconnect (the keyword store is shared across connections).
         self._imported_tokens: set[str] = set()
+        # Set once the client is gone: an import that completes later finalizes its library itself.
+        self._disconnected = False
         self._shutdown_received: bool = False
         self._registered = True
         self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
@@ -203,7 +205,12 @@ class RobotServerEndpoint(ServerEndpoint):
         lib_definition = await self.remote_context.import_library(
             lib_name, params.args or [], params.kw_args or {}, token, subscriber=self
         )
-        self._imported_tokens.add(token)
+        # No await between the check and adding the token, so finalize_all() either sees the token or has set
+        # the mark before it.
+        if self._disconnected:
+            await self._finalize(token)
+        else:
+            self._imported_tokens.add(token)
         return ImportLibraryResult(
             token=token,
             definition=lib_definition,
@@ -251,12 +258,21 @@ class RobotServerEndpoint(ServerEndpoint):
         if self.rpc_peer is not None:
             end_connection(self.rpc_peer)
 
+    async def _finalize(self, token: str) -> None:
+        """Finalize a library of a client that is gone; a failure is only logged, as nobody waits for it."""
+        try:
+            await self.remote_context.finalize_library(token, subscriber=self)
+        except Exception:
+            logger.debug("Failed to finalize library token '%s' on disconnect", token, exc_info=True)
+
     async def finalize_all(self) -> None:
-        """Finalize every library still imported on this connection (called on disconnect)."""
+        """Finalize every library imported on this connection (called on disconnect).
+
+        An import that is still running finalizes its library itself once it has completed.
+        """
+        self._disconnected = True
         for token in list(self._imported_tokens):
             try:
-                await self.remote_context.finalize_library(token, subscriber=self)
-            except Exception:
-                logger.debug("Failed to finalize library token '%s' on disconnect", token, exc_info=True)
+                await self._finalize(token)
             finally:
                 self._imported_tokens.discard(token)

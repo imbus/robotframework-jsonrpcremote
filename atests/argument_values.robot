@@ -148,6 +148,12 @@ Named Only With Its Optional Argument
 All Kinds Of Arguments At Once
     All Kinds    a    b    c    d    key=e    f=g
 
+A Call Without Arguments That Have Defaults Gives None Of Them
+    Given
+
+A Call With Only The Second Of Them Gives Only That One
+    Given    g=5
+
 A Missing Named-Only Argument Fails As For A Local Keyword
     [Template]    NONE
     Run Keyword And Expect Error    Keyword 'Local.Named Only' missing named-only argument 'key'.

@@ -169,10 +169,7 @@ def _attempts(count: int) -> str:
 
 
 def _definition_changes(registered: LibraryDefinition | None, current: LibraryDefinition | None) -> str:
-    """Describe how ``current`` differs from ``registered``; empty if they are equal.
-
-    The names are not compared: the server names each imported instance of a library differently.
-    """
+    """Describe how ``current`` differs from ``registered``; empty if they are equal."""
     if registered is None or current is None:
         return "" if registered is current else "the definition is missing"
     old = {keyword.name: keyword for keyword in registered.keywords}
@@ -188,8 +185,7 @@ def _definition_changes(registered: LibraryDefinition | None, current: LibraryDe
                 [
                     field.name
                     for field in fields(registered)
-                    if field.name not in ("name", "keywords")
-                    and getattr(registered, field.name) != getattr(current, field.name)
+                    if field.name != "keywords" and getattr(registered, field.name) != getattr(current, field.name)
                 ],
             ),
         )
@@ -911,7 +907,8 @@ class JsonRpcRemote:
                 name = "**" + name
 
             if arg.has_default:
-                return (name, jsonable_to_value(arg.default))
+                # As it arrives: decoding a pickle would run code from the server, and needs its classes.
+                return (name, arg.default)
 
             return name
 

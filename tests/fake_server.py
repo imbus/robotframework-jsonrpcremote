@@ -126,6 +126,8 @@ class FakeServer:
     def __init__(self, keywords: Iterable[str] = ("Echo",)) -> None:
         self.port = 0
         self.keywords = list(keywords)
+        # The name of the library in the default answer to an import; `None` names it as the import asked for it.
+        self.library_name: str | None = None
         self.connections: list[FakeConnection] = []
         # The method of each request and each ``robot/set_log_level`` notification, in order.
         self.requests: list[str] = []
@@ -267,9 +269,11 @@ class FakeServer:
         if method == IMPORT_LIBRARY_REQUEST:
             message = ArgumentDefinition(name="message", kind=ArgumentKind.POSITIONAL_OR_NAMED)
             keywords = [KeywordDefinition(name=name, args=[message]) for name in self.keywords]
-            token = f"{params.get('name') or 'FakeLib'}_{len(self.requests)}"
-            # Like the real server: the library is named after the token of its import.
-            return ImportLibraryResult(token=token, definition=LibraryDefinition(name=token, keywords=keywords))
+            requested = params.get("name") or "FakeLib"
+            # Like the real server: every import gets a token of its own, and the library keeps its name.
+            token = f"{requested}_{len(self.requests)}"
+            definition = LibraryDefinition(name=self.library_name or requested, keywords=keywords)
+            return ImportLibraryResult(token=token, definition=definition)
         if method == RUN_KEYWORD_REQUEST:
             args = params.get("args") or []
             return RunKeywordResult(result=f"echo: {args[0]}" if args else "echo")

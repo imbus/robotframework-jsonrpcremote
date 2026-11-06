@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import datetime
 import io
+import math
 import sys
 import threading
 from concurrent.futures import Future, InvalidStateError
@@ -15,6 +16,7 @@ from robot.api.interfaces import ListenerV3
 from robot.conf import RobotSettings
 from robot.errors import ExecutionFailed
 from robot.output import LOGGER
+from robot.running.arguments import ArgInfo
 from robot.running.librarykeywordrunner import LibraryKeywordRunner
 from robot.utils import NOT_SET, ErrorDetails, escape, text
 
@@ -29,6 +31,7 @@ from robot_jsonrpcremote_protocol import (
     RobotJsonRpcErrorCode,
     RunKeywordError,
     RunKeywordErrorMode,
+    SimpleType,
 )
 
 _T = TypeVar("_T")
@@ -88,6 +91,17 @@ def _as_robot_data(value: Any) -> Any:
     return escape(value)
 
 
+def _default_of(arg: ArgInfo) -> SimpleType:
+    """The default of ``arg`` for the library definition: a JSON scalar as it is, any other value as Libdoc shows it.
+
+    The exact type decides: the members of an ``IntEnum`` are numbers, but Libdoc shows their names.
+    """
+    value = arg.default
+    if type(value) in (type(None), str, bool, int) or (type(value) is float and math.isfinite(value)):
+        return cast(SimpleType, value)
+    return cast(SimpleType, arg.default_repr)
+
+
 def _robot_import_library(
     library_token: str | None, name: str, args: Sequence[Any], kw_args: Mapping[str, Any]
 ) -> LibraryDefinition:
@@ -103,8 +117,6 @@ def _robot_import_library(
     context.namespace.import_library(_as_robot_data(name), robot_args, _as_robot_data(library_token))
 
     lib: "running.TestLibrary" = context.namespace._kw_store.get_library(library_token or name)
-    if lib is None:
-        raise RuntimeError(f"Library '{name}' could not be imported.")
 
     def to_arg_def(arg_spec: "running.ArgumentSpec") -> list[ArgumentDefinition]:
         result: list[ArgumentDefinition] = []
@@ -114,7 +126,7 @@ def _robot_import_library(
                     name=arg.name,
                     type=str(arg.type),
                     has_default=arg.default is not NOT_SET,
-                    default=value_to_jsonable(arg.default) if arg.default is not NOT_SET else None,
+                    default=_default_of(arg) if arg.default is not NOT_SET else None,
                     kind=ArgumentKind.from_value(arg.kind),
                 )
             )
@@ -131,7 +143,8 @@ def _robot_import_library(
         )
 
     return LibraryDefinition(
-        name=lib.name,
+        # The name without the alias: the alias is the token of this import.
+        name=lib.real_name,
         keywords=[to_kw_def(kw) for kw in lib.keywords],
         doc=lib.doc,
         doc_format=lib.doc_format,
@@ -174,8 +187,6 @@ def _robot_run_keyword(
         raise RuntimeError("No execution context available for running keyword.")
 
     lib: "running.TestLibrary" = context.namespace._kw_store.get_library(library_token)
-    if lib is None:
-        raise RuntimeError(f"Library with token '{library_token}' is not imported.")
 
     # A keyword with embedded arguments is called by the name from its definition, with the values as
     # arguments. `find_keywords` also returns other keywords whose patterns fit that name, and it accepts
@@ -275,6 +286,10 @@ class RobotRemoteContext:
         self._failure_logged = False
 
     def _hook_loop(self) -> None:
+        # Robot keeps every message of the framework for loggers that register later. All of them have
+        # registered by now, and the run of the server does not end, so the messages of every library
+        # import would stay. `rebot` turns the cache off the same way.
+        LOGGER.disable_message_cache()
         try:
             while not self._stopped.is_set():
                 try:

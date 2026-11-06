@@ -32,9 +32,8 @@ The server does not authenticate clients and does not encrypt the connection.
 Whoever can connect can run the keywords of the libraries it serves. The
 Python implementation sends Python objects as pickles, and reading a pickle can
 run arbitrary code: on the server for keyword arguments, and on the client for
-return values and for the argument defaults in the library definition, already
-when Robot Framework imports `JsonRpcRemote`. Make the server reachable only for
-clients you trust, and connect only to servers you trust.
+return values. Make the server reachable only for clients you trust, and connect
+only to servers you trust.
 :::
 
 ## stdio

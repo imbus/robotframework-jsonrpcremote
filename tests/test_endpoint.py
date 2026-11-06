@@ -110,6 +110,82 @@ async def test_finalize_all_goes_on_after_a_failure() -> None:
     assert set(context.finalized) == {r1.token, r2.token}
 
 
+class _GatedContext(_StubContext):
+    """A stub whose import of ``Slow``, and the finalizing of chosen tokens, wait until the test opens them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.import_gate = asyncio.Event()
+        self.finalize_gates: dict[str, asyncio.Event] = {}
+
+    async def import_library(
+        self, name: str, args: Any, kw_args: Any, token: str, subscriber: Any = None
+    ) -> LibraryDefinition:
+        if name == "Slow":
+            await self.import_gate.wait()
+        return await super().import_library(name, args, kw_args, token, subscriber)
+
+    async def finalize_library(self, token: str, subscriber: Any = None) -> None:
+        if token in self.finalize_gates:
+            await self.finalize_gates[token].wait()
+        await super().finalize_library(token, subscriber)
+
+
+async def test_import_that_completes_after_the_disconnect_finalizes_its_library() -> None:
+    context = _GatedContext()
+    endpoint = await _initialized_endpoint(context)
+    importing = asyncio.create_task(endpoint.import_library(ImportLibraryParams(name="Slow")))
+    await asyncio.sleep(0)  # the import waits
+
+    await endpoint.finalize_all()
+    context.import_gate.set()
+    result = await importing
+
+    assert context.finalized == [result.token]
+    assert endpoint._imported_tokens == set()
+
+
+async def test_import_that_completes_while_another_library_is_finalized_finalizes_both() -> None:
+    context = _GatedContext()
+    endpoint = await _initialized_endpoint(context)
+    first = await endpoint.import_library(ImportLibraryParams(name="Fast"))
+    context.finalize_gates[first.token] = asyncio.Event()
+    importing = asyncio.create_task(endpoint.import_library(ImportLibraryParams(name="Slow")))
+    await asyncio.sleep(0)  # the second import waits
+    finalizing = asyncio.create_task(endpoint.finalize_all())
+    await asyncio.sleep(0)  # finalize_all() waits for the finalizing of the first library
+
+    context.import_gate.set()
+    second = await importing
+    context.finalize_gates[first.token].set()
+    await finalizing
+
+    assert sorted(context.finalized) == sorted([first.token, second.token])
+
+
+class _StoppedContext(_GatedContext):
+    """A gated stub of a server that has stopped its runner: every finalizing fails."""
+
+    async def finalize_library(self, token: str, subscriber: Any = None) -> None:
+        self.finalized.append(token)
+        raise _shutting_down()
+
+
+async def test_failed_finalization_after_a_late_import_is_logged_at_debug(caplog: pytest.LogCaptureFixture) -> None:
+    context = _StoppedContext()
+    endpoint = await _initialized_endpoint(context)
+    importing = asyncio.create_task(endpoint.import_library(ImportLibraryParams(name="Slow")))
+    await asyncio.sleep(0)  # the import waits
+    await endpoint.finalize_all()
+
+    with caplog.at_level(logging.DEBUG, logger="robot_jsonrpcremote_server.endpoint"):
+        context.import_gate.set()
+        result = await importing
+
+    assert context.finalized == [result.token]
+    assert [record.levelno for record in caplog.records if result.token in record.getMessage()] == [logging.DEBUG]
+
+
 class _FakeReader:
     def __init__(self) -> None:
         self.eof = False

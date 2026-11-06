@@ -18,7 +18,6 @@ import pytest
 from fake_server import wait_until
 
 from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
-from jsonrpcpeer.json_helpers import jsonable_to_value
 from robot_jsonrpcremote_protocol import (
     FINALIZE_LIBRARY_REQUEST,
     IMPORT_LIBRARY_REQUEST,
@@ -206,6 +205,78 @@ class SecondLib:
         pass
 """
 
+DEFAULTS_LIBRARY = """\
+from enum import Enum, IntEnum
+
+
+class Button(Enum):
+    LEFT = 1
+    RIGHT = 2
+
+
+class Color(IntEnum):
+    RED = 1
+
+
+class DefaultsLib:
+    def scalars(self, a=None, b="x", c=True, d=5, e=1.5):
+        pass
+
+    def containers(self, a=[1, 2], b={"a": 2}):
+        pass
+
+    def members(self, a=Button.LEFT, b=Color.RED):
+        pass
+
+    def floats(self, a=float("inf"), b=float("nan")):
+        pass
+
+    def call(self, f=lambda: 1):
+        return f()
+
+    def list_default(self, value=[1, 2]):
+        return f"{type(value).__name__} {value}"
+
+    def enum_default(self, button=Button.LEFT):
+        return f"{type(button).__name__} {button.name}"
+"""
+
+MARKED_LIBRARY = """\
+import time
+from pathlib import Path
+
+
+class MarkedLib:
+    "Writes a line into the file `marker` when it is closed; its import takes `delay` seconds."
+
+    ROBOT_LIBRARY_SCOPE = "SUITE"
+    ROBOT_LISTENER_API_VERSION = 3
+    # Robot creates the instance three times for an import with an alias; only the first one waits.
+    _waited = set()
+
+    def __init__(self, marker, delay=0):
+        if marker not in MarkedLib._waited:
+            MarkedLib._waited.add(marker)
+            time.sleep(float(delay))
+        self.marker = Path(marker)
+        self.ROBOT_LIBRARY_LISTENER = self
+
+    def _close(self):
+        with self.marker.open("a") as file:
+            file.write("closed\\n")
+"""
+
+MESSAGE_CACHE_LIBRARY = """\
+from robot.output import LOGGER
+
+
+class MessageCacheLib:
+    def cached_messages_naming(self, name):
+        "Counts the messages that Robot keeps in the server for loggers that register later."
+        cache = LOGGER._message_cache
+        return 0 if cache is None else sum(name in message.message for message in cache)
+"""
+
 # Files of the server's own code. The module search path may name the package, in a development install.
 _FILES_OF_THE_SERVER = ("peer.py", "_endpoint.py", "_runner.py", "__main__.py")
 
@@ -270,6 +341,9 @@ def library_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
     (directory / "DescribedLib.py").write_text(DESCRIBED_LIBRARY)
     (directory / "SecondLib.py").write_text(SECOND_LIBRARY)
     (directory / "InitValuesLib.py").write_text(INIT_VALUES_LIBRARY)
+    (directory / "DefaultsLib.py").write_text(DEFAULTS_LIBRARY)
+    (directory / "MarkedLib.py").write_text(MARKED_LIBRARY)
+    (directory / "MessageCacheLib.py").write_text(MESSAGE_CACHE_LIBRARY)
     return directory
 
 
@@ -808,9 +882,30 @@ async def test_library_from_a_path_is_imported(server_without_libraries: _Server
         imported = await session.import_library(str(library))
         result = await session.run_keyword("From A Path")
 
+    assert imported.definition.name == "PathLib"
     assert [keyword.name for keyword in imported.definition.keywords] == ["From A Path"]
     assert result.error is None
     assert result.result == "from a path"
+
+
+async def test_definition_carries_the_name_of_the_library(port: int) -> None:
+    async with _connection(port) as session:
+        await session.handshake()
+        imported = await session.import_library("EndToEndLib")
+
+    assert imported.definition.name == "EndToEndLib"
+    assert imported.token != "EndToEndLib"
+
+
+async def test_two_imports_of_one_library_carry_the_same_name(port: int) -> None:
+    async with _connection(port) as first, _connection(port) as second:
+        await first.handshake()
+        await second.handshake()
+        one = await first.import_library("EndToEndLib")
+        other = await second.import_library("EndToEndLib")
+
+    assert one.definition.name == other.definition.name == "EndToEndLib"
+    assert one.token != other.token
 
 
 async def test_wrong_number_of_arguments_is_a_failure_of_the_keyword(port: int) -> None:
@@ -887,6 +982,72 @@ async def test_finalizing_closes_the_listener_of_a_library(
     assert session.messages == [f"{scope} library was closed"]
 
 
+def _lines_in(marker: Path) -> int:
+    """How often `MarkedLib` has written into ``marker``, that is, how often it was closed."""
+    return len(marker.read_text().splitlines()) if marker.exists() else 0
+
+
+async def _disconnect_while_importing(session: _Session, marker: Path) -> None:
+    """Start an import that takes 1 s, and let the client go after 0.3 s without waiting for the answer."""
+    importing = asyncio.create_task(session.import_library("MarkedLib", [str(marker), 1]))
+    await asyncio.sleep(0.3)
+    session.peer.writer.transport.abort()
+    await asyncio.gather(importing, return_exceptions=True)
+
+
+async def test_library_of_a_client_that_disconnects_is_finalized_once(
+    server_without_libraries: _Server, tmp_path: Path
+) -> None:
+    marker = tmp_path / "closed"
+    async with _connection(server_without_libraries.port) as session:
+        await session.handshake()
+        await session.import_library("MarkedLib", [str(marker)])
+
+    wait_until(lambda: _lines_in(marker) >= 1, timeout=10)
+    assert _lines_in(marker) == 1
+
+
+async def test_library_whose_import_runs_when_the_client_disconnects_is_finalized_once(
+    server_without_libraries: _Server, tmp_path: Path
+) -> None:
+    marker = tmp_path / "closed"
+    async with _connection(server_without_libraries.port) as session:
+        await session.handshake()
+        await _disconnect_while_importing(session, marker)
+
+    wait_until(lambda: _lines_in(marker) >= 1, timeout=10)
+    assert _lines_in(marker) == 1
+
+
+async def test_both_libraries_are_finalized_when_the_client_disconnects_during_the_second_import(
+    server_without_libraries: _Server, tmp_path: Path
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    async with _connection(server_without_libraries.port) as session:
+        await session.handshake()
+        await session.import_library("MarkedLib", [str(first)])
+        await _disconnect_while_importing(session, second)
+
+    wait_until(lambda: _lines_in(first) >= 1 and _lines_in(second) >= 1, timeout=10)
+    assert (_lines_in(first), _lines_in(second)) == (1, 1)
+
+
+async def test_imports_leave_no_messages_in_the_server(server_without_libraries: _Server) -> None:
+    for _ in range(100):
+        async with _connection(server_without_libraries.port) as session:
+            await session.handshake()
+            await session.import_library("EndToEndLib")
+            await session.finalize_library()
+
+    async with _connection(server_without_libraries.port) as session:
+        await session.handshake()
+        await session.import_library("MessageCacheLib")
+        result = await session.run_keyword("Cached Messages Naming", ["EndToEndLib"])
+
+    assert result.error is None
+    assert result.result == 0
+
+
 async def _definition_of_the_described_library(server: _Server) -> LibraryDefinition:
     async with _connection(server.port) as session:
         await session.handshake()
@@ -920,19 +1081,86 @@ async def test_library_definition_describes_a_keyword(server_without_libraries: 
 async def test_library_definition_describes_the_arguments(server_without_libraries: _Server) -> None:
     definition = await _definition_of_the_described_library(server_without_libraries)
 
-    assert [
-        (arg.name, arg.type, arg.has_default, jsonable_to_value(arg.default), arg.kind)
-        for arg in definition.keywords[0].args
-    ] == [
+    assert [(arg.name, arg.type, arg.has_default, arg.default, arg.kind) for arg in definition.keywords[0].args] == [
         ("first", "str", False, None, ArgumentKind.POSITIONAL_ONLY),
         ("", "", False, None, ArgumentKind.POSITIONAL_ONLY_MARKER),
         ("second", "int", True, 5, ArgumentKind.POSITIONAL_OR_NAMED),
         ("rest", "str", False, None, ArgumentKind.VAR_POSITIONAL),
         ("named", "bool", True, True, ArgumentKind.NAMED_ONLY),
         ("plain", "", True, None, ArgumentKind.NAMED_ONLY),
-        ("nested", "", True, [1, {"a": 2}], ArgumentKind.NAMED_ONLY),
+        ("nested", "", True, "[1, {'a': 2}]", ArgumentKind.NAMED_ONLY),
         ("others", "int", False, None, ArgumentKind.VAR_NAMED),
     ]
+
+
+async def _defaults_of(server: _Server, keyword: str) -> list[Any]:
+    """The defaults of the arguments of ``keyword`` in the definition of ``DefaultsLib``."""
+    async with _connection(server.port) as session:
+        await session.handshake()
+        definition = (await session.import_library("DefaultsLib")).definition
+    [found] = [kw for kw in definition.keywords if kw.name == keyword]
+    return [arg.default for arg in found.args]
+
+
+async def test_defaults_that_are_json_scalars_arrive_as_they_are(server_without_libraries: _Server) -> None:
+    defaults = await _defaults_of(server_without_libraries, "Scalars")
+
+    assert defaults == [None, "x", True, 5, 1.5]
+    assert [type(default) for default in defaults] == [type(None), str, bool, int, float]
+
+
+async def test_list_and_dict_defaults_arrive_as_their_text(server_without_libraries: _Server) -> None:
+    assert await _defaults_of(server_without_libraries, "Containers") == ["[1, 2]", "{'a': 2}"]
+
+
+async def test_enum_members_as_defaults_arrive_as_their_names(server_without_libraries: _Server) -> None:
+    assert await _defaults_of(server_without_libraries, "Members") == ["LEFT", "RED"]
+
+
+async def test_library_with_a_default_that_cannot_be_pickled_is_imported(server_without_libraries: _Server) -> None:
+    [default] = await _defaults_of(server_without_libraries, "Call")
+
+    assert isinstance(default, str)
+    assert default.startswith("<function")
+
+
+async def test_floats_that_json_cannot_carry_arrive_as_their_text(server_without_libraries: _Server) -> None:
+    assert await _defaults_of(server_without_libraries, "Floats") == ["inf", "nan"]
+
+
+async def test_keyword_called_without_the_argument_runs_with_its_real_default(
+    server_without_libraries: _Server,
+) -> None:
+    async with _connection(server_without_libraries.port) as session:
+        await session.handshake()
+        await session.import_library("DefaultsLib")
+        result = await session.run_keyword("Call")
+
+    assert result.error is None
+    assert result.result == 1
+
+
+async def _result_of_defaults_lib(server: _Server, keyword: str, args: list[Any]) -> RunKeywordResult:
+    async with _connection(server.port) as session:
+        await session.handshake()
+        await session.import_library("DefaultsLib")
+        return await session.run_keyword(keyword, args)
+
+
+async def test_string_for_an_argument_with_a_list_default_becomes_a_list(server_without_libraries: _Server) -> None:
+    result = await _result_of_defaults_lib(server_without_libraries, "List Default", ["[3, 4]"])
+
+    assert result.error is None
+    assert result.result == "list [3, 4]"
+
+
+async def test_string_for_an_argument_with_an_enum_default_becomes_the_member(
+    server_without_libraries: _Server,
+) -> None:
+    result = await _result_of_defaults_lib(server_without_libraries, "Enum Default", ["RIGHT"])
+
+    assert result.error is None
+    assert result.result == "Button RIGHT"
 
 
 async def test_import_without_a_name_takes_the_first_library_of_the_server(server_with_two_libraries: _Server) -> None:

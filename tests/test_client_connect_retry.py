@@ -403,6 +403,20 @@ def test_changed_library_definition_after_a_reconnect_fails_until_the_session_en
     assert len(server.connections) == connections + 1
 
 
+def test_library_of_another_name_after_a_reconnect_fails_the_call(
+    server: FakeServer, connect: Callable[..., JsonRpcRemote]
+) -> None:
+    remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
+    lost = _session(remote)
+    server.library_name = "OtherLib"  # the server comes back with another library that has the same keywords
+    server.close_connections()
+    wait_until(lambda: lost.lost)
+    changed = r"but the library definition changed since the library was imported \(library attributes changed: name\);"
+
+    with pytest.raises(ConnectionError, match=changed):
+        _call(remote, "first")
+
+
 _ECHO = KeywordDefinition(name="Echo", args=[])
 _OTHER = KeywordDefinition(name="Other", args=[])
 
@@ -411,8 +425,7 @@ _OTHER = KeywordDefinition(name="Other", args=[])
     ("current", "changes"),
     [
         (LibraryDefinition(name="Lib", keywords=[_ECHO, _OTHER]), ""),
-        # The server names each imported instance differently.
-        (LibraryDefinition(name="Lib_2", keywords=[_ECHO, _OTHER]), ""),
+        (LibraryDefinition(name="Lib_2", keywords=[_ECHO, _OTHER]), "library attributes changed: name"),
         (
             LibraryDefinition(name="Lib", keywords=[_ECHO, _OTHER], version="2", source="/new/Lib.py"),
             "library attributes changed: version, source",

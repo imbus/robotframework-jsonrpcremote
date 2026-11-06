@@ -58,17 +58,17 @@ array of the responses. If no element needs a response, it sends nothing.
 
 - Field names are the names of the dataclass fields, such as `library_token`.
   The reference implementation leaves out optional fields that are not set.
-- Arguments and return values of keywords, the argument defaults in a library
-  definition and the arguments of `robot/import_library` are JSON values, whose
-  lists and objects may be nested to any depth.
+- Arguments and return values of keywords and the arguments of
+  `robot/import_library` are JSON values, whose lists and objects may be nested
+  to any depth.
 - Values are final: a client sends them as they are meant to arrive. The
-  reference server hands them to the library unchanged and resolves no variables
-  or escapes in them.
+  reference server resolves no variables or escapes in them. Robot Framework
+  still converts them by the signature of the keyword, as for a local library.
 - In addition, the Python implementation sends Python objects as
   `{"__pickled__": "<hex>"}`, where `<hex>` is a Python pickle of the object in
   hexadecimal, so they travel unchanged between Python peers. It does so for
-  every keyword argument, return value and default that is not `null`, a
-  string, a number or a boolean, lists and dicts included.
+  every keyword argument and return value that is not `null`, a string, a
+  number or a boolean, lists and dicts included.
 - Reading a pickle can run arbitrary code; see the caution in
   [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/#tcp).
 
@@ -109,7 +109,9 @@ on which the client imports one library:
    keyword; then it sends the response.
 5. When the session ends, the client sends `robot/finalize_library` with the
    token, then `robot/shutdown`, then `robot/exit` if the server announced
-   `support_exit`, and closes the connection.
+   `support_exit`, and closes the connection. If a connection ends without
+   `robot/finalize_library`, the reference server finalizes its libraries itself,
+   also one whose import was still running.
 
 ## Data structures
 
@@ -164,7 +166,8 @@ on which the client imports one library:
 ### Library definition
 
 - **`LibraryDefinition`**
-  - `name`: string.
+  - `name`: string: the name of the library, as Robot Framework names it without
+    an alias, such as `MyLibrary` for `path/to/MyLibrary.py`.
   - `keywords`: list of `KeywordDefinition`.
   - `doc`: string (optional): the library documentation.
   - `doc_format`: string (optional): `ROBOT`, `REST`, `HTML` or `TEXT`.
@@ -186,7 +189,10 @@ on which the client imports one library:
     client passes it to Robot Framework as the type of the argument.
   - `has_default`: boolean (optional): whether the argument has a default.
     If `true`, `default` holds it, which may be `null`.
-  - `default`: any value (optional).
+  - `default`: any value (optional). The reference server sends a default that
+    is `null`, a string, a number or a boolean as it is, and every other default
+    as the text that Libdoc shows for it, such as `LEFT` for a member of an
+    `Enum` or `[1, 2]` for a list.
   - `required`: boolean: reserved, always `true`. Use `has_default` instead.
   - `kind`: `ArgumentKind` (optional), a string: `POSITIONAL_ONLY`,
     `POSITIONAL_OR_NAMED`, `POSITIONAL_ONLY_MARKER` (the `/`),

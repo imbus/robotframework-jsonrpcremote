@@ -5,6 +5,9 @@ from typing import Any
 from robot.api.deco import keyword
 from robot.libraries.BuiltIn import register_run_keyword
 
+# The default of the arguments of `given`: a call that passes it on gives the keyword something else.
+_NOT_GIVEN = object()
+
 
 class Thing:
     """An object that only Python peers can exchange, and only with this module on both sides."""
@@ -44,6 +47,10 @@ class ArgumentValuesLib:
     def all_kinds(self, first: Any, /, second: Any = 2, *rest: Any, key: Any = "k", **others: Any) -> str:
         """Returns the ``repr`` of what it got."""
         return repr((first, second, rest, key, sorted(others.items())))
+
+    def given(self, f: Any = _NOT_GIVEN, g: Any = _NOT_GIVEN) -> list[str]:
+        """Returns the names of the arguments that the call gave."""
+        return [name for name, value in (("f", f), ("g", g)) if value is not _NOT_GIVEN]
 
     def same_value(self, value: Any) -> Any:
         """Returns the value that it got."""

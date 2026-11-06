@@ -104,8 +104,8 @@ and is not sent again.
 
 Robot Framework registers the remote library's keywords once, at the library
 import. After a reconnect, the client therefore compares the library
-definition, its keywords and their arguments, documentation and sources, with
-the one from the import. If the server came back with a different definition,
+definition, its name, its keywords and their arguments, documentation and
+sources, with the one from the import. If the server came back with a different definition,
 for example after an update of the library, the call fails with:
 
 ```text
