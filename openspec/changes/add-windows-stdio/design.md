@@ -2,7 +2,7 @@
 
 ## Context
 
-See proposal.md for the motivation. This builds on `add-stdio-streams`: `open_stdio_connection()`, the move of the standard streams and `_WritePipeProtocol` exist then, and only the Windows path is missing. What is known about Windows comes from tests on a Windows 11 VM (Insider build):
+See proposal.md for the motivation. This builds on `add-stdio-streams` (`e2ed56b`): `open_stdio_connection()`, the move of the standard streams and `_WritePipeProtocol` exist, and only the Windows path is missing. What is known about Windows comes from tests on a Windows 11 VM (Insider build):
 
 - **Pipes:** each end of a pipe is synchronous or overlapped, fixed by whoever creates it. asyncio and `subprocess` give the child a synchronous end. The proactor needs an overlapped one, and `asyncio.windows_utils.PipeHandle` on a synchronous pipe fails with WinError 87.
 - **VS Code gives synchronous pipes:** it starts a debug adapter with `cp.spawn()` and only `env` and `cwd` (`src/vs/workbench/contrib/debug/node/debugAdapter.ts`, lines 300 to 313), and Node 26 with these options gave the child synchronous pipes on the VM. VS Code runs this in Electron, which has the same libuv, and was not measured itself. RobotCode's debugger runs over stdio by default.
@@ -110,7 +110,7 @@ async def connect(read_handle: int, write_handle: int) -> tuple[asyncio.StreamRe
         read_transport, _ = await loop.connect_read_pipe(lambda: read_protocol, PipeHandle(read_handle))
     else:
         read_transport = _ThreadReadTransport(loop, read_handle, read_protocol)
-    write_protocol = _WritePipeProtocol(read_transport, loop)
+    write_protocol = _WritePipeProtocol(read_transport)
     if is_overlapped(write_handle):
         write_transport, _ = await loop.connect_write_pipe(lambda: write_protocol, PipeHandle(write_handle))
     else:
@@ -125,6 +125,7 @@ async def connect(read_handle: int, write_handle: int) -> tuple[asyncio.StreamRe
 ### 4. The choice per direction, and the two refusals
 
 - **The choice:** `is_overlapped()` asks `NtQueryInformationFile()` with `FileModeInformation`: a handle with `FILE_SYNCHRONOUS_IO_ALERT` or `FILE_SYNCHRONOUS_IO_NONALERT` is synchronous. Libuv makes the same check. Each direction is chosen on its own.
+- **A stream closed at the start:** the checks of `add-stdio-streams` already refuse a stdin or stdout whose `sys.__stdin__` or `sys.__stdout__` is `None`. A Python without standard handles, such as `pythonw.exe` started from a shortcut, gets the refusal for a closed stdin that way, also on Windows.
 - **A stdin that is no pipe:** on Windows, `os.isatty()` is true for the null device as well as for a console, so `_check_stdin()` accepts only `S_ISFIFO` there, which `os.fstat()` reports for pipes. The null device and a console get the message for a character device, which names `os.devnull`, so `nul` on Windows. The probe with a selector is skipped there, because no selector watches a pipe on Windows. stdout gets no rule beyond being open, because the thread can write a synchronous stdout of any kind.
 - **An overlapped pipe without a proactor:** `check_loop()` raises if one of the handles is overlapped and the running loop is not an `asyncio.ProactorEventLoop`. The alternative is a thread for it as well. But a blocking `ReadFile()` without an `OVERLAPPED` structure on an overlapped handle is what Microsoft warns against. One with it would add code for a case that needs a library to set the selector policy, and the client and a plain `asyncio.run()` use the proactor anyway.
 - **Before the move:** both refusals come before the move, so stdin and stdout stay as they are. Left to the proactor, a synchronous handle would fail later, in a callback, with WinError 87 as a fatal transport error, and nobody would report it as a failed start.
@@ -157,7 +158,9 @@ Without a console of its own, a console program gets a new window, which would p
 
 ### 9. Tests
 
-- **`tests/test_stdio_connection.py`:** the `skipif(win32)` goes away, and all scenarios of `add-stdio-streams` run on Windows twice: with the overlapped pipes of `create_stdio_subprocess()`, and with the synchronous pipes of a plain `asyncio.create_subprocess_exec()` with `PIPE`, which is what the client does today. For The input ends first, the parent with overlapped pipes builds its own pair with a plain write protocol, because closing the writer of the normal pair would also end its reader. New tests with `skipif(sys.platform != "win32")` cover the scenarios that exist only there. The one with Node's default pipes skips without `node`, except in CI.
+- **`tests/test_stdio_connection.py`:** the module's `skipif(win32)` goes away, and the scenarios of `add-stdio-streams` run on Windows twice: with the overlapped pipes of `create_stdio_subprocess()`, and with the synchronous pipes of a plain `asyncio.create_subprocess_exec()` with `PIPE`, which is what the client does today. For The input ends first, the parent with overlapped pipes builds its own pair with a plain write protocol, because closing the writer of the normal pair would also end its reader. New tests with `skipif(sys.platform != "win32")` cover the scenarios that exist only there. The one with Node's default pipes skips without `node`, except in CI.
+  - **Three tests stay POSIX-only:** those that start Python through `/bin/sh` with `0<&-`, `1>&-` or `2>&-`, so that a standard stream is closed at the start. On Windows, `subprocess` cannot start a process without a standard handle, because it puts in the parent's handle. The check of `sys.__std*__` that they cover is the same code on Windows.
+  - **`os.system()` in the test of child processes** builds its command with `shlex.join()`, whose quotes cmd.exe does not understand, so it uses `subprocess.list2cmdline()` on Windows.
 - **A real debug session in VS Code,** once on the VM during this change: a minimal extension registers a debugger whose adapter is a Python script on `open_stdio_connection()`. It answers `initialize`, and logs which kind of pipes it has and how many threads serve them. This closes the gap between Node 26 and VS Code's Electron. It is no CI test, because CI has no VS Code.
 - **The flags of decision 8:** these are checked with a fake `asyncio.create_subprocess_exec` and a fake console check, because a test cannot see a window. On the VM, a real run without a console confirms it once.
 - **`tests/test_client_connection.py`:** the `skipif` markers go away. `os.kill(pid, 0)` would end the process on Windows, so `_pid_exists()` asks with `OpenProcess()` there.
@@ -166,7 +169,7 @@ Without a console of its own, a console program gets a new window, which would p
 
 ### 10. The Windows code is type-checked on Linux
 
-`uv run mypy` on Linux skips everything under `sys.platform == "win32"`, and `mypy --platform win32` checks it. On the current code, this reports only the statement after the `raise` in `_stdio_streams()`, which goes away. So the lint job gets the step `uv run mypy --platform win32`. This shapes the code:
+`uv run mypy` on Linux skips everything under `sys.platform == "win32"`, and `mypy --platform win32` checks it. On the current code, with mypy 2.4.1, this reports only the statement after the `raise` in `open_stdio_connection()` (`stdio.py`), which goes away. So the lint job gets the step `uv run mypy --platform win32`. This shapes the code:
 
 - `_win32_pipes.py` starts with `assert sys.platform == "win32"`, so that mypy on Linux skips the module.
 - Code after a branch that returns is reported as unreachable on the other platform, so `stdio.py` uses `if`/`else`, as in decision 3.
@@ -174,7 +177,7 @@ Without a console of its own, a console program gets a new window, which would p
 
 ### 11. The rule for a server of your own goes on the protocol page
 
-The guide TCP and stdio drops POSIX only. The protocol page gets a short section for servers that do not use `open_stdio_connection()`:
+The guide TCP and stdio drops POSIX only. Since `add-stdio-streams`, the protocol page has the section Over stdin and stdout, with the rule that a server without `open_stdio_connection()` writes nothing but messages to its stdout. The rule for Windows joins it there:
 
 > On Windows, the client creates the stdin and stdout of the server as overlapped pipes, so that a Python server can use I/O completion ports. Programs in other languages read and write them as usual, with one reader and one writer. Do not let anyone else use these pipes: a child process that inherits stdin or stdout, or a second handle in another thread, can lose data or crash the process. Start child processes with their own stdin and stdout.
 
