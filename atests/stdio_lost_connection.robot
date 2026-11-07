@@ -6,7 +6,6 @@ Library           OperatingSystem
 Variables         stdio_vars.py
 Library           JsonRpcRemote    stdio:${LOSS_SERVER_COMMAND}    ConnectionLossLib
 Suite Setup       Remove File    ${TEMPDIR}${/}${RECORD}
-Test Tags         posix
 
 
 *** Variables ***

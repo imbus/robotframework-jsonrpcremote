@@ -6,4 +6,5 @@ from .peer import JsonRpcPeer as JsonRpcPeer
 from .peer import JsonRpcResponseError as JsonRpcResponseError
 from .peer import rpc_notification as rpc_notification
 from .peer import rpc_request as rpc_request
+from .stdio import create_stdio_subprocess as create_stdio_subprocess
 from .stdio import open_stdio_connection as open_stdio_connection

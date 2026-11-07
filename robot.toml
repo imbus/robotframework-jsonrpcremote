@@ -3,8 +3,8 @@ output-dir = "results"
 default-profiles = ["windows", "non_windows"]
 #log-level = "TRACE"
 
-# Native Windows is the only platform the stdio server rejects (mirrors its
-# sys.platform == "win32" guard); test selection splits on exactly that line.
+# Tests of POSIX signals such as SIGTERM carry the tag posix: on Windows, terminate() is a hard kill.
+# The tag windows is for tests that only hold on Windows.
 [profiles.windows]
 enabled.if = "platform.system() == 'Windows'"
 excludes = ["posix"]

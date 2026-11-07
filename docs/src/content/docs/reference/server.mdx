@@ -17,7 +17,7 @@ them, clients may import any library that the server can import; see
 | ------------------------------ | ---------------------------------------------------- | ------- |
 | `--mode {tcp,stdio,pipe}`      | `tcp`, or `ROBOT_JSONRPC_MODE`                       | How clients connect: `tcp` or `stdio`; `pipe` is reserved for a pipe mode. |
 | `--tcp`                        |                                                      | Same as `--mode tcp`. |
-| `--stdio`                      |                                                      | Same as `--mode stdio`: serve a single client over stdin and stdout, on POSIX systems only; see [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/). |
+| `--stdio`                      |                                                      | Same as `--mode stdio`: serve a single client over stdin and stdout; see [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/). |
 | `--pipe`                       |                                                      | Same as `--mode pipe`, which is reserved. |
 | `--bind ADDRESS`               | `127.0.0.1`, or `ROBOT_JSONRPC_BIND`                 | The address to listen on, in TCP mode. Repeat it to listen on several addresses. |
 | `--port PORT`                  | `8271`, or `ROBOT_JSONRPC_PORT`                      | The port to listen on, in TCP mode. |
@@ -63,6 +63,12 @@ accepts clients, it logs
 `Server is up and running. Press Ctrl+C to stop.` If the server cannot start, for example because
 the port is already in use, it logs `Server failed to start: <reason>` and
 exits with exit code 1.
+
+In stdio mode, the server needs a stdin that it can watch for input, such as a
+pipe. With the null device or a regular file on stdin, and on Windows with
+anything but a pipe, it fails to start in the same way. On Windows, it works
+with the pipes of any parent: with the overlapped pipes that the client creates,
+and with the ordinary pipes of other programs, such as those of `subprocess`.
 
 ## Errors and tracebacks
 

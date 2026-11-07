@@ -5,6 +5,7 @@ import functools
 import inspect
 import logging
 import shlex
+import sys
 import time
 import weakref
 from collections.abc import Callable, Coroutine, Mapping, Sequence
@@ -21,7 +22,7 @@ from robot.errors import RemoteError
 from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
 from robot.utils import secs_to_timestr, timestr_to_secs
 
-from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
+from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError, create_stdio_subprocess
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from robot_jsonrpcremote_protocol import (
     ArgumentDefinition,
@@ -253,6 +254,16 @@ class _ClientEndpoint(ClientEndpoint):
                 await self.server.exit(ExitParams())
 
 
+def _split_command(command: str) -> list[str]:
+    """Split the command of a ``stdio:`` URI as a POSIX shell does; on Windows, a backslash is an ordinary character."""
+    lexer = shlex.shlex(command, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    if sys.platform == "win32":
+        lexer.escape = ""
+    return list(lexer)
+
+
 class _SessionResources:
     """Mutable runtime state shared with the session finalizer.
 
@@ -410,7 +421,11 @@ class _Session:
 
     def _run(self) -> None:
         try:
-            asyncio.run(self._run_client())
+            if sys.platform == "win32":
+                # Whatever event loop policy a library has set: only the proactor can start a server over stdio.
+                asyncio.run(self._run_client(), loop_factory=asyncio.ProactorEventLoop)
+            else:
+                asyncio.run(self._run_client())
         except (Exception, asyncio.CancelledError):
             # Raising it would only make the thread print it: the error has already reached
             # the caller it concerns, as start_error or as the error of the failed call, and a
@@ -525,25 +540,15 @@ class _Session:
         rest = self._uri[len("stdio:") :]
         if rest.startswith("//"):
             rest = rest[2:]
-        argv = shlex.split(rest)
+        argv = _split_command(rest)
         if not argv:
             raise ValueError(
                 "stdio URI must include a server command, e.g. 'stdio:robot-jsonrpcremote-server --stdio Lib'."
             )
 
-        process = await asyncio.wait_for(
-            asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-            ),
-            timeout=self._timeout,
-        )
+        process, reader, writer = await asyncio.wait_for(create_stdio_subprocess(*argv), timeout=self._timeout)
         self._res.process = process
-
-        assert process.stdout is not None
-        assert process.stdin is not None
-        return process.stdout, process.stdin
+        return reader, writer
 
     async def close_connection(self) -> None:
         if self._res.peer is not None:

@@ -34,6 +34,9 @@ jobs:
       - name: Mypy (strict)
         run: uv run mypy
 
+      - name: Mypy (strict) for the code that runs only on Windows
+        run: uv run mypy --platform win32
+
   test:
     name: test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}

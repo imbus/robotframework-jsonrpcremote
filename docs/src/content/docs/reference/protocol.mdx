@@ -341,3 +341,10 @@ example's `print()` calls appears on its stderr, and so on the console of
 
 A server that does not use `open_stdio_connection()`, such as one in another
 language, must write nothing but messages to its stdout over stdio.
+
+On Windows, the client creates the stdin and stdout of the server as
+overlapped pipes, so that a Python server can use I/O completion ports.
+Programs in other languages read and write them as usual, with one reader and
+one writer. Do not let anyone else use these pipes: a child process that
+inherits stdin or stdout, or a second handle in another thread, can lose data
+or crash the process. Start child processes with their own stdin and stdout.

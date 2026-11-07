@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from jsonrpcpeer import JsonRpcPeer, open_stdio_connection
+from jsonrpcpeer import JsonRpcPeer
 from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
@@ -236,18 +236,6 @@ async def test_stdio_server_stops_via_stop_server(
     client_writer.close()
 
 
-async def test_stdio_connection_raises_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("sys.platform", "win32")
-    with pytest.raises(RuntimeError, match="not supported on Windows"):
-        await open_stdio_connection()
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="exercises the real Windows behavior; runs only on Windows")
-async def test_stdio_connection_raises_on_windows_native() -> None:
-    with pytest.raises(RuntimeError, match="not supported on Windows"):
-        await open_stdio_connection()
-
-
 async def test_run_server_async_dispatches_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
     called: dict[str, Any] = {}
 
@@ -275,7 +263,10 @@ _ATESTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "atests
 
 
 async def _stderr_of_a_stdio_server(keyword: str, text: str) -> str:
-    """Run the real server in stdio mode with ``StdioOutputLib``, call ``keyword`` and then Echo; return its stderr."""
+    """Run the real server in stdio mode with ``StdioOutputLib``, call ``keyword`` and then Echo; return its stderr.
+
+    The server gets the pipes of subprocess, which are synchronous on Windows, as other parents such as VS Code give.
+    """
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -322,10 +313,11 @@ async def _stderr_of_a_stdio_server(keyword: str, text: str) -> str:
                 process.kill()
                 await process.wait()
     assert echo.result == "echo: still connected"
+    # The end of its input stopped the server.
+    assert process.returncode == 0
     return (await asyncio.wait_for(stderr, 20)).decode(errors="replace")
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
 @pytest.mark.parametrize(
     ("keyword", "text"),
     [

@@ -73,6 +73,15 @@ On Windows, the move of stdin and stdout SHALL also change the handles that `Get
 - **AND** the child sees the end of its input at once
 - **AND** the returned reader still receives the data of the connection
 
+### Requirement: On Windows no other handle to the pipes reaches a child process
+
+On Windows, `open_stdio_connection()` SHALL keep child processes from inheriting any handle of the process to its stdin and stdout pipes, also one that the process inherited besides its standard handles, as CPython's launcher of a venv hands them down.
+
+#### Scenario: Handles that a launcher handed down
+
+- **WHEN** the process has inherited further handles to its stdin and stdout pipes besides its standard handles, calls the function, starts a child process that inherits all inheritable handles, and then exits while the child process runs
+- **THEN** the other end of its stdout sees the end of the stream at once
+
 ### Requirement: On Windows the connection is refused for a stdin that is no pipe, and for an overlapped pipe without a proactor
 
 On Windows, `open_stdio_connection()` SHALL raise a `RuntimeError` that names the reason if stdin is not a pipe, or if stdin or stdout is an overlapped pipe while the running event loop is not a proactor event loop. It SHALL then leave stdin and stdout as they are.
@@ -115,7 +124,12 @@ The `jsonrpcpeer` package SHALL export the coroutine function `create_stdio_subp
 
 - **WHEN** the caller closes the writer
 - **THEN** the process sees the end of its input
-- **AND** the reader of the caller sees the end of the stream at the latest when the process has ended
+- **AND** the reader of the caller still receives what the process writes, until the process has closed its stdout
+
+#### Scenario: Output before the end of the process
+
+- **WHEN** the process writes its output in many small blocks and ends before the caller reads it
+- **THEN** the caller reads all of it
 
 #### Scenario: Command that cannot be started
 

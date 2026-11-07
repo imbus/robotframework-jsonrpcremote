@@ -3,7 +3,6 @@ Documentation     Full protocol surface over stdio: errors, log notifications, t
 Variables         stdio_vars.py
 Library           LogCapture.py
 Library           JsonRpcRemote    stdio:${PROBE_SERVER_COMMAND}    ServerProbeLib
-Test Tags         posix
 
 
 *** Test Cases ***

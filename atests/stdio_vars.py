@@ -21,3 +21,6 @@ OUTPUT_SERVER_COMMAND = _server_command("StdioOutputLib")
 CHILD_PID_FILE = os.path.join(tempfile.gettempdir(), "jsonrpcremote-stdio-output-child.pid")
 # The hand-written example server, which prints on every message.
 OWN_SERVER_COMMAND = shlex.join([sys.executable, "-m", "simple_robot_jsonrpcserver", "--stdio"])
+# A server written in Node, and the same server started by a wrapper script, which is a .cmd file on Windows.
+NODE_SERVER_COMMAND = shlex.join(["node", os.path.join(_HERE, "node_keywords.js")])
+NODE_WRAPPER_COMMAND = shlex.join([os.path.join(_HERE, "node_keywords.cmd")])

@@ -2,7 +2,6 @@
 Documentation     A TEST-scoped stdio library spawns and reaps a fresh server per test.
 Variables         stdio_vars.py
 Library           JsonRpcRemote    stdio:${SERVER_COMMAND}    StdioEchoLib    rpc_scope=TEST
-Test Tags         posix
 
 
 *** Test Cases ***

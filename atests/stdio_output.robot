@@ -6,7 +6,6 @@ Library           OperatingSystem
 Library           LogCapture.py
 Variables         stdio_vars.py
 Library           JsonRpcRemote    stdio:${OUTPUT_SERVER_COMMAND}    StdioOutputLib    rpc_scope=TEST
-Test Tags         posix
 
 
 *** Test Cases ***

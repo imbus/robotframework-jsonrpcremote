@@ -321,7 +321,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_const",
         dest="mode",
         const="stdio",
-        help="Run server in stdio mode (alias for --mode stdio): serve a single client over stdin/stdout (POSIX only)",
+        help="Run server in stdio mode (alias for --mode stdio): serve a single client over stdin/stdout",
     )
 
     tcp_group = parser.add_argument_group(

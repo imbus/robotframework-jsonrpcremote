@@ -14,7 +14,7 @@ A prototype of the path with overlapped pipes ran on a Windows 11 VM; the design
 
 ## What Changes
 
-- **`open_stdio_connection()` works on Windows:** it uses an overlapped pipe through the proactor event loop, without a thread, and a synchronous pipe through a thread of its own for that direction. It moves the standard streams as on POSIX, including the handles that child processes inherit. It raises a `RuntimeError` that names the reason if stdin is not a pipe, or if an overlapped pipe meets an event loop that is not a proactor.
+- **`open_stdio_connection()` works on Windows:** it uses an overlapped pipe through the proactor event loop, without a thread, and a synchronous pipe through a thread of its own for that direction. It moves the standard streams as on POSIX, including the handles that child processes inherit, and keeps child processes from inheriting other handles to the pipes, such as those that CPython's launcher of a venv hands down. It raises a `RuntimeError` that names the reason if stdin is not a pipe, or if an overlapped pipe meets an event loop that is not a proactor.
 - **New function in `jsonrpcpeer`:** `await create_stdio_subprocess(*argv, **kwargs)` starts a process and returns it with a reader and a writer for its stdin and stdout, with overlapped pipes on Windows and ordinary pipes elsewhere.
 - **Client:** the `stdio:` transport uses the new function. On Windows, a backslash in the command is an ordinary character, the session runs on a proactor event loop whatever policy the process has set, and a server started by a client without a console opens no window.
 - **Server:** `--stdio` works on Windows with the pipes of any parent, and a stdin that is not a pipe is a failed start, as the null device is on POSIX.

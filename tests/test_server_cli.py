@@ -127,8 +127,7 @@ def test_server_on_a_port_in_use_fails_to_start() -> None:
     assert "up and running" not in result.stderr
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
-@pytest.mark.parametrize("stdin", ["/dev/null", "regular file"])
+@pytest.mark.parametrize("stdin", ["null device", "regular file"])
 def test_stdio_server_with_a_stdin_that_cannot_be_watched_fails_to_start(stdin: str, tmp_path: Path) -> None:
     path = Path(os.devnull)
     if stdin == "regular file":
@@ -144,9 +143,9 @@ def test_stdio_server_with_a_stdin_that_cannot_be_watched_fails_to_start(stdin: 
     assert "up and running" not in result.stderr
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
 def test_stdio_server_with_a_closed_pipe_on_stdin_ends_normally() -> None:
-    # `input` writes nothing and closes the pipe: the server starts and sees the end of its input.
+    # `input` writes nothing and closes the pipe: the server starts and sees the end of its input. On Windows, the
+    # pipe of subprocess is synchronous, so the server reads it in a thread.
     result, _ = _run_server("--stdio", "SomeLib", input="")
 
     assert result.returncode == 0

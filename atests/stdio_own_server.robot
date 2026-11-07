@@ -4,7 +4,6 @@ Documentation     The hand-written example server over stdio. It prints on every
 Variables         stdio_vars.py
 Library           LogCapture.py
 Library           JsonRpcRemote    stdio:${OWN_SERVER_COMMAND}    SimpleRobotLibrary
-Test Tags         posix
 
 
 *** Test Cases ***

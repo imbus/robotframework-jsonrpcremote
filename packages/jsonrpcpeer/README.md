@@ -13,7 +13,7 @@ This package provides the core communication logic used by `robotframework-jsonr
 *   **Type Safe:** Uses Python type hints for automatic parameter deserialization.
 *   **Endpoints:** One definition of an interface for both sides of a connection, which type checkers hold both sides to.
 *   **Flexible:** Works with any `asyncio.StreamReader` and `asyncio.StreamWriter`.
-*   **stdio:** `open_stdio_connection()` connects a process over its stdin and stdout, and keeps `print()` and child processes out of the connection.
+*   **stdio:** `open_stdio_connection()` connects a process over its stdin and stdout, and keeps `print()` and child processes out of the connection; `create_stdio_subprocess()` starts a process with such a connection. Both work on Linux, macOS and Windows.
 *   **Data Helpers:** Includes utilities for converting Python `dataclasses` to/from JSON.
 
 ## Protocol & Framing
@@ -163,9 +163,33 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The function also moves the standard streams out of the way of the messages, and there is no option to keep them. Afterwards, what the process, a C extension or a child process writes to stdout goes to stderr, and reading stdin gives the end of the input, so `print()` cannot corrupt the connection. If stdin cannot be watched for input, as a pipe or a socket can, or if stdin or stdout is closed, it raises a `RuntimeError` and leaves them as they are. It works on Linux, macOS and other POSIX systems.
+The function also moves the standard streams out of the way of the messages, and there is no option to keep them. Afterwards, what the process, a C extension or a child process writes to stdout goes to stderr, and reading stdin gives the end of the input, so `print()` cannot corrupt the connection. If stdin cannot be watched for input, as a pipe or a socket can, or if stdin or stdout is closed, it raises a `RuntimeError` and leaves them as they are.
+
+On Windows, stdin must be a pipe. The function uses an overlapped pipe through the I/O completion ports of the proactor event loop, the default event loop there, without a thread. A synchronous pipe, as `subprocess` creates it or VS Code for a debug adapter, gets a thread of its own for its direction.
 
 Closing the writer ends the connection in both directions, and `writer.wait_closed()` waits for that, as with a socket.
+
+The other side starts the process with `create_stdio_subprocess()`, which returns the process with a reader for its stdout and a writer for its stdin. Further arguments go to `asyncio.create_subprocess_exec()`:
+
+```python
+import sys
+
+from jsonrpcpeer import JsonRpcPeer, create_stdio_subprocess
+
+
+async def add_over_stdio() -> float:
+    process, reader, writer = await create_stdio_subprocess(sys.executable, "calculator_server.py")
+    client_peer = JsonRpcPeer(reader, writer)
+    client_peer.attach_endpoint(PrintingLog())
+    client_peer.start()
+    result = await client_peer.remote(Calculator).add(AddParams(a=10, b=20))
+    # The end of its input ends the process.
+    await client_peer.stop()
+    await process.wait()
+    return result.result
+```
+
+On Windows, the process gets overlapped pipes, which a Python process can use without threads, and a console program gets no window of its own if the caller has no console. Closing the writer ends the input of the process; the reader ends when the process has closed its stdout.
 
 ### Handler Signatures
 

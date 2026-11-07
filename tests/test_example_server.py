@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import locale
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -121,7 +122,6 @@ async def test_the_example_server_answers_an_unknown_keyword_with_keyword_not_fo
     assert raised.value.message == "Keyword 'Gone' not found in library 'SimpleRobotLibrary'."
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
 async def test_the_example_server_serves_a_whole_session_over_stdio() -> None:
     process = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -159,7 +159,8 @@ async def test_the_example_server_serves_a_whole_session_over_stdio() -> None:
         if process.returncode is None:
             process.kill()
             await process.wait()
-    output = (await asyncio.wait_for(stderr, 10)).decode(errors="replace")
+    # The example prints in the encoding of its locale, such as cp1252 on Windows.
+    output = (await asyncio.wait_for(stderr, 10)).decode(locale.getpreferredencoding(False), errors="replace")
 
     assert echo.result == "Grüße"
     assert process.returncode == 0

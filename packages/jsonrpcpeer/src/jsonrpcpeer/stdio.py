@@ -4,7 +4,7 @@ import os
 import selectors
 import stat
 import sys
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 _STDIN_NEEDED = "stdio mode needs a stdin that can be watched for input, such as a pipe"
 
@@ -23,22 +23,29 @@ def _check_stdin() -> None:
     except OSError:
         raise RuntimeError(f"{_STDIN_NEEDED}, but stdin is closed") from None
 
-    # The type rule holds on every platform, whatever its selector would accept.
-    if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or os.isatty(0)):
+    # The type rule holds on every platform, whatever its selector would accept. On Windows, only a
+    # pipe can be read without blocking the event loop, and os.isatty() is true for the null device.
+    if sys.platform == "win32":
+        accepted = stat.S_ISFIFO(mode)
+    else:
+        accepted = stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or os.isatty(0)
+    if not accepted:
         if stat.S_ISREG(mode):
             found = "a regular file"
         elif stat.S_ISCHR(mode):
-            found = "a character device such as /dev/null"
+            found = f"a character device such as {os.devnull}"
         else:
             found = "neither a pipe, a socket nor a terminal"
         raise RuntimeError(f"{_STDIN_NEEDED}, but stdin is {found}")
 
-    # Not every selector can watch every kind of stdin, for example a terminal on macOS.
-    with selectors.DefaultSelector() as probe:
-        try:
-            probe.register(0, selectors.EVENT_READ)
-        except (OSError, ValueError) as error:
-            raise RuntimeError(f"{_STDIN_NEEDED}, but the event loop cannot watch it: {error}") from error
+    # Not every selector can watch every kind of stdin, for example a terminal on macOS. On Windows,
+    # no selector watches a pipe, and the event loop reads it through I/O completion ports or a thread.
+    if sys.platform != "win32":
+        with selectors.DefaultSelector() as probe:
+            try:
+                probe.register(0, selectors.EVENT_READ)
+            except (OSError, ValueError) as error:
+                raise RuntimeError(f"{_STDIN_NEEDED}, but the event loop cannot watch it: {error}") from error
 
 
 def _check_stdout() -> None:
@@ -68,7 +75,11 @@ def _occupy_closed_stderr() -> None:
 
 
 def _move_standard_streams() -> None:
-    """Point stdin at the null device and stdout at stderr, also for child processes and C code."""
+    """Point stdin at the null device and stdout at stderr, also for child processes and C code.
+
+    On Windows, the C runtime of a console program such as python.exe also sets the standard
+    handles, which native code and child processes use, when a descriptor from 0 to 2 changes.
+    """
     null = os.open(os.devnull, os.O_RDWR)
     os.dup2(null, 0)
     # A process that started without a stderr has sys.__stderr__ set to None, and a file opened
@@ -82,16 +93,17 @@ def _move_standard_streams() -> None:
 
 
 class _WritePipeProtocol(asyncio.streams.FlowControlMixin):
-    """The write side of a pair: wait_closed() works, and closing it closes the read side, as on a socket."""
+    """The write side of a pair: wait_closed() works, and closing it closes ``read_transport``, as on a socket."""
 
-    def __init__(self, read_transport: asyncio.BaseTransport) -> None:
+    def __init__(self, read_transport: asyncio.BaseTransport | None) -> None:
         super().__init__()
         self._read_transport = read_transport
         self._closed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
     def connection_lost(self, exc: Exception | None) -> None:
         super().connection_lost(exc)
-        self._read_transport.close()
+        if self._read_transport is not None:
+            self._read_transport.close()
         if self._closed.done():
             return
         if exc is None:
@@ -124,16 +136,62 @@ async def open_stdio_connection() -> tuple[asyncio.StreamReader, asyncio.StreamW
     device and stdout writes to stderr, also for child processes and C code. So only what is
     written to the returned writer reaches the original stdout.
 
+    On Windows, an overlapped pipe goes through the I/O completion ports of the proactor event
+    loop, and a synchronous pipe gets a thread of its own for its direction.
+
     Raises ``RuntimeError`` and leaves the standard streams as they are if stdin cannot be watched
-    for input, as a pipe or a socket can, or if stdin or stdout is closed.
+    for input, as a pipe or a socket can, if stdin or stdout is closed, or on Windows if stdin is
+    no pipe, or if an overlapped pipe meets an event loop that is not a proactor.
     """
-    if sys.platform == "win32":
-        raise RuntimeError("stdio mode is not supported on Windows; use --tcp instead.")
     _check_stdin()
     _check_stdout()
     _occupy_closed_stderr()
     # Before the first await, so that no task can write to the connection between check and move.
-    read_file = os.fdopen(os.dup(0), "rb", 0)
-    write_file = os.fdopen(os.dup(1), "wb", 0)
-    _move_standard_streams()
-    return await _connect(read_file, write_file)
+    if sys.platform == "win32":
+        from . import _win32_pipes
+
+        _win32_pipes.check_loop()
+        read_handle = _win32_pipes.private_handle(0)
+        write_handle = _win32_pipes.private_handle(1)
+        _move_standard_streams()
+        _win32_pipes.keep_from_children(read_handle, write_handle)
+        connecting = _win32_pipes.connect(read_handle, write_handle)
+    else:
+        read_file = os.fdopen(os.dup(0), "rb", 0)
+        write_file = os.fdopen(os.dup(1), "wb", 0)
+        _move_standard_streams()
+        connecting = _connect(read_file, write_file)
+    return await connecting
+
+
+async def create_stdio_subprocess(
+    *argv: str, **kwargs: Any
+) -> tuple[asyncio.subprocess.Process, asyncio.StreamReader, asyncio.StreamWriter]:
+    """Start a process and return it with a reader for its stdout and a writer for its stdin, for a ``JsonRpcPeer``.
+
+    Further arguments go to ``asyncio.create_subprocess_exec()``. On Windows, stdin and stdout are
+    overlapped pipes, which the process can use through I/O completion ports, and on other
+    platforms ordinary pipes. Closing the writer ends the input of the process; the reader ends
+    when the process has closed its stdout.
+
+    If the caller on Windows has no console and passes no ``creationflags``, the process is started
+    with ``CREATE_NO_WINDOW``, so that a console program does not open a window of its own.
+    """
+    if sys.platform == "win32":
+        from . import _win32_pipes
+
+        starting = _win32_pipes.create_stdio_subprocess(argv, kwargs)
+    else:
+        starting = _create_subprocess_with_pipes(argv, kwargs)
+    return await starting
+
+
+async def _create_subprocess_with_pipes(
+    argv: tuple[str, ...], kwargs: dict[str, Any]
+) -> tuple[asyncio.subprocess.Process, asyncio.StreamReader, asyncio.StreamWriter]:
+    process = await asyncio.create_subprocess_exec(
+        *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, **kwargs
+    )
+    assert process.stdout is not None
+    assert process.stdin is not None
+    return process, process.stdout, process.stdin

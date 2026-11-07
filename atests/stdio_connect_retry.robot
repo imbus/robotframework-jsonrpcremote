@@ -8,7 +8,6 @@ Variables         stdio_vars.py
 Library           JsonRpcRemote    stdio:${LOSS_SERVER_COMMAND}    ConnectionLossLib
 ...               rpc_connect_retry_timeout=10s    rpc_connect_retry_interval=0.2s
 Suite Setup       Remove File    ${TEMPDIR}${/}${RECORD}
-Test Tags         posix
 
 
 *** Variables ***

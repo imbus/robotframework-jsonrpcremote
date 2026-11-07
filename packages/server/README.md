@@ -29,7 +29,7 @@ Then import the library through `JsonRpcRemote` in a suite:
 Library    JsonRpcRemote    uri=tcp://127.0.0.1:8271    library_name=MyLibrary
 ```
 
-Instead of connecting over TCP, the client can also start the server itself and talk to it over its stdin and stdout, with a URI such as `stdio:robot-jsonrpcremote-server --stdio --pythonpath . MyLibrary` (POSIX only).
+Instead of connecting over TCP, the client can also start the server itself and talk to it over its stdin and stdout, with a URI such as `stdio:robot-jsonrpcremote-server --stdio --pythonpath . MyLibrary`.
 
 ## More
 

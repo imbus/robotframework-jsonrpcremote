@@ -12,7 +12,7 @@ The scheme of the `uri` argument chooses how `JsonRpcRemote` reaches the server:
 | ------------------- | ---------------------------------- | ------------------------------------------ |
 | Server started by   | you, before the suite runs         | the client, for each session               |
 | Clients per server  | several                            | one, the client that started it            |
-| Platforms           | all                                | Linux, macOS and other POSIX systems       |
+| Platforms           | all                                | all                                        |
 
 ## TCP
 
@@ -55,6 +55,9 @@ in the repository:
 - The client splits the command into arguments as a shell does, with quotes
   grouping an argument, but starts it without a shell: it expands no variables
   or wildcards, and passes `|` or `>` on as plain arguments.
+- On Windows, a backslash in the command is an ordinary character, so a path
+  such as `C:\Tools\server.exe` needs no quotes. On other platforms, a
+  backslash escapes the next character, as in a POSIX shell.
 - `--stdio` makes the server serve one client over its stdin and stdout.
 - The server starts in the directory that `robot` runs in, so
   `--pythonpath .` makes the libraries there importable.
@@ -75,10 +78,9 @@ and the client starts and stops the server.
 
 ### Limits of stdio
 
-- **POSIX only.** On Windows, the server refuses stdio mode and exits, so the
-  library import fails.
 - **One client.** The server serves only the client that started it.
 - **stdin must stay open.** The server needs a pipe on stdin, as the client
   provides. If you start a stdio server through another command, such as
-  `docker run`, keep stdin open with `docker run -i`. With `/dev/null` or a
-  regular file on stdin, the server fails to start and exits with code 1.
+  `docker run`, keep stdin open with `docker run -i`. With the null device or
+  a regular file on stdin, and on Windows with anything but a pipe, the server
+  fails to start and exits with code 1.

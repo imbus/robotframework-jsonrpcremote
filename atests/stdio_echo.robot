@@ -2,7 +2,6 @@
 Documentation     Keyword execution over the stdio transport (the client spawns the server).
 Variables         stdio_vars.py
 Library           JsonRpcRemote    stdio:${SERVER_COMMAND}    StdioEchoLib
-Test Tags         posix
 
 
 *** Test Cases ***

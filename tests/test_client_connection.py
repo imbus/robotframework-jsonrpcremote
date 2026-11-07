@@ -5,10 +5,13 @@ import asyncio
 import os
 import shlex
 import shutil
+import subprocess
 import sys
+import textwrap
 import threading
 import time
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -29,12 +32,36 @@ def _stdio_server_command(library: str) -> str:
     )
 
 
-def _wait_pid_gone(pid: int, timeout: float = 10.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+if sys.platform == "win32":
+    import _winapi
+
+    def _pid_exists(pid: int) -> bool:
+        """Whether the process still runs; os.kill(pid, 0) would send it a Ctrl+C or end it on Windows."""
+        try:
+            handle = _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, pid)
+        except OSError:
+            return False
+        try:
+            # A process that has ended can still be opened while someone has a handle to it.
+            return _winapi.WaitForSingleObject(handle, 0) == _winapi.WAIT_TIMEOUT
+        finally:
+            _winapi.CloseHandle(handle)
+
+else:
+
+    def _pid_exists(pid: int) -> bool:
+        """Whether the process still runs."""
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
+            return False
+        return True
+
+
+def _wait_pid_gone(pid: int, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _pid_exists(pid):
             return True
         time.sleep(0.05)
     return False
@@ -52,7 +79,6 @@ async def test_stdio_uri_requires_a_command() -> None:
         await session.create_connection()
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
 async def test_stdio_uri_spawns_process_and_returns_streams() -> None:
     command = shlex.join([sys.executable, "-c", "import sys; sys.stdin.read()"])
     session = _make_session(f"stdio:{command}")
@@ -67,7 +93,30 @@ async def test_stdio_uri_spawns_process_and_returns_streams() -> None:
         assert process is not None
         process.kill()
         await process.wait()
+        # To the end, so that the reader has closed its pipe before the event loop ends.
+        await asyncio.wait_for(reader.read(), 10)
         writer.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="overlapped pipes exist only on Windows")
+async def test_a_stdio_server_gets_overlapped_pipes() -> None:
+    # So that a Python server can use I/O completion ports, without a thread per direction.
+    code = (
+        "import msvcrt, sys; from jsonrpcpeer._win32_pipes import is_overlapped; "
+        "print(is_overlapped(msvcrt.get_osfhandle(0)), is_overlapped(msvcrt.get_osfhandle(1)), end='')"
+    )
+    session = _make_session(f"stdio:{shlex.join([sys.executable, '-c', code])}")
+
+    reader, writer = await session.create_connection()
+    try:
+        kinds = await asyncio.wait_for(reader.read(), 10)
+    finally:
+        writer.close()
+        process = session._res.process
+        assert process is not None
+        await asyncio.wait_for(process.wait(), 10)
+
+    assert kinds == b"True True"
 
 
 async def test_stdio_bad_command_raises_os_error() -> None:
@@ -76,7 +125,6 @@ async def test_stdio_bad_command_raises_os_error() -> None:
         await session.create_connection()
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stdio server transport is POSIX-only")
 def test_stdio_session_spawns_and_reaps_server() -> None:
     session = _Session(f"stdio:{_stdio_server_command('StdioEchoLib')}", "StdioEchoLib", (), None, 20.0)
     session.start()
@@ -93,7 +141,6 @@ def test_stdio_session_spawns_and_reaps_server() -> None:
     assert _wait_pid_gone(pid), f"server subprocess {pid} still alive after teardown"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stdio server transport is POSIX-only")
 def test_cancelled_close_still_reaps_the_stdio_server(monkeypatch: pytest.MonkeyPatch) -> None:
     unhandled: list[threading.ExceptHookArgs] = []
     monkeypatch.setattr(threading, "excepthook", unhandled.append)
@@ -113,7 +160,6 @@ def test_cancelled_close_still_reaps_the_stdio_server(monkeypatch: pytest.Monkey
     assert unhandled == []
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stdio server transport is POSIX-only")
 def test_failed_stdio_handshake_reaps_the_server_before_it_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     # The server only allows StdioEchoLib, so importing another library fails the handshake.
     session = _Session(f"stdio:{_stdio_server_command('StdioEchoLib')}", "NotAllowedLib", (), None, 20.0)
@@ -133,8 +179,72 @@ def test_failed_stdio_handshake_reaps_the_server_before_it_is_reported(monkeypat
     # Both hold as soon as the failure is reported, without waiting any longer.
     assert session.process_returncode is not None
     assert pids, "the spawned server was never released"
-    with pytest.raises(ProcessLookupError):
-        os.kill(pids[0], 0)
+    assert not _pid_exists(pids[0])
+
+
+class _FakeStartError(Exception):
+    """Raised by the fake start of a server."""
+
+
+@pytest.mark.parametrize(
+    ("platform", "command", "argv"),
+    [
+        pytest.param(
+            "win32",
+            r"C:\path\to\python.exe -m robot_jsonrpcremote_server --stdio Lib",
+            [r"C:\path\to\python.exe", "-m", "robot_jsonrpcremote_server", "--stdio", "Lib"],
+            id="path_with_backslashes_on_windows",
+        ),
+        pytest.param(
+            "win32",
+            r'"C:\Program Files\tool\server.exe" --stdio',
+            [r"C:\Program Files\tool\server.exe", "--stdio"],
+            id="quoted_path_with_a_space_on_windows",
+        ),
+        pytest.param("linux", r"server my\ library", ["server", "my library"], id="backslash_on_posix"),
+    ],
+)
+async def test_a_stdio_command_is_split_as_its_platform_writes_paths(
+    monkeypatch: pytest.MonkeyPatch, platform: str, command: str, argv: list[str]
+) -> None:
+    started: list[tuple[str, ...]] = []
+
+    async def start(*command: str) -> NoReturn:
+        started.append(command)
+        raise _FakeStartError
+
+    monkeypatch.setattr("JsonRpcRemote.create_stdio_subprocess", start)
+    monkeypatch.setattr(sys, "platform", platform)
+    session = _make_session(f"stdio:{command}")
+
+    with pytest.raises(_FakeStartError):
+        await session.create_connection()
+
+    assert started == [tuple(argv)]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the event loop policies exist only on Windows")
+def test_a_session_runs_when_a_library_has_set_the_selector_policy() -> None:
+    # The policy holds for the whole process, so a process of its own sets it.
+    script = textwrap.dedent("""
+        import asyncio, sys
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        from JsonRpcRemote import JsonRpcRemote
+
+        remote = JsonRpcRemote(sys.argv[1], "MinimalLibrary", rpc_timeout=10)
+        try:
+            print(asyncio.run(remote.run_keyword("Echo", ["through the proactor"], {})))
+        finally:
+            remote._stop_session()
+    """)
+    uri = f"stdio:{shlex.join([sys.executable, str(_MINIMAL_SERVER)])}"
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, uri], capture_output=True, text=True, timeout=60, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "through the proactor"
 
 
 def test_a_stdio_command_with_a_space_in_its_path_reaches_the_server(tmp_path: Path) -> None:
