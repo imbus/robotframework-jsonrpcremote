@@ -18,9 +18,9 @@ In stdio mode, what a library, a child process or Robot Framework writes to the 
 - **THEN** the keyword call returns its result, and the next keyword call works
 - **AND** the text appears on the server's stderr
 
-#### Scenario: Robot Framework's console output
+#### Scenario: Console output of a library
 
-- **WHEN** a keyword calls `logger.console()`, or `logger.info()` with `also_console=True`
+- **WHEN** a keyword calls `logger.console()`
 - **THEN** the keyword call returns its result, and the next keyword call works
 - **AND** the text appears on the server's stderr
 

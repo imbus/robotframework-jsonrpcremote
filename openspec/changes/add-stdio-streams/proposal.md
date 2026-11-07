@@ -6,7 +6,7 @@
 
 Whoever copies that code also copies its problem. In stdio mode, file descriptor 1 is the protocol channel, and everything that writes to it corrupts the stream:
 
-- **The server:** a child process that inherits stdout, `Log To Console`, `logger.console()`, or a thread that prints after a keyword returned. The client cannot decode the next frame, and the call hangs. Robot Framework captures only `print()` during an import or a keyword.
+- **The server:** a child process that inherits stdout, `logger.console()` in a library, or a thread that prints after a keyword returned. The client cannot decode the next frame, and the call hangs. Robot Framework captures only `print()` during an import or a keyword.
 - **A hand-written server:** the example server `examples/simple-robot-jsonrpcserver` prints on every message. Over stdio with the streams left in place, the connection broke from the 1 MiB test on, on Linux and on Windows.
 
 File descriptor 0 has a similar problem. A child process that reads stdin takes bytes of the protocol. And a child process that outlives the server keeps both pipes open, so the client sees the end of the connection only when that child ends. That took 25 seconds instead of 2 in a test on Linux.
@@ -20,12 +20,12 @@ Free-threaded Python came up in the same work. By hand, on 2026-11-02, it passed
 ## What Changes
 
 - **New function in `jsonrpcpeer`:** `await open_stdio_connection()` returns a reader and a writer for the stdin and stdout of the current process, named after `asyncio.open_connection()`. It works on POSIX; on Windows it raises the error that the server raises there today, until `add-windows-stdio`.
-- **The standard streams move, always:** the connection uses private duplicates that child processes do not inherit. Stdin then reads from the null device, and stdout writes to stderr. This covers `print()`, direct writes to file descriptor 1, Robot Framework's console output, C code and child processes.
+- **The standard streams move, always:** the connection uses private duplicates that child processes do not inherit. Stdin then reads from the null device, and stdout writes to stderr. This covers `print()`, direct writes to file descriptor 1, `logger.console()`, C code and child processes.
 - **The pair closes like the pair of a socket:** `writer.wait_closed()` works, which it does not do for the server's pair today, and closing the writer also ends the reader.
 - **Server:** stdio mode uses the new function. `_stdio_streams()` is removed, and `_check_stdio_stdin()` moves into the new module.
 - **Example server:** `simple-robot-jsonrpcserver --stdio` serves one client over stdio with the new function.
 - **CI:** the test job also runs on the free-threaded build 3.14t on all three operating systems, and fails if the GIL is on.
-- **Docs:** the page TCP and stdio says where output goes instead of forbidding it, and its example runs a child process that writes to stdout. The protocol page and the README of `jsonrpcpeer` show the new function. Getting started names the free-threaded build, and the roadmap lists what is new.
+- **Docs:** the page TCP and stdio says where output goes instead of forbidding it, and its example runs a child process that writes to stdout. The protocol page and the README of `jsonrpcpeer` show the new function, and the protocol page says that a server without it must write nothing but messages to stdout over stdio. Getting started names the free-threaded build, and the roadmap lists what is new.
 - **Change `fix-server-stdio-stdout` is removed with the plan of this change:** its proposal is covered here. It had no other artifacts.
 - **Not in this change:** Windows, a general transport interface, a thread fallback, a classifier for free-threading.
 
@@ -45,7 +45,7 @@ _None._
 - **Peer:** new `packages/jsonrpcpeer/src/jsonrpcpeer/stdio.py`, an export in `__init__.py`, `packages/jsonrpcpeer/README.md`. `peer.py` only loses an outdated comment.
 - **Server:** `packages/server/src/robot_jsonrpcremote_server/__main__.py`.
 - **Example:** `examples/simple-robot-jsonrpcserver` (`__main__.py`, README).
-- **Tests:** new `tests/test_stdio_connection.py`, `atests/stdio_output.robot`, `atests/StdioOutputLib.py`, `atests/stdio_own_server.robot`; `tests/test_server_stdio.py` and `tests/test_example_server.py` change.
+- **Tests:** new `tests/test_stdio_connection.py`, `atests/stdio_output.robot`, `atests/StdioOutputLib.py`, `atests/stdio_own_server.robot`; `tests/test_server_stdio.py` and `tests/test_example_server.py` change, `atests/stdio_vars.py` and `tests/test_client_connection.py` quote their server commands, and new `tests/minimal_stdio_server.py` is a small standalone server for the test of a path with a space.
 - **CI:** `.github/workflows/ci.yml`.
 - **Docs:** `docs/src/content/docs/guides/tcp-and-stdio.mdx`, `reference/protocol.mdx`, `getting-started.mdx`, `roadmap.mdx`, `docs/examples/stdio`, `docs/examples/own-server`.
 - **Behavior:** output that used to corrupt the stream now appears on the server's stderr, and so on the console of `robot`.
