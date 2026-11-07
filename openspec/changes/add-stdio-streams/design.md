@@ -9,7 +9,7 @@ See proposal.md for the motivation. Today, `_stdio_streams()` in the server's `_
 - **Read side:** nothing closes the read transport if the writer closes first.
 - **Closing `sys.stdout.buffer`:** closing the writer closes it, so a later `print()` raises `ValueError`.
 
-This design was tried out as a prototype in a copy of the repository, together with `add-windows-stdio`, in one run per version. On Linux, with Python 3.12, 3.13, 3.14, 3.15 and 3.14t, the scenarios of the delta spec for `jsonrpc-peer` passed. With 3.12 and 3.14t, 309 unit tests passed, leaving out the in-process tests that the new ones replace, and all Robot suites passed, 88 of 88, with the new `atests/stdio_output.robot` and `atests/stdio_own_server.robot`. The checks of the server's stderr were not part of it. The results on Windows are in the design of `add-windows-stdio`.
+This design was tried out as a prototype in a copy of the repository at 8f5cee4, together with `add-windows-stdio`, in one run per version. Since then, `fix-peer-message-handling` and `add-typed-endpoints` have rewritten much of `peer.py`, but not `run()`, `stop()` and `_finish()`, on which decision 5 relies, and not the server's stdio code. On Linux, with Python 3.12, 3.13, 3.14, 3.15 and 3.14t, the scenarios of the delta spec for `jsonrpc-peer` passed. With 3.12 and 3.14t, 309 unit tests passed, leaving out the in-process tests that the new ones replace, and all Robot suites passed, 88 of 88, with the new `atests/stdio_output.robot` and `atests/stdio_own_server.robot`. The checks of the server's stderr were not part of it. The results on Windows are in the design of `add-windows-stdio`.
 
 ## Goals / Non-Goals
 
@@ -24,6 +24,8 @@ This design was tried out as a prototype in a copy of the repository, together w
 - A general transport interface (the rest of NET-5). The peer keeps taking a reader and a writer.
 - Named pipes and Unix domain sockets (NET-1, NET-3). They will be the recommended way to connect a local server. Stdio stays the simplest one.
 - A statement that the code is free of races under free-threading. The job shows that the tests pass with the GIL off, so there is no classifier for free-threading.
+
+**Checked against RobotCode,** which is to use `jsonrpcpeer` later for its language server and its debug adapter (backlog PEER-19). Both must keep their stdout free of anything but messages, so the move suits them. RobotCode reads stdin in a thread today and writes to `sys.__stdout__.buffer`. With this function, it would write only to the returned writer, because the move sends `sys.__stdout__` to stderr. VS Code starts RobotCode's debug adapter with `--stdio` as a child process with Node's default pipes, which are synchronous on Windows. That concerns the Windows path of `add-windows-stdio`, not this change.
 
 ## Decisions
 

@@ -4,13 +4,14 @@ Every new test is run once against the code without the part of the change it co
 
 ## 1. The Windows path in `jsonrpcpeer`
 
-- [ ] 1.1 Create `packages/jsonrpcpeer/src/jsonrpcpeer/_win32_pipes.py` with `is_overlapped()`, `check_for_iocp()`, `private_pipe_handle()` and `set_standard_handles()`, and give `open_stdio_connection()` its Windows branch (design decisions 3 to 5 and 10). Verify in `tests/test_stdio_connection.py`, whose parent now uses a pair of overlapped pipes on Windows (task 1.2), with the `skipif(win32)` removed, so that all scenarios of `add-stdio-streams` run there, and with new tests for Windows only:
-  - **Requirement On Windows the connection over stdin and stdout uses overlapped pipes:** Large messages, No thread for the streams.
+- [ ] 1.1 Add `create_stdio_subprocess()` to `stdio.py`, with its Windows part in `_win32_pipes.py`, and export it (design decisions 2 and 8). Verify in `tests/test_stdio_connection.py` the five scenarios of the requirement A process can be started with a connection over its stdin and stdout, on POSIX all of them, and on Windows all but A process that uses the connection function, which needs 1.2; Command that cannot be started checks there that the parent's handles are closed. Verify the three scenarios of the requirement On Windows a process started without a console opens no window with fakes for `asyncio.create_subprocess_exec` and the console check, and once on the VM with a parent started without a console, with no window in a screenshot. This adds no Robot test, because Robot Framework sees the function only through the client, which 2.3 covers.
+- [ ] 1.2 Add to `packages/jsonrpcpeer/src/jsonrpcpeer/_win32_pipes.py` `is_overlapped()`, `private_handle()`, `check_loop()`, `set_standard_handles()` and `connect()`, first with the path for overlapped pipes only, and give `open_stdio_connection()` its Windows branch, with the type rule for stdin of design decision 4 (design decisions 3 to 5 and 10). Verify in `tests/test_stdio_connection.py`, whose parent uses `create_stdio_subprocess()` from 1.1, with the `skipif(win32)` removed, so that all scenarios of `add-stdio-streams` run there, and with new tests for Windows only:
+  - **Requirement On Windows an overlapped pipe goes through I/O completion ports:** Large messages, No thread for the streams.
   - **Requirement On Windows the moved streams also reach the standard handles:** Native write to the standard output handle, Child process that writes and reads.
-  - **Requirement On Windows the connection is refused without overlapped pipes or a proactor:** all four scenarios.
+  - **Requirement On Windows the connection is refused for a stdin that is no pipe, and for an overlapped pipe without a proactor:** all three scenarios. For Console on stdin, the test starts the process with `CREATE_NEW_CONSOLE` and without a stdin of its own.
 
-  This adds no Robot test for the function itself, because Robot Framework sees it only through the server, which 3.1 covers.
-- [ ] 1.2 Add `create_stdio_subprocess()` to `stdio.py`, with its Windows part in `_win32_pipes.py`, and export it (design decisions 2 and 8). Verify in `tests/test_stdio_connection.py` on all platforms: the five scenarios of the requirement A process can be started with a connection over its stdin and stdout; on Windows, Command that cannot be started checks that the parent's handles are closed. Verify the three scenarios of the requirement On Windows a process started without a console opens no window with fakes for `asyncio.create_subprocess_exec` and the console check, and once on the VM with a parent started without a console, with no window in a screenshot. This adds no Robot test for the same reason as 1.1; the client's use is covered in 2.3.
+  Also verify there the scenario A process that uses the connection function on Windows. This adds no Robot test for the function itself, because Robot Framework sees it only through the server, which 3.1 covers.
+- [ ] 1.3 Add `_ThreadReadTransport` and `_ThreadWriteTransport` to `_win32_pipes.py`, and let `connect()` choose them for a synchronous handle (design decision 6). Verify in `tests/test_stdio_connection.py` that all scenarios of `add-stdio-streams` also pass on Windows with the synchronous pipes of `asyncio.create_subprocess_exec()` with `PIPE`, and with new tests for Windows only, covering the requirement On Windows a synchronous pipe gets a thread of its own: all seven scenarios. For Node's default pipes, a short Node script in `tests/` starts the process with `child_process.spawn()` without a `stdio` option and sends the request; the test skips without `node`, except in CI. Against the code without the thread transports, these tests must fail, because the proactor rejects the synchronous handles.
 
 ## 2. The client
 
@@ -21,9 +22,9 @@ Every new test is run once against the code without the part of the change it co
 
 ## 3. The server
 
-- [ ] 3.1 Remove `(POSIX only)` from the help of `--stdio` in `packages/server/src/robot_jsonrpcremote_server/__main__.py`. Verify with new tests:
-  - `tests/test_server_cli.py` for Windows, covering the requirement On Windows stdio mode needs overlapped pipes: Pipes that subprocess creates, Null device on stdin and Regular file on stdin. Remove the `skipif` of `test_stdio_server_with_a_stdin_that_cannot_be_watched_fails_to_start`, with the message for the null device depending on the platform. `test_stdio_server_with_a_closed_pipe_on_stdin_ends_normally` uses `subprocess` pipes, so on Windows it starts the server with `create_stdio_subprocess()`.
-  - `tests/test_server_stdio.py` for all platforms, covering the requirement stdio mode works on Windows: Keywords and the moved streams, with the test of `add-stdio-streams` that captures stderr, and End of the input with exit code 0.
+- [ ] 3.1 Remove `(POSIX only)` from the help of `--stdio` in `packages/server/src/robot_jsonrpcremote_server/__main__.py`. Verify with tests:
+  - `tests/test_server_cli.py`, covering the requirement On Windows stdio mode needs pipes: remove the `skipif` of `test_stdio_server_with_a_stdin_that_cannot_be_watched_fails_to_start`, which covers Null device on stdin and Regular file on stdin with the messages of `add-stdio-streams`. Remove the `skipif` of `test_stdio_server_with_a_closed_pipe_on_stdin_ends_normally`, which uses `subprocess` pipes and so shows the synchronous path of the server.
+  - `tests/test_server_stdio.py` for all platforms, covering the requirement stdio mode works on Windows: Keywords and the moved streams, with the test of `add-stdio-streams` that captures stderr; Started with synchronous pipes, with the real server started with `subprocess.PIPE`, a `JsonRpcPeer` on its pipes, an import and a keyword call; and End of the input with exit code 0.
 
 ## 4. CI
 
@@ -31,8 +32,8 @@ Every new test is run once against the code without the part of the change it co
 
 ## 5. Documentation
 
-- [ ] 5.1 In `docs/src/content/docs/guides/tcp-and-stdio.mdx`, set the row Platforms of stdio to all, remove the limit **POSIX only**, and add that on Windows a backslash in the command is an ordinary character. In `docs/src/content/docs/reference/server.mdx`, remove `on POSIX systems only`, and describe the failed start for a stdin or stdout that is not an overlapped pipe. In `packages/server/README.md`, remove `(POSIX only)`. In `docs/src/content/docs/roadmap.mdx`, drop the limit of the stdio transport to POSIX systems. Review the pages against the suites of 2.3.
-- [ ] 5.2 In `docs/src/content/docs/reference/protocol.mdx`, add the section with the rule from design decision 11. In `packages/jsonrpcpeer/README.md`, describe `create_stdio_subprocess()`. Verify by running the snippet of the README on Linux and on the VM. Verify `npm ci` and `npm run build` in `docs/`, which also check the internal links of 5.1 and 5.2.
+- [ ] 5.1 In `docs/src/content/docs/guides/tcp-and-stdio.mdx`, set the row Platforms of stdio to all, remove the limit **POSIX only**, and add that on Windows a backslash in the command is an ordinary character. In `docs/src/content/docs/reference/server.mdx`, remove `on POSIX systems only`, say that on Windows the server works with the pipes of any parent, and describe the failed start for a stdin that is not a pipe. In `packages/server/README.md`, remove `(POSIX only)`. In `docs/src/content/docs/roadmap.mdx`, drop the limit of the stdio transport to POSIX systems. Review the pages against the suites of 2.3.
+- [ ] 5.2 In `docs/src/content/docs/reference/protocol.mdx`, add the section with the rule from design decision 11. In `packages/jsonrpcpeer/README.md`, describe `create_stdio_subprocess()`, and say for `open_stdio_connection()` that on Windows it uses I/O completion ports for overlapped pipes and a thread per direction for synchronous ones. Verify by running the snippet of the README on Linux and on the VM. Verify `npm ci` and `npm run build` in `docs/`, which also check the internal links of 5.1 and 5.2.
 
 ## 6. Integration checks
 
@@ -41,10 +42,11 @@ Every new test is run once against the code without the part of the change it co
 - [ ] 6.3 On the Windows VM, with `uv sync --all-packages` and hard time limits, run the unit tests and `robotcode run` on Python 3.12, 3.14, 3.15 and 3.14t, and with Robot Framework 7.2; verify all pass and that no process stays behind.
 - [ ] 6.4 Run the unit tests and all Robot suites on Linux with Python 3.14, 3.15 and 3.14t by the recipe for several Python versions; verify all pass and POSIX shows no difference.
 - [ ] 6.5 Run `uv run --all-packages bash docs/examples/<name>/run.sh` for every example; verify all pass.
-- [ ] 6.6 If docker can be installed on the VM, try `stdio:docker run -i ...` with a Node server, and record the result in the design; otherwise, the design keeps it as not tested.
-- [ ] 6.7 Commit the change, this `tasks.md` and the updated planning artifacts as one signed commit on `main` (`git commit -S`), staging only the paths of this change, because another session may work on `main`:
-  - **Subject:** `feat: support stdio on Windows with overlapped pipes`.
-  - **Body:** explains why asyncio needs overlapped handles, why the client creates them for every server, the rule for foreign servers, and why the move of the streams is mandatory there.
+- [ ] 6.6 On the VM, start a real debug session in VS Code with a minimal extension, as design decision 9 describes, under a hard time limit. Verify that the adapter receives `initialize` and answers it, and record in the design which kind of pipes it had and how many threads served them.
+- [ ] 6.7 If docker can be installed on the VM, try `stdio:docker run -i ...` with a Node server, and record the result in the design; otherwise, the design keeps it as not tested.
+- [ ] 6.8 Commit the change, this `tasks.md` and the updated planning artifacts as one signed commit on `main` (`git commit -S`), staging only the paths of this change, because another session may work on `main`:
+  - **Subject:** `feat: support stdio on Windows`.
+  - **Body:** explains why asyncio needs overlapped handles, why the client creates them for every server, the threads for the synchronous pipes of other parents such as VS Code, the rule for foreign servers, and why the move of the streams is mandatory there.
   - **No** `Refs` and no co-author.
 
   Verify with `uv run --all-packages cz check --rev-range HEAD~1..HEAD` and `git log --show-signature -1`.
