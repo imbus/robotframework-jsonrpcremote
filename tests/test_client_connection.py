@@ -3,15 +3,19 @@ is covered end-to-end by atests/stdio_echo.robot)."""
 
 import asyncio
 import os
+import shlex
+import shutil
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
-from JsonRpcRemote import _Session
+from JsonRpcRemote import JsonRpcRemote, _Session
 
 _ROBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "atests"))
+_MINIMAL_SERVER = Path(__file__).resolve().parent / "minimal_stdio_server.py"
 
 
 def _make_session(uri: str, timeout: float = 5.0) -> _Session:
@@ -19,7 +23,10 @@ def _make_session(uri: str, timeout: float = 5.0) -> _Session:
 
 
 def _stdio_server_command(library: str) -> str:
-    return f"{sys.executable} -m robot_jsonrpcremote_server --stdio --pythonpath {_ROBOT_DIR} {library}"
+    # Quoted, so that a path with a space survives the split of the client.
+    return shlex.join(
+        [sys.executable, "-m", "robot_jsonrpcremote_server", "--stdio", "--pythonpath", _ROBOT_DIR, library]
+    )
 
 
 def _wait_pid_gone(pid: int, timeout: float = 10.0) -> bool:
@@ -47,7 +54,7 @@ async def test_stdio_uri_requires_a_command() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
 async def test_stdio_uri_spawns_process_and_returns_streams() -> None:
-    command = f'{sys.executable} -c "import sys; sys.stdin.read()"'
+    command = shlex.join([sys.executable, "-c", "import sys; sys.stdin.read()"])
     session = _make_session(f"stdio:{command}")
 
     reader, writer = await session.create_connection()
@@ -128,3 +135,18 @@ def test_failed_stdio_handshake_reaps_the_server_before_it_is_reported(monkeypat
     assert pids, "the spawned server was never released"
     with pytest.raises(ProcessLookupError):
         os.kill(pids[0], 0)
+
+
+def test_a_stdio_command_with_a_space_in_its_path_reaches_the_server(tmp_path: Path) -> None:
+    # A small standalone server, as a server in another language would be started.
+    directory = tmp_path / "with space"
+    directory.mkdir()
+    server = directory / _MINIMAL_SERVER.name
+    shutil.copy(_MINIMAL_SERVER, server)
+    remote = JsonRpcRemote(f"stdio:{shlex.join([sys.executable, str(server)])}", "MinimalLibrary", rpc_timeout=10)
+    try:
+        result = asyncio.run(remote.run_keyword("Echo", ["Grüße"], {}))
+    finally:
+        remote._stop_session()
+
+    assert result == "Grüße"

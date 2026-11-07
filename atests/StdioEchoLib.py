@@ -1,5 +1,4 @@
-"""Echo library for the stdio suites that, unlike JsonRpcRemote.Echo, never writes to
-stdout (stdout carries the JSON-RPC frames in stdio mode)."""
+"""Echo library for the stdio suites."""
 
 
 class StdioEchoLib:

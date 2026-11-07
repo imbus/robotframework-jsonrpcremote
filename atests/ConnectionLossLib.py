@@ -1,7 +1,4 @@
-"""Test-only library, loaded on the server, that ends or stops the server process during a keyword call.
-
-It never writes to stdout, so it also works over stdio, where stdout carries the JSON-RPC frames.
-"""
+"""Test-only library, loaded on the server, that ends or stops the server process during a keyword call."""
 
 import os
 import signal

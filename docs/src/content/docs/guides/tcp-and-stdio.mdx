@@ -44,7 +44,8 @@ talks to the server over the server's stdin and stdout, so no network port is
 involved, and the server ends with the session.
 
 The example runs the suite from
-[Getting started](/robotframework-jsonrpcremote/getting-started/) this way. Its
+[Getting started](/robotframework-jsonrpcremote/getting-started/) this way,
+with one more keyword, which starts a child process that writes to stdout. Its
 files are in
 [`docs/examples/stdio`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/stdio)
 in the repository:
@@ -61,6 +62,13 @@ in the repository:
   of its own: with the default `rpc_scope=SUITE`, one per suite.
 - What the server logs goes to its stderr, which appears on the console of
   `robot`.
+- What a library prints with `print()` while Robot Framework imports it or runs
+  one of its keywords is captured and logged as usual.
+- All other output to stdout, such as that of `logger.console()`, of child
+  processes, or of a thread that keeps running after a keyword returned, also
+  goes to the server's stderr: the server keeps its stdout for the messages.
+- A child process that reads the stdin it inherited sees the end of its input
+  at once: the server keeps its stdin for the messages, too.
 
 There is no server to start beforehand: `robot greet.robot` runs the suite,
 and the client starts and stops the server.
@@ -70,12 +78,6 @@ and the client starts and stops the server.
 - **POSIX only.** On Windows, the server refuses stdio mode and exits, so the
   library import fails.
 - **One client.** The server serves only the client that started it.
-- **stdout carries the messages.** What a library prints with `print()` while
-  Robot Framework imports it or runs one of its keywords is captured and logged
-  as usual. Everything else that reaches the server's stdout corrupts the
-  messages: `logger.console()`, `Log To Console`, log messages for the console,
-  the output of child processes, and output at any other time, for example from
-  a thread that keeps running after a keyword returned.
 - **stdin must stay open.** The server needs a pipe on stdin, as the client
   provides. If you start a stdio server through another command, such as
   `docker run`, keep stdin open with `docker run -i`. With `/dev/null` or a

@@ -35,14 +35,9 @@ In stdio mode, what a library, a child process or Robot Framework writes to the 
 - **WHEN** a keyword calls `print()`
 - **THEN** Robot Framework captures the text and logs it as usual, as it does over TCP
 
-### Requirement: In stdio mode keywords see an empty stdin
+### Requirement: In stdio mode a child process sees an empty stdin
 
-In stdio mode, a keyword or a child process that reads stdin SHALL see the end of its input at once, and SHALL NOT receive any part of the connection's data.
-
-#### Scenario: A keyword reads stdin
-
-- **WHEN** a keyword calls `input()`
-- **THEN** `input()` raises `EOFError`, and the next keyword call works
+In stdio mode, a child process that a keyword starts and that reads the stdin it inherited SHALL see the end of its input at once, and SHALL NOT receive any part of the connection's data.
 
 #### Scenario: A child process reads stdin
 

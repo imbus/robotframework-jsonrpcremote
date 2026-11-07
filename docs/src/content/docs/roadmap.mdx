@@ -65,6 +65,9 @@ welcome as
   [README](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/packages/jsonrpcpeer).
 - Endpoints: one definition of an interface for both sides of a connection,
   which type checkers hold both sides to.
+- A connection over the stdin and stdout of a process with
+  `open_stdio_connection()`, which keeps `print()` and child processes out of
+  it, on Linux, macOS and other POSIX systems.
 
 ## Planned
 

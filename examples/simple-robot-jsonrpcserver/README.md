@@ -12,7 +12,7 @@ It exposes a single library, `SimpleRobotLibrary`, with one keyword:
 uv run simple-robot-jsonrpcserver
 ```
 
-The server listens on `tcp://127.0.0.1:8271`.
+The server listens on `tcp://127.0.0.1:8271`. With `--stdio`, it serves one client over its stdin and stdout instead, so that the client can start it itself.
 
 ## Use it from Robot Framework
 
@@ -26,11 +26,18 @@ Echo Returns The Message
     Should Be Equal    ${result}    Hello World
 ```
 
+Over stdio, the client starts the server for the session:
+
+```robot
+*** Settings ***
+Library    JsonRpcRemote    uri=stdio:simple-robot-jsonrpcserver --stdio    library_name=SimpleRobotLibrary
+```
+
 ## What it demonstrates
 
 *   Implementing the definition `ServerEndpoint` from `robot_jsonrpcremote_protocol`, which states the messages `robot/initialize`, `robot/initialized`, `robot/set_log_level`, `robot/import_library`, `robot/run_keyword`, `robot/finalize_library`, `robot/shutdown` and `robot/exit`, with their names and types.
 *   Returning a `LibraryDefinition` (keywords, arguments, docs) on import.
 *   Sending `robot/log` notifications to the client *during* keyword execution, through the definition `ClientEndpoint`.
-*   Accepting clients over TCP via `asyncio.start_server`.
+*   Accepting clients over TCP via `asyncio.start_server`, or serving one client over stdin and stdout via `open_stdio_connection()` from `jsonrpcpeer`. That function moves stdout to stderr, so the server's `print()` calls do not get in the way of the messages.
 
 See [`src/simple_robot_jsonrpcserver/__main__.py`](src/simple_robot_jsonrpcserver/__main__.py) for the full implementation. The [protocol page](https://imbus.github.io/robotframework-jsonrpcremote/reference/protocol/) of the documentation describes the messages it handles and runs this server with a suite.

@@ -1,7 +1,8 @@
+import argparse
 import asyncio
 import itertools
 
-from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
+from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError, open_stdio_connection
 from robot_jsonrpcremote_protocol import (
     ArgumentDefinition,
     ClientEndpoint,
@@ -123,7 +124,8 @@ class SimpleRobotServerEndpoint(ServerEndpoint):
 
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    addr = writer.get_extra_info("peername")
+    # A pipe has no peer name.
+    addr = writer.get_extra_info("peername") or "stdio"
     print(f"Client connected from {addr}")
 
     peer = JsonRpcPeer(reader, writer)
@@ -146,8 +148,15 @@ async def run_server() -> None:
         await server.serve_forever()
 
 
+async def run_stdio_server() -> None:
+    # From here on, what print() writes goes to stderr, so it cannot get in the way of the messages.
+    await handle_client(*await open_stdio_connection())
+
+
 def run() -> None:
-    asyncio.run(run_server())
+    parser = argparse.ArgumentParser(description="A hand-written Robot Framework remote server.")
+    parser.add_argument("--stdio", action="store_true", help="serve one client over stdin and stdout instead of TCP")
+    asyncio.run(run_stdio_server() if parser.parse_args().stdio else run_server())
 
 
 if __name__ == "__main__":

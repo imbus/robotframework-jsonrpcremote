@@ -7,7 +7,7 @@
 Whoever copies that code also copies its problem. In stdio mode, file descriptor 1 is the protocol channel, and everything that writes to it corrupts the stream:
 
 - **The server:** a child process that inherits stdout, `logger.console()` in a library, or a thread that prints after a keyword returned. The client cannot decode the next frame, and the call hangs. Robot Framework captures only `print()` during an import or a keyword.
-- **A hand-written server:** the example server `examples/simple-robot-jsonrpcserver` prints on every message. Over stdio with the streams left in place, the connection broke from the 1 MiB test on, on Linux and on Windows.
+- **A hand-written server:** the example server `examples/simple-robot-jsonrpcserver` prints on every message. Over stdio with the streams left in place, the connection broke from the 1 MiB test on, on Linux and on Windows. Since `fix-peer-message-handling`, the client skips what it cannot read, so such text now costs the message after it: a log message, or the response that a call waits for.
 
 File descriptor 0 has a similar problem. A child process that reads stdin takes bytes of the protocol. And a child process that outlives the server keeps both pipes open, so the client sees the end of the connection only when that child ends. That took 25 seconds instead of 2 in a test on Linux.
 
@@ -38,7 +38,7 @@ _None._
 ### Modified Capabilities
 
 - `jsonrpc-peer`: new requirements for the connection over stdin and stdout: the pair, the moved streams, what it refuses and how it closes.
-- `server`: new requirements that in stdio mode only protocol messages reach the client, that keywords see an empty stdin, and that a child process does not hide the end of the server.
+- `server`: new requirements that in stdio mode only protocol messages reach the client, that a child process sees an empty stdin, and that a child process does not hide the end of the server.
 
 ## Impact
 

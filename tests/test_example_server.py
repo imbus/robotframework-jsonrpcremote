@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -29,6 +30,7 @@ from robot_jsonrpcremote_protocol import (
     InitializeResult,
     RobotJsonRpcErrorCode,
     RunKeywordParams,
+    RunKeywordResult,
     ServerEndpoint,
     SetLogLevelParams,
     ShutdownParams,
@@ -117,3 +119,50 @@ async def test_the_example_server_answers_an_unknown_keyword_with_keyword_not_fo
 
     assert raised.value.code == RobotJsonRpcErrorCode.KEYWORD_NOT_FOUND
     assert raised.value.message == "Keyword 'Gone' not found in library 'SimpleRobotLibrary'."
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
+async def test_the_example_server_serves_a_whole_session_over_stdio() -> None:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "simple_robot_jsonrpcserver",
+        "--stdio",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    assert process.stdin is not None
+    assert process.stderr is not None
+    stderr = asyncio.ensure_future(process.stderr.read())
+    peer = JsonRpcPeer(process.stdout, process.stdin)
+    peer.start()
+    try:
+        await asyncio.wait_for(peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams()), 10)
+        await peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
+        imported = await asyncio.wait_for(
+            peer.send_request_typed(
+                ImportLibraryResult, IMPORT_LIBRARY_REQUEST, ImportLibraryParams(name="SimpleRobotLibrary")
+            ),
+            10,
+        )
+        params = RunKeywordParams(library_token=imported.token, name="echo", args=["Grüße"])
+        echo = await asyncio.wait_for(peer.send_request_typed(RunKeywordResult, RUN_KEYWORD_REQUEST, params), 10)
+        await asyncio.wait_for(peer.send_request_typed(ShutdownResult, SHUTDOWN_REQUEST, ShutdownParams()), 10)
+        await peer.send_notification(EXIT_NOTIFICATION, ExitParams())
+        # The server ends the connection after robot/exit, which ends the peer, and then it exits.
+        assert await asyncio.wait_for(peer.completion, 10)
+        await asyncio.wait_for(process.wait(), 10)
+    finally:
+        await peer.stop()
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+    output = (await asyncio.wait_for(stderr, 10)).decode(errors="replace")
+
+    assert echo.result == "Grüße"
+    assert process.returncode == 0
+    # What the example prints goes to its stderr, out of the way of the messages.
+    assert "Running keyword: echo with args: ['Grüße']" in output
+    assert "Exit received, closing the connection" in output

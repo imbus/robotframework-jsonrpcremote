@@ -7,3 +7,7 @@ Library    JsonRpcRemote    uri=stdio:robot-jsonrpcremote-server --stdio --pytho
 Greet Returns A Greeting
     ${greeting}=    Greet    World
     Should Be Equal    ${greeting}    Hello, World!
+
+A Child Process Writes To Stdout
+    ${greeting}=    Greet From A Child Process    World
+    Should Be Equal    ${greeting}    Hello, World!

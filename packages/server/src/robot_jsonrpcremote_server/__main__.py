@@ -3,13 +3,10 @@ import asyncio
 import contextlib
 import logging
 import os
-import selectors
-import stat
-import sys
 import threading
 from typing import Any, Awaitable, Callable, Literal, Sequence
 
-from jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer import JsonRpcPeer, open_stdio_connection
 
 from .__version__ import __version__
 from ._endpoint import RobotServerEndpoint, end_connection
@@ -173,62 +170,13 @@ async def run_tcp_server(
             _server_stop_event.set()
 
 
-def _check_stdio_stdin() -> None:
-    """Raise unless stdin is open and the event loop can watch it for input, as stdio mode needs.
-
-    An unwatchable stdin such as /dev/null would otherwise never deliver data or EOF.
-    """
-    needs = "stdio mode needs a stdin that can be watched for input, such as a pipe"
-    if sys.stdin is None:
-        raise RuntimeError(f"{needs}, but stdin is closed")
-    try:
-        fd = sys.stdin.fileno()
-        mode = os.fstat(fd).st_mode
-    except (OSError, ValueError):
-        raise RuntimeError(f"{needs}, but stdin is closed") from None
-
-    # The type rule holds on every platform, whatever its selector would accept.
-    if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or os.isatty(fd)):
-        if stat.S_ISREG(mode):
-            found = "a regular file"
-        elif stat.S_ISCHR(mode):
-            found = "a character device such as /dev/null"
-        else:
-            found = "neither a pipe, a socket nor a terminal"
-        raise RuntimeError(f"{needs}, but stdin is {found}")
-
-    # Not every selector can watch every kind of stdin, for example a terminal on macOS.
-    with selectors.DefaultSelector() as probe:
-        try:
-            probe.register(fd, selectors.EVENT_READ)
-        except (OSError, ValueError) as error:
-            raise RuntimeError(f"{needs}, but the event loop cannot watch it: {error}") from error
-
-
-async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """Wrap stdin/stdout as an asyncio reader/writer pair (POSIX only; binary buffers)."""
-    if sys.platform == "win32":
-        raise RuntimeError("stdio mode is not supported on Windows; use --tcp instead.")
-    _check_stdio_stdin()
-
-    loop = asyncio.get_running_loop()
-
-    reader = asyncio.StreamReader()
-    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer)
-
-    write_transport, write_protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout.buffer)
-    writer = asyncio.StreamWriter(write_transport, write_protocol, reader, loop)
-
-    return reader, writer
-
-
 async def run_stdio_server(
     remote_context: RobotRemoteContext,
     verbose: bool,
     libraries: Sequence[str] | None,
     send_tracebacks: bool,
 ) -> None:
-    reader, writer = await _stdio_streams()
+    reader, writer = await open_stdio_connection()
     loop = asyncio.get_running_loop()
     logger.info("Robot JSON-RPC Remote Server serving on stdio")
 

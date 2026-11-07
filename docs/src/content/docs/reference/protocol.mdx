@@ -6,6 +6,7 @@ description: The JSON-RPC 2.0 messages between JsonRpcRemote and a server, for i
 import { Code } from '@astrojs/starlight/components';
 import server from '../../../../../examples/simple-robot-jsonrpcserver/src/simple_robot_jsonrpcserver/__main__.py?raw';
 import suite from '../../../../examples/own-server/echo.robot?raw';
+import stdioSuite from '../../../../examples/own-server/echo_stdio.robot?raw';
 
 `JsonRpcRemote` and the server talk [JSON-RPC 2.0](https://www.jsonrpc.org/specification).
 The protocol is language-agnostic by design: a server can be written in any
@@ -320,3 +321,23 @@ In a clone of the repository, `uv run simple-robot-jsonrpcserver` starts the
 example server on `127.0.0.1:8271`. The suite is in
 [`docs/examples/own-server`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/own-server)
 in the repository.
+
+### Over stdin and stdout
+
+With `--stdio`, the example server serves one client over its stdin and
+stdout, so that the client can start it with a `stdio:` URI, as
+[TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/#stdio)
+describes:
+
+<Code code={stdioSuite} lang="text" title="echo_stdio.robot" />
+
+For this, the example calls `open_stdio_connection()` from `jsonrpcpeer`. It
+returns a reader and a writer for the stdin and stdout of the process, for a
+`JsonRpcPeer`, and moves the standard streams out of the way of the messages:
+what the process or one of its child processes writes to stdout goes to
+stderr, and reading stdin gives the end of the input. So the output of the
+example's `print()` calls appears on its stderr, and so on the console of
+`robot`.
+
+A server that does not use `open_stdio_connection()`, such as one in another
+language, must write nothing but messages to its stdout over stdio.

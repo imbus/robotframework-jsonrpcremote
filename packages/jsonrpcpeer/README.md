@@ -13,6 +13,7 @@ This package provides the core communication logic used by `robotframework-jsonr
 *   **Type Safe:** Uses Python type hints for automatic parameter deserialization.
 *   **Endpoints:** One definition of an interface for both sides of a connection, which type checkers hold both sides to.
 *   **Flexible:** Works with any `asyncio.StreamReader` and `asyncio.StreamWriter`.
+*   **stdio:** `open_stdio_connection()` connects a process over its stdin and stdout, and keeps `print()` and child processes out of the connection.
 *   **Data Helpers:** Includes utilities for converting Python `dataclasses` to/from JSON.
 
 ## Protocol & Framing
@@ -142,6 +143,29 @@ See [examples/class_based_api.py](examples/class_based_api.py), [examples/class_
 This example shows how to use typed handlers and clients.
 
 See [examples/typed_server.py](examples/typed_server.py) and [examples/typed_client.py](examples/typed_client.py).
+
+### Over stdin and stdout
+
+A process that its client starts can serve that client over its own stdin and stdout. `open_stdio_connection()` returns a reader and a writer for them, as `asyncio.open_connection()` does for TCP:
+
+```python
+import asyncio
+
+from jsonrpcpeer import JsonRpcPeer, open_stdio_connection
+
+
+async def main() -> None:
+    peer = JsonRpcPeer(*await open_stdio_connection())
+    peer.attach_endpoint(WorkingCalculator())
+    await peer.run()
+
+
+asyncio.run(main())
+```
+
+The function also moves the standard streams out of the way of the messages, and there is no option to keep them. Afterwards, what the process, a C extension or a child process writes to stdout goes to stderr, and reading stdin gives the end of the input, so `print()` cannot corrupt the connection. If stdin cannot be watched for input, as a pipe or a socket can, or if stdin or stdout is closed, it raises a `RuntimeError` and leaves them as they are. It works on Linux, macOS and other POSIX systems.
+
+Closing the writer ends the connection in both directions, and `writer.wait_closed()` waits for that, as with a socket.
 
 ### Handler Signatures
 

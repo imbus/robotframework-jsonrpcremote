@@ -1,26 +1,31 @@
 """Unit tests for the server's stdio transport wiring."""
 
 import asyncio
-import contextlib
 import gc
 import os
-import re
 import sys
 import weakref
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
-from jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer import JsonRpcPeer, open_stdio_connection
 from robot_jsonrpcremote_protocol import (
+    IMPORT_LIBRARY_REQUEST,
     INITIALIZE_REQUEST,
+    INITIALIZED_NOTIFICATION,
+    RUN_KEYWORD_REQUEST,
     ClientCapabilities,
     ClientInfo,
+    ImportLibraryParams,
+    ImportLibraryResult,
+    InitializedParams,
     InitializeParams,
     InitializeResult,
+    RunKeywordParams,
+    RunKeywordResult,
 )
 from robot_jsonrpcremote_server import __main__ as server_main
 from robot_jsonrpcremote_server._runner import RobotRemoteContext
@@ -61,7 +66,7 @@ async def test_stdio_server_initializes_and_stops_runner_on_eof(
     async def fake_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         return server_streams
 
-    monkeypatch.setattr(server_main, "_stdio_streams", fake_streams)
+    monkeypatch.setattr(server_main, "open_stdio_connection", fake_streams)
 
     server_main._server_started_event.clear()
     server_main._server_stop_event.clear()
@@ -112,7 +117,7 @@ async def test_stdio_server_releases_the_peer_of_a_closed_connection(
     async def fake_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         return server_streams
 
-    monkeypatch.setattr(server_main, "_stdio_streams", fake_streams)
+    monkeypatch.setattr(server_main, "open_stdio_connection", fake_streams)
 
     server_main._server_started_event.clear()
     server_main._server_stop_event.clear()
@@ -167,7 +172,7 @@ async def test_stdio_server_gives_the_option_for_tracebacks_to_the_peer(
     async def fake_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         return server_streams
 
-    monkeypatch.setattr(server_main, "_stdio_streams", fake_streams)
+    monkeypatch.setattr(server_main, "open_stdio_connection", fake_streams)
 
     server_main._server_started_event.clear()
     server_main._server_stop_event.clear()
@@ -205,7 +210,7 @@ async def test_stdio_server_stops_via_stop_server(
     async def fake_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         return server_streams
 
-    monkeypatch.setattr(server_main, "_stdio_streams", fake_streams)
+    monkeypatch.setattr(server_main, "open_stdio_connection", fake_streams)
 
     server_main._server_started_event.clear()
     server_main._server_stop_event.clear()
@@ -231,58 +236,16 @@ async def test_stdio_server_stops_via_stop_server(
     client_writer.close()
 
 
-async def test_stdio_streams_raises_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stdio_connection_raises_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.platform", "win32")
     with pytest.raises(RuntimeError, match="not supported on Windows"):
-        await server_main._stdio_streams()
+        await open_stdio_connection()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="exercises the real Windows behavior; runs only on Windows")
-async def test_stdio_streams_raises_on_windows_native() -> None:
+async def test_stdio_connection_raises_on_windows_native() -> None:
     with pytest.raises(RuntimeError, match="not supported on Windows"):
-        await server_main._stdio_streams()
-
-
-_POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
-_STDIN_ERROR = "stdio mode needs a stdin that can be watched for input, such as a pipe"
-
-
-@_POSIX_ONLY
-@pytest.mark.parametrize("stdin", ["/dev/null", "regular file", "closed"])
-async def test_stdio_streams_reject_a_stdin_that_cannot_be_watched(
-    stdin: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    with contextlib.ExitStack() as files:
-        if stdin == "/dev/null":
-            monkeypatch.setattr(sys, "stdin", files.enter_context(open(os.devnull)))
-        elif stdin == "regular file":
-            path = tmp_path / "stdin.txt"
-            path.write_text("")
-            monkeypatch.setattr(sys, "stdin", files.enter_context(open(path)))
-        else:
-            monkeypatch.setattr(sys, "stdin", None)
-
-        with pytest.raises(RuntimeError, match=re.escape(_STDIN_ERROR)):
-            await server_main._stdio_streams()
-
-
-@_POSIX_ONLY
-async def test_stdio_streams_connect_a_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
-    stdin_read, stdin_write = os.pipe()
-    stdout_read, stdout_write = os.pipe()
-    # The transports close these files.
-    monkeypatch.setattr(sys, "stdin", open(stdin_read))
-    monkeypatch.setattr(sys, "stdout", open(stdout_write, "w"))
-
-    reader, writer = await server_main._stdio_streams()
-
-    # End the input, so the read transport closes itself at EOF.
-    os.close(stdin_write)
-    assert await asyncio.wait_for(reader.read(), 2) == b""
-    # Not wait_closed(): the pipe writer's protocol does not support it.
-    writer.close()
-    await asyncio.sleep(0)
-    os.close(stdout_read)
+        await open_stdio_connection()
 
 
 async def test_run_server_async_dispatches_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -306,3 +269,72 @@ async def test_run_server_async_dispatches_stdio(monkeypatch: pytest.MonkeyPatch
     )
 
     assert called["args"] == (remote_context, True, ["Lib"], True)
+
+
+_ATESTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "atests")
+
+
+async def _stderr_of_a_stdio_server(keyword: str, text: str) -> str:
+    """Run the real server in stdio mode with ``StdioOutputLib``, call ``keyword`` and then Echo; return its stderr."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "robot_jsonrpcremote_server",
+        "--stdio",
+        "--pythonpath",
+        _ATESTS,
+        "StdioOutputLib",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    assert process.stdin is not None
+    assert process.stderr is not None
+    stderr = asyncio.ensure_future(process.stderr.read())
+    peer = JsonRpcPeer(process.stdout, process.stdin)
+    peer.start()
+    try:
+        await asyncio.wait_for(peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams()), 20)
+        await peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
+        imported = await asyncio.wait_for(
+            peer.send_request_typed(
+                ImportLibraryResult, IMPORT_LIBRARY_REQUEST, ImportLibraryParams(name="StdioOutputLib")
+            ),
+            20,
+        )
+
+        async def call(name: str, *args: str) -> RunKeywordResult:
+            params = RunKeywordParams(library_token=imported.token, name=name, args=list(args))
+            return await asyncio.wait_for(peer.send_request_typed(RunKeywordResult, RUN_KEYWORD_REQUEST, params), 20)
+
+        await call(keyword, text)
+        # Long enough for a thread that prints after the keyword returned.
+        await asyncio.sleep(0.3)
+        echo = await call("Echo", "still connected")
+    finally:
+        # The end of its input stops the server.
+        await peer.stop()
+        try:
+            await asyncio.wait_for(process.wait(), 20)
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+    assert echo.result == "echo: still connected"
+    return (await asyncio.wait_for(stderr, 20)).decode(errors="replace")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stdio transport is POSIX-only")
+@pytest.mark.parametrize(
+    ("keyword", "text"),
+    [
+        ("Run Child That Prints", "from-child-process"),
+        ("Run Shell Command That Prints", "from-shell-command"),
+        ("Write To File Descriptor One", "from-file-descriptor-one"),
+        ("Write To The Console", "from-logger-console"),
+        ("Print From A Thread Later", "from-thread"),
+    ],
+)
+async def test_output_of_a_keyword_to_stdout_appears_on_the_stderr_of_the_server(keyword: str, text: str) -> None:
+    assert text in await _stderr_of_a_stdio_server(keyword, text)

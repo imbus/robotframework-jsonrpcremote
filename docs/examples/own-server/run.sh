@@ -14,3 +14,6 @@ for _ in $(seq 50); do
 done
 
 robot echo.robot
+
+# The same server over stdio: the client starts it for the suite.
+robot echo_stdio.robot

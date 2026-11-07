@@ -545,8 +545,8 @@ class JsonRpcPeer:
             self._closing = asyncio.ensure_future(_wait_closed(self.writer))
             self._closing.add_done_callback(_retrieve_exception)
             if wait_for_close:
-                # Some writers (e.g. the stdio stdout pipe) raise from wait_closed(); the
-                # completion future is already set, so ignore cleanup errors here.
+                # Some writers raise from wait_closed(); the completion future is
+                # already set, so ignore cleanup errors here.
                 with contextlib.suppress(Exception):
                     await asyncio.shield(self._closing)
 
