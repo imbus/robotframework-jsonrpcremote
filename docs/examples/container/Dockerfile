@@ -1,6 +1,6 @@
 FROM python:3.13-slim
 
-# What pip installs: the server from PyPI by default. The CI of the documentation
+# What pip installs: the server from PyPI by default. The test of the examples
 # passes the wheels of the current code instead, from the build context.
 ARG PACKAGES=robotframework-jsonrpcremote-server
 RUN --mount=type=bind,target=/context pip install --no-cache-dir ${PACKAGES}

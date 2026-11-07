@@ -37,7 +37,7 @@ English is the project language. Write everything that goes into the repository 
 	- Add or change a Robot test when the changed behavior can be observed from Robot Framework: keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files. When such a change adds none, say why. Behavior that only shows inside a package is covered by unit tests; the Robot suites still run as a regression check.
 	- Run each new test against the code without the part of the change it covers and see it fail there; failing against the unchanged code alone does not show which part a test covers.
 - Documentation site:
-	- Owning path: `docs/`, with the pages in `docs/src/content/docs/` and their runnable examples in `docs/examples/<name>/`, each with a `run.sh` that CI runs.
+	- Owning path: `docs/`, with the pages in `docs/src/content/docs/` and their runnable examples in `docs/examples/<name>/`, which `tests/test_docs_examples.py` runs on Linux, macOS and Windows.
 	- When a change has user-visible behavior, update the pages and their runnable examples in the same change; review the implementation against them. The overview pages, that is the home page, the page Why JsonRpcRemote and the README, describe JsonRpcRemote as it is meant to be; guides and references describe what works today, without listing gaps or giving workarounds; the page Status and roadmap (`docs/src/content/docs/roadmap.mdx`) says what is available and what is planned. Every change that implements a feature updates the documentation, the roadmap included.
 - Generated or ignored outputs (do not commit by hand):
 	- Build artifacts in `dist/`, Robot output in `results/`, and the various caches are gitignored.
@@ -64,8 +64,8 @@ All commands run inside the project environment via `uv run` (or after activatin
 	- Build wheels and sdists for all packages into `dist/`.
 - `npm ci` and `npm run build` in `docs/`
 	- Install and build the documentation site; the build fails on broken internal links. `npm run dev` serves it locally.
-- `uv run --all-packages bash docs/examples/<name>/run.sh`
-	- Run one example of the site against the current code.
+- `uv run --all-packages pytest tests/test_docs_examples.py`
+	- Run the examples of the site against the current code, with the commands of their pages; the container example runs only where docker can run Linux containers.
 
 ## Commits and Pull Requests
 
