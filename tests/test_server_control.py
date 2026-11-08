@@ -57,13 +57,19 @@ def test_keyword_returns_only_when_the_pipe_is_gone(
     with FakeServer(pipe=f"fake-server-{secrets.token_hex(8)}") as server:
         control._pipe = server.pipe
         control._process = _ended_process()
-        closer = threading.Timer(0.3, server.stop)
+        stopping = threading.Event()
 
-        started = time.monotonic()
+        def stop() -> None:
+            stopping.set()
+            server.stop()
+
+        closer = threading.Timer(0.3, stop)
         closer.start()
         try:
             getattr(control, keyword)()
-            assert time.monotonic() - started >= 0.3
+            # The order and not the time: a pipe is gone the moment its server stops, and the clock of Python 3.12
+            # on Windows advances in steps of 15.6 ms, so an elapsed time can come out shorter than the wait.
+            assert stopping.is_set()
         finally:
             closer.join()
 
