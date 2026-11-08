@@ -88,12 +88,22 @@ logging.getLogger("library").info("shown")
 # --- run() rejects unsupported modes cleanly -------------------------------
 
 
-@pytest.mark.parametrize("flag", ["--pipe"])
-def test_run_rejects_unsupported_mode(flag: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sys, "argv", ["robot-jsonrpcremote-server", flag, "MyLib"])
+@pytest.mark.parametrize("source", ["--pipe", "ROBOT_JSONRPC_MODE"])
+def test_run_rejects_unsupported_mode(
+    source: str, server_environment: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    if source == "ROBOT_JSONRPC_MODE":
+        server_environment.setenv("ROBOT_JSONRPC_MODE", "pipe")
+        argv = ["robot-jsonrpcremote-server", "MyLib"]
+    else:
+        argv = ["robot-jsonrpcremote-server", source, "MyLib"]
+    server_environment.setattr(sys, "argv", argv)
+
     with pytest.raises(SystemExit) as excinfo:
         run()
+
     assert excinfo.value.code == 2
+    assert "not supported yet" in capsys.readouterr().err
 
 
 # --- run() reports a failed start ------------------------------------------
@@ -150,3 +160,78 @@ def test_stdio_server_with_a_closed_pipe_on_stdin_ends_normally() -> None:
 
     assert result.returncode == 0
     assert "Server failed to start" not in result.stderr
+
+
+# --- values from the environment --------------------------------------------
+
+
+def _environment(**values: str) -> dict[str, str]:
+    """``os.environ`` without the variables of the server, with ``values`` added."""
+    environment = {name: value for name, value in os.environ.items() if not name.startswith("ROBOT_JSONRPC_")}
+    environment.update(values)
+    return environment
+
+
+@pytest.fixture
+def server_environment(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    """A monkeypatch without the variables of the server, for parsers built in this process."""
+    for name in list(os.environ):
+        if name.startswith("ROBOT_JSONRPC_"):
+            monkeypatch.delenv(name)
+    return monkeypatch
+
+
+def test_invalid_port_from_the_environment_is_a_usage_error() -> None:
+    result, _ = _run_server("SomeLib", env=_environment(ROBOT_JSONRPC_PORT="abc"))
+
+    assert result.returncode == 2
+    assert "--port" in result.stderr
+    assert "'abc'" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "up and running" not in result.stderr
+
+
+def test_port_from_the_environment_is_a_number(server_environment: pytest.MonkeyPatch) -> None:
+    assert build_arg_parser().parse_args(["Lib"]).port == 8271
+
+    server_environment.setenv("ROBOT_JSONRPC_PORT", "9001")
+
+    assert build_arg_parser().parse_args(["Lib"]).port == 9001
+
+
+def test_command_line_takes_precedence_over_an_invalid_environment(server_environment: pytest.MonkeyPatch) -> None:
+    server_environment.setenv("ROBOT_JSONRPC_PORT", "abc")
+    server_environment.setenv("ROBOT_JSONRPC_MODE", "tpc")
+
+    args = build_arg_parser().parse_args(["--port", "9000", "--stdio", "Lib"])
+
+    assert args.port == 9000
+    assert args.mode == "stdio"
+
+
+def test_unknown_mode_from_the_environment_is_a_usage_error() -> None:
+    result, _ = _run_server("SomeLib", env=_environment(ROBOT_JSONRPC_MODE="tpc"))
+
+    assert result.returncode == 2
+    for text in ("--mode", "'tpc'", "tcp", "stdio"):
+        assert text in result.stderr
+    assert "not supported yet" not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def _error_line(capsys: pytest.CaptureFixture[str], *args: str) -> str:
+    """The error line that parsing ``args`` writes."""
+    with pytest.raises(SystemExit):
+        build_arg_parser().parse_args(list(args))
+    return capsys.readouterr().err.splitlines()[-1]
+
+
+def test_unknown_mode_gives_the_same_error_from_both_sources(
+    server_environment: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from_command_line = _error_line(capsys, "--mode", "tpc", "Lib")
+    server_environment.setenv("ROBOT_JSONRPC_MODE", "tpc")
+    from_environment = _error_line(capsys, "Lib")
+
+    assert "invalid choice: 'tpc'" in from_command_line
+    assert from_environment == from_command_line

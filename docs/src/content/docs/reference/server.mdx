@@ -34,6 +34,9 @@ them, clients may import any library that the server can import; see
 ## Environment variables
 
 An option on the command line takes precedence over its environment variable.
+A value that the option does not take, such as a port that is not a number or
+an unknown mode, ends the server with the usage error of the option and exit
+code 2, as on the command line.
 
 | Variable                  | Sets the default of |
 | ------------------------- | ------------------- |

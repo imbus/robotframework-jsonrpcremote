@@ -15,6 +15,9 @@ from ._signals import patch_robot_signal_handling
 
 DEFAULT_PORT = 8271
 
+# The values of --mode; "pipe" is reserved for a pipe mode.
+_MODES = ("tcp", "stdio", "pipe")
+
 logger = logging.getLogger("robot_jsonrpcremote_server")
 
 _server: asyncio.AbstractServer | None = None
@@ -40,6 +43,13 @@ def _parse_addresses(value: str | None) -> list[str] | None:
         return None
     items = [part.strip() for part in value.split(",") if part.strip()]
     return items or None
+
+
+def _mode(value: str) -> str:
+    """The type of --mode: argparse checks its choices only on the command line, but calls this for the default, too."""
+    if value not in _MODES:
+        raise argparse.ArgumentTypeError(f"invalid choice: {value!r} (choose from {', '.join(_MODES)})")
+    return value
 
 
 def configure_logging(verbose: bool) -> None:
@@ -296,7 +306,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     default_mode = os.environ.get("ROBOT_JSONRPC_MODE", "tcp")
     mode_group.add_argument(
         "--mode",
-        choices=["tcp", "stdio", "pipe"],
+        type=_mode,
+        choices=_MODES,
         default=default_mode,
         help=f"Server mode (default: {default_mode} or ROBOT_JSONRPC_MODE)",
     )
@@ -338,7 +349,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     tcp_group.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("ROBOT_JSONRPC_PORT", DEFAULT_PORT)),
+        # A string, which argparse converts only when --port is not given, with the error of --port for a bad value.
+        default=os.environ.get("ROBOT_JSONRPC_PORT", str(DEFAULT_PORT)),
         help=f"Port number to bind the server (default: {DEFAULT_PORT} or ROBOT_JSONRPC_PORT)",
     )
 
@@ -393,7 +405,7 @@ def run() -> None:
     configure_logging(args.verbose)
     logger.debug("Verbose mode is enabled.")
 
-    if args.mode not in ("tcp", "stdio"):
+    if args.mode == "pipe":
         parser.error(
             f"server mode '{args.mode}' is not supported yet; only 'tcp' and 'stdio' are available "
             "('--pipe' is planned)."
