@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any
 
-from jsonrpcpeer import JsonRpcPeer
+from jsonrpcpeer import JsonRpcPeer, start_pipe_server
 from robot_jsonrpcremote_protocol import (
     EXIT_NOTIFICATION,
     FINALIZE_LIBRARY_REQUEST,
@@ -116,15 +116,17 @@ class FakeConnection:
 
 
 class FakeServer:
-    """A scriptable JSON-RPC server speaking the robot protocol, on 127.0.0.1.
+    """A scriptable JSON-RPC server speaking the robot protocol, on 127.0.0.1, or on the pipe ``pipe``.
 
     Use it as a context manager. ``stop()`` closes the listener and every connection;
     ``start()`` listens again on the same port. ``close_connections()`` closes only the
     connections and keeps listening.
     """
 
-    def __init__(self, keywords: Iterable[str] = ("Echo",)) -> None:
+    def __init__(self, keywords: Iterable[str] = ("Echo",), pipe: str | None = None) -> None:
         self.port = 0
+        # The name of the pipe to listen on instead of a TCP port.
+        self.pipe = pipe
         self.keywords = list(keywords)
         # The name of the library in the default answer to an import; `None` names it as the import asked for it.
         self.library_name: str | None = None
@@ -139,7 +141,12 @@ class FakeServer:
         self._clients: set[asyncio.Task[None]] = set()
         # A selector loop on every platform: Windows' default proactor loop shuts a socket down before
         # closing it, so the client would see a clean close instead of the reset of close_connections().
-        self._loop = asyncio.SelectorEventLoop()
+        # Named pipes need the proactor loop, though.
+        self._loop: asyncio.AbstractEventLoop
+        if sys.platform == "win32" and pipe is not None:
+            self._loop = asyncio.ProactorEventLoop()
+        else:
+            self._loop = asyncio.SelectorEventLoop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="FakeServer", daemon=True)
         self._thread.start()
 
@@ -157,6 +164,8 @@ class FakeServer:
 
     @property
     def uri(self) -> str:
+        if self.pipe is not None:
+            return f"pipe://{self.pipe}"
         return f"tcp://127.0.0.1:{self.port}"
 
     def script(self, method: str, *answers: Any) -> None:
@@ -189,8 +198,12 @@ class FakeServer:
         asyncio.run_coroutine_threadsafe(coro, self._loop).result(10)
 
     async def _start(self) -> None:
-        self._server = await asyncio.start_server(self._on_client, "127.0.0.1", self.port)
-        self.port = self._server.sockets[0].getsockname()[1]
+        if self.pipe is not None:
+            self._server = await start_pipe_server(self._on_client, self.pipe)
+            return
+        server = await asyncio.start_server(self._on_client, "127.0.0.1", self.port)
+        self._server = server
+        self.port = server.sockets[0].getsockname()[1]
 
     async def _stop(self) -> None:
         server, self._server = self._server, None

@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import itertools
 
-from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError, open_stdio_connection
+from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError, open_pipe_connection, open_stdio_connection
 from robot_jsonrpcremote_protocol import (
     ArgumentDefinition,
     ClientEndpoint,
@@ -124,8 +124,8 @@ class SimpleRobotServerEndpoint(ServerEndpoint):
 
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    # A pipe has no peer name.
-    addr = writer.get_extra_info("peername") or "stdio"
+    # The pipes of stdio and a named pipe on Windows have no peer name.
+    addr = writer.get_extra_info("peername") or "a pipe"
     print(f"Client connected from {addr}")
 
     peer = JsonRpcPeer(reader, writer)
@@ -153,10 +153,29 @@ async def run_stdio_server() -> None:
     await handle_client(*await open_stdio_connection())
 
 
+async def run_pipe_client(address: str) -> None:
+    # The client that started this server listens on the pipe: serve it over that one connection.
+    await handle_client(*await open_pipe_connection(address))
+
+
 def run() -> None:
     parser = argparse.ArgumentParser(description="A hand-written Robot Framework remote server.")
-    parser.add_argument("--stdio", action="store_true", help="serve one client over stdin and stdout instead of TCP")
-    asyncio.run(run_stdio_server() if parser.parse_args().stdio else run_server())
+    transport = parser.add_mutually_exclusive_group()
+    transport.add_argument("--stdio", action="store_true", help="serve one client over stdin and stdout instead of TCP")
+    transport.add_argument(
+        "--pipe",
+        metavar="ADDRESS",
+        help="connect to the pipe ADDRESS and serve the client that listens there, instead of TCP; "
+        "a client that starts the server for a pipe: URI passes --pipe=ADDRESS",
+    )
+    args = parser.parse_args()
+    if args.pipe is not None:
+        serving = run_pipe_client(args.pipe)
+    elif args.stdio:
+        serving = run_stdio_server()
+    else:
+        serving = run_server()
+    asyncio.run(serving)
 
 
 if __name__ == "__main__":

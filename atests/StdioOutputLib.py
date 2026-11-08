@@ -12,6 +12,9 @@ CHILD_PID_FILE = os.path.join(tempfile.gettempdir(), "jsonrpcremote-stdio-output
 
 
 class StdioOutputLib:
+    def __init__(self, child_pid_file: str = CHILD_PID_FILE) -> None:
+        self._child_pid_file = child_pid_file
+
     def echo(self, message: str) -> str:
         return f"echo: {message}"
 
@@ -39,9 +42,9 @@ class StdioOutputLib:
         return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30).stdout.strip()
 
     def start_child_that_keeps_running(self, seconds: int) -> None:
-        """Starts a child process that inherits stdin and stdout, and writes its PID to ``CHILD_PID_FILE``."""
+        """Starts a child process that inherits stdin and stdout, and writes its PID to the file of the library."""
         child = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep({seconds})"])
-        with open(CHILD_PID_FILE, "w", encoding="utf-8") as file:
+        with open(self._child_pid_file, "w", encoding="utf-8") as file:
             file.write(str(child.pid))
 
     def exit_server(self, exit_code: int) -> None:

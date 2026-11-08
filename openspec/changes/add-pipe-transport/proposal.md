@@ -54,11 +54,11 @@ _None._
 - **Server:** the modes, options and two transport functions in `packages/server/src/robot_jsonrpcremote_server/__main__.py`, and `packages/server/README.md`.
 - **Example:** `examples/simple-robot-jsonrpcserver/src/simple_robot_jsonrpcserver/__main__.py` and its README.
 - **Tests:**
-  - New: `tests/test_pipe_connection.py`, `tests/minimal_pipe_server.py`, `tests/test_server_pipe.py`, `atests/pipe_vars.py` and `atests/pipe_*.robot`.
-  - Changed: `tests/test_client_connection.py`, `tests/test_client_connect_retry.py`, `tests/fake_server.py`, `tests/test_server_cli.py`, `tests/test_example_server.py`, `tests/test_docs_examples.py`, `atests/node_keywords.js` and `atests/ServerControl.py`.
+  - New: `tests/test_pipe_connection.py`, `tests/minimal_pipe_server.py`, `tests/test_server_pipe.py`, `tests/server_over_pipes.py`, `atests/pipe_vars.py` and `atests/pipe_*.robot`.
+  - Changed: `tests/test_client_connection.py`, `tests/test_client_connect_retry.py`, `tests/fake_server.py`, `tests/minimal_stdio_server.py`, `tests/test_server_cli.py`, `tests/test_server_control.py`, `tests/test_example_server.py`, `tests/test_docs_examples.py`, `atests/node_keywords.js`, `atests/ServerControl.py` and `atests/StdioOutputLib.py`.
 - **Docs:**
   - `docs/src/content/docs/guides/tcp-and-stdio.mdx` becomes `guides/transports.mdx`.
-  - Changed: `reference/library.mdx`, `reference/server.mdx`, `reference/protocol.mdx`, `roadmap.mdx`, `index.mdx`, `why-jsonrpcremote.mdx`, `docs/astro.config.mjs` and `README.md`.
+  - Changed: `reference/library.mdx`, `reference/server.mdx`, `reference/protocol.mdx`, `guides/container.mdx`, `guides/sessions.mdx`, `guides/lost-connections.mdx`, `roadmap.mdx`, `index.mdx`, `why-jsonrpcremote.mdx`, `docs/astro.config.mjs` and `README.md`.
   - New: `docs/examples/pipe/`, `docs/examples/pipe-server/` and `docs/examples/own-server/echo_pipe.robot`.
 - **`tcp://` and `stdio:`:** unchanged, except that `stdio://` is refused.
 - **Order:** after `add-windows-stdio`, whose event loop setup and window rule this change reuses. Independent of `clarify-global-library-scope`.

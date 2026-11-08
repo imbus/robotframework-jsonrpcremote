@@ -26,8 +26,8 @@ names the valid scopes.
 The first session starts when Robot Framework imports `JsonRpcRemote`: the
 client needs it to learn the keywords of the remote library. After a session
 ended, the next keyword call starts a new one. A new session connects again,
-over stdio with a new server process, and the server imports the remote library
-again, with the same arguments.
+with a new server process for a `pipe:` or `stdio:` URI with a command, and the
+server imports the remote library again, with the same arguments.
 
 ## What a new session keeps
 
@@ -42,9 +42,10 @@ on its scope in Robot Framework:
   with the same arguments uses the same instance, so its state outlives the
   session.
 
-Over TCP, all sessions run in the same server process, so state outside the
-instance, such as variables of a module, is shared in any case. Over stdio,
-each session has a server process of its own.
+Over TCP and `pipe://`, all sessions run in the same server process, so state
+outside the instance, such as variables of a module, is shared in any case.
+With a `pipe:` or `stdio:` URI with a command, each session has a server
+process of its own.
 
 ## Example: a session per test
 

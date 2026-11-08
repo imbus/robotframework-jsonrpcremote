@@ -1,6 +1,10 @@
-"""stdio on Windows: I/O completion ports for an overlapped pipe, a thread of its own for a synchronous one.
+"""Windows: stdio and named pipes.
 
-Only ``stdio.py`` imports this module, and only on Windows.
+- stdio: I/O completion ports for an overlapped pipe, a thread of its own for a synchronous one.
+- Named pipes: the functions of the proactor event loop, ``create_pipe_connection()`` and
+  ``start_serving_pipe()``, which asyncio does not document.
+
+Only ``stdio.py`` and ``pipes.py`` import this module, and only on Windows.
 """
 
 import _winapi
@@ -12,10 +16,11 @@ import queue
 import subprocess
 import sys
 import threading
-from asyncio import windows_utils
+from asyncio import windows_events, windows_utils
 from collections.abc import Sequence
 from typing import Any
 
+from .pipes import _ClientConnectedCallback, _in_use
 from .stdio import _WritePipeProtocol
 
 assert sys.platform == "win32"
@@ -372,6 +377,16 @@ def has_console() -> bool:
     return bool(_kernel32.GetConsoleCP())
 
 
+def without_window(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The options to start a process with: ``CREATE_NO_WINDOW`` if this process has no console and they set no flags.
+
+    Without a console to share, a console program would open a window of its own.
+    """
+    if "creationflags" not in kwargs and not has_console():
+        return {**kwargs, "creationflags": subprocess.CREATE_NO_WINDOW}
+    return kwargs
+
+
 async def create_stdio_subprocess(
     argv: Sequence[str], kwargs: dict[str, Any]
 ) -> tuple[asyncio.subprocess.Process, asyncio.StreamReader, asyncio.StreamWriter]:
@@ -380,9 +395,7 @@ async def create_stdio_subprocess(
     The pipes are duplex, because the proactor's write transport also reads from its pipe, to notice that the
     other end has closed it.
     """
-    if "creationflags" not in kwargs and not has_console():
-        # Without a console to share, a console program would open a window of its own.
-        kwargs = {**kwargs, "creationflags": subprocess.CREATE_NO_WINDOW}
+    kwargs = without_window(kwargs)
     child_stdin, parent_stdin = windows_utils.pipe(overlapped=(True, True), duplex=True)
     parent_stdout, child_stdout = windows_utils.pipe(overlapped=(True, True), duplex=True)
     # The descriptors own the child's ends, and closing them closes these.
@@ -400,3 +413,74 @@ async def create_stdio_subprocess(
     # When the process ends, the write side notices it first; the reader still gets the rest of the output.
     reader, writer = await connect(parent_stdout, parent_stdin, half_close=True)
     return process, reader, writer
+
+
+# Named pipes
+
+
+def _proactor() -> asyncio.ProactorEventLoop:
+    loop = asyncio.get_running_loop()
+    if not isinstance(loop, asyncio.ProactorEventLoop):
+        raise RuntimeError("named pipes on Windows need the proactor event loop")
+    return loop
+
+
+async def open_pipe_connection(address: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """Connect to the named pipe ``address``, with I/O completion ports in both directions over one handle."""
+    loop = _proactor()
+    reader = asyncio.StreamReader()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    transport, _ = await loop.create_pipe_connection(lambda: protocol, address)
+    return reader, asyncio.StreamWriter(transport, protocol, reader, loop)
+
+
+class _NamedPipeServer(asyncio.AbstractServer):
+    """The server of ``start_serving_pipe()``, which is no ``asyncio.AbstractServer`` itself.
+
+    ``wait_closed()`` returns once the server is closed. It does not wait for the connections, as the
+    server of asyncio does, because the proactor does not keep track of them.
+    """
+
+    def __init__(self, loop: asyncio.ProactorEventLoop, server: windows_events.PipeServer) -> None:
+        self._loop = loop
+        self._server = server
+        self._closed: asyncio.Future[None] = loop.create_future()
+
+    def close(self) -> None:
+        # Closes the instances that wait for a client; the accepted connections stay open.
+        self._server.close()
+        if not self._closed.done():
+            self._closed.set_result(None)
+
+    def get_loop(self) -> asyncio.AbstractEventLoop:
+        return self._loop
+
+    def is_serving(self) -> bool:
+        return not self._server.closed()
+
+    async def start_serving(self) -> None:
+        """Nothing to do: the server accepts connections from its start."""
+
+    async def serve_forever(self) -> None:
+        try:
+            await asyncio.shield(self._closed)
+        finally:
+            self.close()
+
+    async def wait_closed(self) -> None:
+        await asyncio.shield(self._closed)
+
+
+async def start_pipe_server(client_connected_cb: _ClientConnectedCallback, address: str) -> asyncio.AbstractServer:
+    """Listen on the named pipe ``address`` with the default security descriptor, as asyncio creates it."""
+    loop = _proactor()
+
+    def make_protocol() -> asyncio.StreamReaderProtocol:
+        return asyncio.StreamReaderProtocol(asyncio.StreamReader(), client_connected_cb)
+
+    try:
+        servers = await loop.start_serving_pipe(make_protocol, address)
+    except PermissionError:
+        # The first instance has FILE_FLAG_FIRST_PIPE_INSTANCE, which fails if another server has the name.
+        raise _in_use(address) from None
+    return _NamedPipeServer(loop, servers[0])

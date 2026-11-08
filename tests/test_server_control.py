@@ -1,6 +1,7 @@
 """Unit tests for atests/ServerControl.py, the library that starts and stops the real server in the Robot suites."""
 
 import importlib.util
+import secrets
 import socket
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fake_server import FakeServer
 
 
 def _server_control() -> Any:
@@ -44,6 +46,26 @@ def test_keyword_returns_only_when_the_port_is_closed(keyword: str) -> None:
         assert time.monotonic() - started >= 0.3
     finally:
         closer.join()
+
+
+@pytest.mark.parametrize("keyword", ["stop_jsonrpc_server", "kill_jsonrpc_server", "wait_for_jsonrpc_server_to_exit"])
+def test_keyword_returns_only_when_the_pipe_is_gone(
+    keyword: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    control = _server_control()
+    with FakeServer(pipe=f"fake-server-{secrets.token_hex(8)}") as server:
+        control._pipe = server.pipe
+        control._process = _ended_process()
+        closer = threading.Timer(0.3, server.stop)
+
+        started = time.monotonic()
+        closer.start()
+        try:
+            getattr(control, keyword)()
+            assert time.monotonic() - started >= 0.3
+        finally:
+            closer.join()
 
 
 def test_port_that_stays_open_is_an_error() -> None:

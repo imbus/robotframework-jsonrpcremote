@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from simple_robot_jsonrpcserver.__main__ import SimpleRobotServerEndpoint, handle_client
 
-from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError
+from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError, create_pipe_subprocess
 from robot_jsonrpcremote_protocol import (
     EXIT_NOTIFICATION,
     FINALIZE_LIBRARY_REQUEST,
@@ -167,3 +167,49 @@ async def test_the_example_server_serves_a_whole_session_over_stdio() -> None:
     # What the example prints goes to its stderr, out of the way of the messages.
     assert "Running keyword: echo with args: ['Grüße']" in output
     assert "Exit received, closing the connection" in output
+
+
+async def test_the_example_server_serves_a_whole_session_over_a_pipe() -> None:
+    # As the client starts it for a pipe: URI, with --pipe=<address> as its last argument.
+    process, reader, writer = await asyncio.wait_for(
+        create_pipe_subprocess(
+            sys.executable,
+            "-m",
+            "simple_robot_jsonrpcserver",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+        ),
+        10,
+    )
+    assert process.stdout is not None
+    output = asyncio.ensure_future(process.stdout.read())
+    peer = JsonRpcPeer(reader, writer)
+    peer.start()
+    try:
+        await asyncio.wait_for(peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams()), 10)
+        await peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
+        imported = await asyncio.wait_for(
+            peer.send_request_typed(
+                ImportLibraryResult, IMPORT_LIBRARY_REQUEST, ImportLibraryParams(name="SimpleRobotLibrary")
+            ),
+            10,
+        )
+        params = RunKeywordParams(library_token=imported.token, name="echo", args=["Grüße"])
+        echo = await asyncio.wait_for(peer.send_request_typed(RunKeywordResult, RUN_KEYWORD_REQUEST, params), 10)
+        await asyncio.wait_for(peer.send_request_typed(ShutdownResult, SHUTDOWN_REQUEST, ShutdownParams()), 10)
+        await peer.send_notification(EXIT_NOTIFICATION, ExitParams())
+        # The server ends the connection after robot/exit, which ends the peer, and then it exits.
+        assert await asyncio.wait_for(peer.completion, 10)
+        await asyncio.wait_for(process.wait(), 10)
+    finally:
+        await peer.stop()
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+    # The example prints in the encoding of its locale, such as cp1252 on Windows.
+    printed = (await asyncio.wait_for(output, 10)).decode(locale.getpreferredencoding(False), errors="replace")
+
+    assert echo.result == "Grüße"
+    assert process.returncode == 0
+    # Over a pipe, stdout stays the server's own.
+    assert "Running keyword: echo with args: ['Grüße']" in printed

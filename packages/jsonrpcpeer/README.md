@@ -14,6 +14,7 @@ This package provides the core communication logic used by `robotframework-jsonr
 *   **Endpoints:** One definition of an interface for both sides of a connection, which type checkers hold both sides to.
 *   **Flexible:** Works with any `asyncio.StreamReader` and `asyncio.StreamWriter`.
 *   **stdio:** `open_stdio_connection()` connects a process over its stdin and stdout, and keeps `print()` and child processes out of the connection; `create_stdio_subprocess()` starts a process with such a connection. Both work on Linux, macOS and Windows.
+*   **Pipes:** `start_pipe_server()` and `open_pipe_connection()` listen on and connect to a named pipe on Windows and a Unix domain socket elsewhere; `create_pipe_subprocess()` starts a process with a connection over a pipe of its own, as an editor starts a language server.
 *   **Data Helpers:** Includes utilities for converting Python `dataclasses` to/from JSON.
 
 ## Protocol & Framing
@@ -190,6 +191,86 @@ async def add_over_stdio() -> float:
 ```
 
 On Windows, the process gets overlapped pipes, which a Python process can use without threads, and a console program gets no window of its own if the caller has no console. Closing the writer ends the input of the process; the reader ends when the process has closed its stdout.
+
+### Over a pipe
+
+A pipe connects processes on one machine: a named pipe on Windows, a Unix domain socket elsewhere. `start_pipe_server()` and `open_pipe_connection()` work as `asyncio.start_unix_server()` and `asyncio.open_unix_connection()` do, on every platform:
+
+```python
+import asyncio
+
+from jsonrpcpeer import JsonRpcPeer, open_pipe_connection, start_pipe_server
+
+
+async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    server_peer = JsonRpcPeer(reader, writer)
+    server_peer.attach_endpoint(WorkingCalculator())
+    await server_peer.run()
+
+
+async def main() -> None:
+    server = await start_pipe_server(serve, "calculator")
+    async with server:
+        await server.serve_forever()
+
+
+async def add_over_a_pipe() -> float:
+    client_peer = JsonRpcPeer(*await open_pipe_connection("calculator"))
+    client_peer.attach_endpoint(PrintingLog())
+    client_peer.start()
+    result = await client_peer.remote(Calculator).add(AddParams(a=10, b=20))
+    await client_peer.stop()
+    return result.result
+```
+
+*   **Names:** on Windows, a bare name such as `calculator` means the named pipe `\\.\pipe\calculator`, and a name that starts with `\\` or `//` is used as written. Elsewhere, the name is the path of the socket file, relative to the working directory unless it is absolute; the platform allows 107 bytes on Linux and 103 on macOS. `pipe_address(name)` returns the address of a name.
+*   **A name in use:** `start_pipe_server()` raises an `OSError` with `errno.EADDRINUSE` if a server listens on the name. Elsewhere than on Windows, it replaces a socket file on which nobody listens, as a server that was killed leaves it behind, and closing the server removes its socket file.
+*   **Who can connect:** on Windows, the pipe gets the default security descriptor, so only the user who started the server, administrators and SYSTEM can write to it. Elsewhere, whoever may write to the socket file can connect; a directory that only you can enter keeps the others out.
+*   **Errors** name the address, also the `FileNotFoundError` when nobody listens there.
+*   **On Windows,** both functions need the proactor event loop, the default event loop there. `wait_closed()` of the server returns once the server is closed: unlike the server of asyncio, it does not wait for the connections that it has accepted, so close them yourself if you have to wait for them. After `close()`, a new connection waits while a connection that the server accepted is open, because the pipe is busy, and fails once those connections have ended.
+
+A client can also start its server with a connection over a pipe of its own. `create_pipe_subprocess()` listens on a new address and starts the process with `--pipe=<address>` as its last argument, as `vscode-languageclient` starts a language server. It returns the process with a reader and a writer once the process has connected, and then stops listening, so that no other connection reaches the caller; on Windows, another connection waits while the first one is open, because the pipe is busy. Elsewhere than on Windows, the address lies in a new directory that only the current user can enter. Further arguments go to `asyncio.create_subprocess_exec()`, so stdin, stdout and stderr stay as the caller chooses:
+
+```python
+import sys
+
+from jsonrpcpeer import JsonRpcPeer, create_pipe_subprocess
+
+
+async def add_over_a_pipe_of_its_own() -> float:
+    process, reader, writer = await create_pipe_subprocess(sys.executable, "calculator_server.py")
+    client_peer = JsonRpcPeer(reader, writer)
+    client_peer.attach_endpoint(PrintingLog())
+    client_peer.start()
+    result = await client_peer.remote(Calculator).add(AddParams(a=10, b=20))
+    # The end of its connection ends the process.
+    await client_peer.stop()
+    await process.wait()
+    return result.result
+```
+
+The process connects to the address after `--pipe=`:
+
+```python
+import asyncio
+import sys
+
+from jsonrpcpeer import JsonRpcPeer, open_pipe_connection
+
+
+async def main() -> None:
+    address = next(arg.removeprefix("--pipe=") for arg in sys.argv if arg.startswith("--pipe="))
+    server_peer = JsonRpcPeer(*await open_pipe_connection(address))
+    server_peer.attach_endpoint(WorkingCalculator())
+    await server_peer.run()
+
+
+asyncio.run(main())
+```
+
+If the process exits before it connects, the call raises a `ConnectionError` with its exit code. If the call is cancelled before, for example by `asyncio.wait_for()`, it kills the process. On Windows, a console program gets no window of its own if the caller has no console, as with `create_stdio_subprocess()`.
+
+A process in another language connects with what its platform offers, such as `net.connect()` in Node. On Windows, a pipe opened for synchronous I/O, as `open()` in Python opens it, handles one operation at a time: a write waits until a pending read has returned. Such a process can read a request and then write its response. One that reads and writes at the same time has to open the pipe for overlapped I/O, as asyncio and Node do.
 
 ### Handler Signatures
 

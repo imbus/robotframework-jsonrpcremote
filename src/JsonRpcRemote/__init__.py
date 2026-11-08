@@ -22,7 +22,13 @@ from robot.errors import RemoteError
 from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
 from robot.utils import secs_to_timestr, timestr_to_secs
 
-from jsonrpcpeer import JsonRpcPeer, JsonRpcResponseError, create_stdio_subprocess
+from jsonrpcpeer import (
+    JsonRpcPeer,
+    JsonRpcResponseError,
+    create_pipe_subprocess,
+    create_stdio_subprocess,
+    open_pipe_connection,
+)
 from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from robot_jsonrpcremote_protocol import (
     ArgumentDefinition,
@@ -255,7 +261,7 @@ class _ClientEndpoint(ClientEndpoint):
 
 
 def _split_command(command: str) -> list[str]:
-    """Split the command of a ``stdio:`` URI as a POSIX shell does; on Windows, a backslash is an ordinary character."""
+    """Split the command of a ``stdio:`` or ``pipe:`` URI as a POSIX shell does; on Windows, a backslash is ordinary."""
     lexer = shlex.shlex(command, posix=True)
     lexer.whitespace_split = True
     lexer.commenters = ""
@@ -279,7 +285,7 @@ class _SessionResources:
         self.peer: JsonRpcPeer | None = None
         self.thread: Thread | None = None
         self.endpoint: _ClientEndpoint | None = None
-        # The spawned server subprocess (stdio transport only).
+        # The server subprocess that the session started, for a stdio: or pipe: URI with a command.
         self.process: asyncio.subprocess.Process | None = None
         # Set once the session's worker has ended; its loop runs nothing more after that.
         self.ended = Event()
@@ -332,7 +338,7 @@ def _finalize_session(resources: _SessionResources, timeout: float | None) -> No
     """Stop the peer and join the worker thread. Idempotent, self-free and never raises.
 
     Each step is bounded by ``timeout``, since the worker may not process the teardown.
-    The stdio backstop and the release of the resources always run.
+    The backstop for a started server and the release of the resources always run.
     """
     peer = resources.peer
     loop = resources.loop
@@ -350,7 +356,7 @@ def _finalize_session(resources: _SessionResources, timeout: float | None) -> No
             with contextlib.suppress(Exception):
                 thread.join(timeout)
     finally:
-        # Backstop in case close_connection never reaped the stdio subprocess.
+        # Backstop in case close_connection never reaped the server subprocess.
         process = resources.process
         if process is not None and process.returncode is None:
             with contextlib.suppress(Exception):
@@ -397,7 +403,7 @@ class _Session:
         self.start_error: BaseException | None = None
         # Why the connection of the started session ended, unless it closed cleanly.
         self.connection_error: BaseException | None = None
-        # Exit code of the spawned stdio server, once close_connection() has released it.
+        # Exit code of the server that the session started, once close_connection() has released it.
         self.process_returncode: int | None = None
         # Set when the client ends the session itself; the end of its connection is then no loss.
         self.closed_by_client = False
@@ -422,7 +428,8 @@ class _Session:
     def _run(self) -> None:
         try:
             if sys.platform == "win32":
-                # Whatever event loop policy a library has set: only the proactor can start a server over stdio.
+                # Whatever event loop policy a library has set: only the proactor can start a server over stdio
+                # and use named pipes.
                 asyncio.run(self._run_client(), loop_factory=asyncio.ProactorEventLoop)
             else:
                 asyncio.run(self._run_client())
@@ -455,7 +462,7 @@ class _Session:
                 except Exception as e:
                     self.start_error = e
                 if self.start_error is not None:
-                    # Release the connection and a spawned stdio server before the failure is
+                    # Release the connection and a server that the session started before the failure is
                     # reported, so a failed start leaves nothing behind. Not in the except block:
                     # wait_closed() can raise the cause of the start error again, and Python would
                     # make the start error its context, a cycle that crashes Robot Framework.
@@ -517,7 +524,7 @@ class _Session:
         self.client_endpoint.library_token = import_result.token
 
     async def create_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        # TODO: support further URI schemes/transports (named pipes, unix sockets, websockets).
+        # TODO: support further URI schemes/transports (websockets).
         parsed_uri = urlparse(self._uri)
 
         if parsed_uri.scheme == "tcp":
@@ -530,16 +537,55 @@ class _Session:
             )
             return reader, writer
 
+        if parsed_uri.scheme == "pipe":
+            return await self._create_pipe_connection()
+
         if parsed_uri.scheme == "stdio":
             return await self._create_stdio_connection()
 
-        raise ValueError(f"Unsupported URI scheme '{parsed_uri.scheme}'; supported schemes are 'tcp' and 'stdio'.")
+        raise ValueError(
+            f"Unsupported URI scheme '{parsed_uri.scheme}'; supported schemes are 'tcp', 'pipe' and 'stdio'."
+        )
+
+    async def _create_pipe_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """Connect to the pipe of a ``pipe://<name>`` URI, or start the server of a ``pipe:<command>`` URI.
+
+        The server gets a pipe of its own, and ``--pipe=<address>`` as its last argument.
+        """
+        rest = self._uri[len("pipe:") :]
+        if rest.startswith("//"):
+            name = rest[2:]
+            if not name:
+                raise ValueError("pipe URI must include a pipe name after the two slashes, as in 'pipe://<name>'.")
+            return await asyncio.wait_for(open_pipe_connection(name), timeout=self._timeout)
+
+        argv = _split_command(rest)
+        if not argv:
+            raise ValueError(
+                "pipe URI must include a server command, as in 'pipe:<command>', or a pipe name, as in 'pipe://<name>'."
+            )
+        try:
+            process, reader, writer = await asyncio.wait_for(
+                # stdin: neither the server nor its child processes read the console of robot. stdout: where the
+                # output of a stdio server goes too; not sys.stderr, which Robot Framework replaces during a keyword.
+                create_pipe_subprocess(*argv, stdin=asyncio.subprocess.DEVNULL, stdout=2),
+                timeout=self._timeout,
+            )
+        except FileNotFoundError as error:
+            # pipe:robot, with the two slashes forgotten, would otherwise only say that robot was not found.
+            raise FileNotFoundError(
+                error.errno,
+                f"{error.strerror}: {argv[0]!r} (pipe://<name> connects to a server that listens on a pipe)",
+            ) from None
+        self._res.process = process
+        return reader, writer
 
     async def _create_stdio_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         """Spawn the server from a ``stdio:<command>`` URI and talk over its stdin/stdout."""
         rest = self._uri[len("stdio:") :]
         if rest.startswith("//"):
-            rest = rest[2:]
+            # Two slashes mean a connection, as in pipe://<name>; a stdio URI has a command.
+            raise ValueError(f"The command of a stdio URI follows 'stdio:' directly: write 'stdio:{rest[2:]}'.")
         argv = _split_command(rest)
         if not argv:
             raise ValueError(
@@ -565,8 +611,8 @@ class _Session:
                     if task is not None and task.cancelling():
                         raise
 
-        # Closing the writer sent EOF to the server's stdin; reap it, escalating to
-        # terminate/kill if it does not exit within the timeout.
+        # Closing the writer ended the input of a stdio server or the connection of a pipe
+        # server; reap it, escalating to terminate/kill if it does not exit within the timeout.
         process = self._res.process
         if process is not None:
             with contextlib.suppress(Exception):
@@ -608,7 +654,7 @@ class _Session:
 
     def loss_cause(self) -> str:
         """Describe why the connection of this lost session ended."""
-        # Wait for the worker to finish, bounded: close_connection() records a stdio server's exit code.
+        # Wait for the worker to finish, bounded: close_connection() records the exit code of a started server.
         self.ended.wait(self._timeout)
         error = self.connection_error
         cause = "the connection was closed by the server" if error is None else _describe_error(error)

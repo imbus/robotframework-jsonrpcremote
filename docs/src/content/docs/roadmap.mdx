@@ -13,9 +13,10 @@ welcome as
 
 **Client library `JsonRpcRemote`**
 
-- Connects to a server over TCP, or starts the server itself and talks to it
-  over its stdin and stdout; see
-  [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/).
+- Starts the server itself and talks to it over a pipe of its own or over its
+  stdin and stdout, or connects to a server that listens on a pipe or on a TCP
+  port. A pipe is a named pipe on Windows and a Unix domain socket elsewhere; see
+  [Transports](/robotframework-jsonrpcremote/guides/transports/).
 - Imports a remote library with positional and named arguments from the suite,
   and offers its keywords, also those with embedded arguments, with their
   arguments, types, defaults, documentation, tags, sources and lines; see the
@@ -37,6 +38,9 @@ welcome as
   Framework itself imports and runs it, including its argument conversion.
 - Serves several libraries, to several clients at the same time; see
   [Several libraries on one server](/robotframework-jsonrpcremote/guides/several-libraries/).
+- Listens on a TCP port or on a pipe, or serves the client that started it over
+  a pipe or over its stdin and stdout; see the
+  [server options](/robotframework-jsonrpcremote/reference/server/).
 - Takes Robot Framework's `--pythonpath`, `--variable`, `--variablefile` and
   `--outputdir`; see the
   [server options](/robotframework-jsonrpcremote/reference/server/).
@@ -69,11 +73,14 @@ welcome as
   `open_stdio_connection()`, which keeps `print()` and child processes out of
   it, and `create_stdio_subprocess()`, which starts a process with such a
   connection.
+- Named pipes on Windows and Unix domain sockets elsewhere, with
+  `start_pipe_server()` and `open_pipe_connection()`, and
+  `create_pipe_subprocess()`, which starts a process with a connection over a
+  pipe of its own.
 
 ## Planned
 
-- **More transports:** named pipes, Unix domain sockets, WebSockets and
-  Streamable HTTP, and encryption with TLS.
+- **More transports:** WebSockets and Streamable HTTP, and encryption with TLS.
 - **Servers in other languages:** example servers in other languages, such as
   Rust, Java and .NET, and values that every language can read. The Python
   implementation sends lists and dicts of JSON values as plain JSON, and other

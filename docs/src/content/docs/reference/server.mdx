@@ -15,13 +15,14 @@ them, clients may import any library that the server can import; see
 
 | Option                         | Default                                              | Meaning |
 | ------------------------------ | ---------------------------------------------------- | ------- |
-| `--mode {tcp,stdio,pipe}`      | `tcp`, or `ROBOT_JSONRPC_MODE`                       | How clients connect: `tcp` or `stdio`; `pipe` is reserved for a pipe mode. |
+| `--mode {tcp,stdio,pipe,pipe-server}` | `tcp`, or `ROBOT_JSONRPC_MODE`                | How clients connect: `tcp`, `stdio`, `pipe` or `pipe-server`; see [Transports](/robotframework-jsonrpcremote/guides/transports/). |
 | `--tcp`                        |                                                      | Same as `--mode tcp`. |
-| `--stdio`                      |                                                      | Same as `--mode stdio`: serve a single client over stdin and stdout; see [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/). |
-| `--pipe`                       |                                                      | Same as `--mode pipe`, which is reserved. |
+| `--stdio`                      |                                                      | Same as `--mode stdio`: serve a single client over stdin and stdout. |
+| `--pipe NAME`                  |                                                      | Same as `--mode pipe --pipe-name NAME`: connect to the pipe `NAME`, serve the client that listens there and stop when the connection ends; see [Pipe modes](#pipe-modes). A client that starts the server passes `--pipe=NAME` as the last argument. |
+| `--pipe-server NAME`           |                                                      | Same as `--mode pipe-server --pipe-name NAME`: listen on the pipe `NAME` for any number of clients; see [Pipe modes](#pipe-modes). |
 | `--bind ADDRESS`               | `127.0.0.1`, or `ROBOT_JSONRPC_BIND`                 | The address to listen on, in TCP mode. Repeat it to listen on several addresses. |
 | `--port PORT`                  | `8271`, or `ROBOT_JSONRPC_PORT`                      | The port to listen on, in TCP mode. |
-| `--pipe-name PIPE_NAME`        | `robot_jsonrpcremote_pipe`, or `ROBOT_JSONRPC_PIPE_NAME` | The pipe name, reserved for a pipe mode. |
+| `--pipe-name NAME`             | `robot_jsonrpcremote_pipe`, or `ROBOT_JSONRPC_PIPE_NAME` | The name of the pipe, in the pipe modes. |
 | `--pythonpath PATH`, `-P PATH` | none                                                 | A directory to add to the Python path, as `robot --pythonpath` does. Repeatable. |
 | `--variable name:value`        | none                                                 | A Robot Framework variable for the libraries, as `robot --variable` sets it. Repeatable. There is no `-v`, which is `--verbose`. |
 | `--variablefile PATH`, `-V PATH` | none                                               | A variable file for the libraries, as `robot --variablefile` loads it. Repeatable. |
@@ -45,6 +46,43 @@ code 2, as on the command line.
 | `ROBOT_JSONRPC_PORT`      | `--port`            |
 | `ROBOT_JSONRPC_PIPE_NAME` | `--pipe-name`       |
 
+## Pipe modes
+
+A pipe connects processes on one machine: a named pipe on Windows, a Unix
+domain socket elsewhere.
+
+- **Pipe mode,** `--pipe NAME`: the server connects to the pipe of a client
+  that listens there, serves that one client and stops with exit code 0 when
+  the connection ends. That is how the client starts the server for a
+  `pipe:<command>` URI: it listens on a new pipe and appends `--pipe=NAME`.
+- **Pipe-server mode,** `--pipe-server NAME`: the server listens on the pipe for
+  any number of clients until it is stopped, as in TCP mode. Clients connect
+  with `pipe://NAME`.
+
+**Names:** on Windows, a bare name such as `robot` means the named pipe
+`\\.\pipe\robot`, and a name that starts with `\\` or `//` is used as written.
+Elsewhere, the name is the path of a socket file, relative to the working
+directory of the server unless it is absolute. The platform allows 107 bytes
+for that path on Linux and 103 on macOS.
+
+**Who can connect:**
+
+- On Windows, the pipe gets the default security descriptor: the user who
+  started the server, administrators and SYSTEM can send requests. Other users
+  can open the pipe for reading only.
+- On Linux, a client needs write permission on the socket file, which gets its
+  rights from the umask. A directory that only you can enter keeps other users
+  out on every system.
+
+**Failed starts:** if nobody listens on the pipe in pipe mode, or another server
+listens on the name in pipe-server mode, the server logs
+`Server failed to start: <reason>`, with a reason that names the pipe, and
+exits with exit code 1.
+
+**The socket file:** in pipe-server mode on Linux and macOS, the server replaces
+a socket file on which nobody listens, as a server that was killed leaves it
+behind. When it stops, it removes its socket file.
+
 ## Robot Framework on the server
 
 The server runs Robot Framework itself: it imports the libraries in an
@@ -64,7 +102,7 @@ keyword, act on the server's execution, too.
 The server logs to stderr, whatever the log level of its clients. Once it
 accepts clients, it logs
 `Server is up and running. Press Ctrl+C to stop.` If the server cannot start, for example because
-the port is already in use, it logs `Server failed to start: <reason>` and
+the port or the name of its pipe is already in use, it logs `Server failed to start: <reason>` and
 exits with exit code 1.
 
 In stdio mode, the server needs a stdin that it can watch for input, such as a
@@ -112,4 +150,5 @@ grace period.
 The client reports the closed connection as a lost connection for the rest of
 its session; see
 [Lost connections and connect retry](/robotframework-jsonrpcremote/guides/lost-connections/).
-In stdio mode, the server also stops when the client closes the server's stdin.
+In stdio mode, the server also stops when the client closes the server's stdin,
+and in pipe mode when its connection ends.

@@ -7,6 +7,7 @@ import { Code } from '@astrojs/starlight/components';
 import server from '../../../../../examples/simple-robot-jsonrpcserver/src/simple_robot_jsonrpcserver/__main__.py?raw';
 import suite from '../../../../examples/own-server/echo.robot?raw';
 import stdioSuite from '../../../../examples/own-server/echo_stdio.robot?raw';
+import pipeSuite from '../../../../examples/own-server/echo_pipe.robot?raw';
 
 `JsonRpcRemote` and the server talk [JSON-RPC 2.0](https://www.jsonrpc.org/specification).
 The protocol is language-agnostic by design: a server can be written in any
@@ -71,7 +72,7 @@ array of the responses. If no element needs a response, it sends nothing.
   every keyword argument and return value that is not `null`, a string, a
   number or a boolean, lists and dicts included.
 - Reading a pickle can run arbitrary code; see the caution in
-  [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/#tcp).
+  [Transports](/robotframework-jsonrpcremote/guides/transports/#tcp).
 
 ## Methods
 
@@ -322,11 +323,48 @@ example server on `127.0.0.1:8271`. The suite is in
 [`docs/examples/own-server`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/own-server)
 in the repository.
 
+### Over a pipe
+
+For a `pipe:` URI, the client listens on a new pipe and starts the command with
+`--pipe=<address>` as its last argument, as editors start language servers. A
+server that the client starts this way connects to that address, serves the one
+client there and exits when the connection ends. The address is:
+
+- on Windows, a named pipe, such as `\\.\pipe\jsonrpcpeer-<32 hex digits>`;
+- elsewhere, the path of a Unix domain socket in a new directory that only the
+  user can enter, such as `/tmp/jsonrpcpeer-k2v9x1qa/pipe`.
+
+The client takes the first connection to the address and then stops listening.
+The server's stdin is the null device, and its stdout and stderr go to the
+stderr of `robot`, so the server can print as it likes: the messages have a
+connection of their own.
+
+With `--pipe ADDRESS`, also written `--pipe=ADDRESS`, the example server
+connects with `open_pipe_connection()` from `jsonrpcpeer`, so that the client
+can start it with a `pipe:` URI, as
+[Transports](/robotframework-jsonrpcremote/guides/transports/#a-server-that-the-client-starts)
+describes:
+
+<Code code={pipeSuite} lang="text" title="echo_pipe.robot" />
+
+In another language, the functions of the platform for these connections are
+enough; in Node, for example, `net.connect(address)` connects to both kinds. A
+server that suites connect to with `pipe://<name>` listens on the pipe instead,
+as `robot-jsonrpcremote-server --pipe-server <name>` does; see
+[Transports](/robotframework-jsonrpcremote/guides/transports/#a-server-that-listens-on-a-pipe).
+
+On Windows, a pipe opened for synchronous I/O, as `open()` in Python opens it,
+handles one operation at a time: a write waits until a pending read has
+returned. A server that reads a request and then writes its response can use
+it. One that reads and writes at the same time, such as one with a thread that
+waits for the next message while another sends log messages, has to open the
+pipe for overlapped I/O, as `open_pipe_connection()` and Node's `net` do.
+
 ### Over stdin and stdout
 
 With `--stdio`, the example server serves one client over its stdin and
 stdout, so that the client can start it with a `stdio:` URI, as
-[TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/#stdio)
+[Transports](/robotframework-jsonrpcremote/guides/transports/#stdio)
 describes:
 
 <Code code={stdioSuite} lang="text" title="echo_stdio.robot" />

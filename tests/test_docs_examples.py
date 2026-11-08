@@ -4,19 +4,22 @@ Each test runs one folder of ``docs/examples`` as its page describes it: it star
 the page starts one, runs ``robot`` with the suites of the example, and stops the server again.
 """
 
+import asyncio
 import os
 import shutil
 import socket
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
 import pytest
 from robot.api import ExecutionResult
+
+from jsonrpcpeer import open_pipe_connection
 
 _EXAMPLES = Path(__file__).resolve().parent.parent / "docs" / "examples"
 _PORT = 8271
@@ -52,9 +55,25 @@ def _port_open() -> bool:
     return True
 
 
+def _pipe_open(name: str) -> bool:
+    """Whether a server listens on the pipe ``name``."""
+
+    async def connect() -> None:
+        _, writer = await asyncio.wait_for(open_pipe_connection(name), 1)
+        writer.close()
+        with suppress(OSError):
+            await writer.wait_closed()
+
+    try:
+        asyncio.run(connect())
+    except OSError:
+        return False
+    return True
+
+
 @contextmanager
-def _server(folder: Path, log: Path, *command: str) -> Iterator[None]:
-    """Run ``command`` in ``folder`` as the server on port 8271 while the block runs."""
+def _server(folder: Path, log: Path, *command: str, listening: Callable[[], bool] = _port_open) -> Iterator[None]:
+    """Run ``command`` in ``folder`` as the server while the block runs, by default on port 8271."""
     with log.open("wb") as output:
         process = subprocess.Popen(
             [_command(command[0]), *command[1:]],
@@ -65,7 +84,7 @@ def _server(folder: Path, log: Path, *command: str) -> Iterator[None]:
         )
     try:
         deadline = time.monotonic() + 10
-        while not _port_open():
+        while not listening():
             if process.poll() is not None or time.monotonic() > deadline:
                 pytest.fail(f"{command[0]} did not start:\n{log.read_text(errors='replace')}")
             time.sleep(0.1)
@@ -80,7 +99,7 @@ def _server(folder: Path, log: Path, *command: str) -> Iterator[None]:
             process.wait(10)
         # The next example binds the same port.
         deadline = time.monotonic() + 10
-        while _port_open() and time.monotonic() < deadline:
+        while listening() and time.monotonic() < deadline:
             time.sleep(0.1)
 
 
@@ -172,8 +191,10 @@ def test_own_server(tmp_path: Path) -> None:
         code, result = _robot(folder, tmp_path, "echo.robot")
     assert code == 0, _failed(result)
 
-    # The same server over stdio: the client starts it for the suite.
+    # The same server over stdio and over a pipe: the client starts it for the suite.
     code, result = _robot(folder, tmp_path, "echo_stdio.robot")
+    assert code == 0, _failed(result)
+    code, result = _robot(folder, tmp_path, "echo_pipe.robot")
     assert code == 0, _failed(result)
 
 
@@ -212,6 +233,34 @@ def test_connect_retry(tmp_path: Path) -> None:
     result = _result(tmp_path)
 
     assert code == 0, _failed(result)
+
+
+def test_pipe(tmp_path: Path) -> None:
+    # No server to start: the client starts it for the suite and stops it afterwards.
+    code, result = _robot(_EXAMPLES / "pipe", tmp_path, "greet.robot")
+
+    assert code == 0, _failed(result)
+
+
+def test_pipe_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = _EXAMPLES / "pipe-server"
+    # The name is relative to the working directory, of the server, of robot and of the wait for the server.
+    monkeypatch.chdir(folder)
+    with _server(
+        folder,
+        tmp_path / "server.txt",
+        "robot-jsonrpcremote-server",
+        "--pipe-server",
+        "robot.sock",
+        "--pythonpath",
+        ".",
+        "MyLibrary",
+        listening=lambda: _pipe_open("robot.sock"),
+    ):
+        code, result = _robot(folder, tmp_path, "greet.robot")
+
+    assert code == 0, _failed(result)
+    assert not (folder / "robot.sock").exists()
 
 
 def test_stdio(tmp_path: Path) -> None:

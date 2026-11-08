@@ -29,12 +29,12 @@ Then import the library through `JsonRpcRemote` in a suite:
 Library    JsonRpcRemote    uri=tcp://127.0.0.1:8271    library_name=MyLibrary
 ```
 
-Instead of connecting over TCP, the client can also start the server itself and talk to it over its stdin and stdout, with a URI such as `stdio:robot-jsonrpcremote-server --stdio --pythonpath . MyLibrary`.
+Instead of connecting over TCP, the client can also start the server itself and talk to it over a pipe of its own, with a URI such as `pipe:robot-jsonrpcremote-server --pythonpath . MyLibrary`. See [Transports](https://imbus.github.io/robotframework-jsonrpcremote/guides/transports/) for pipes, TCP and stdio.
 
 ## More
 
 *   [Server options](https://imbus.github.io/robotframework-jsonrpcremote/reference/server/): all options and environment variables, and how the server starts and stops.
-*   [TCP and stdio](https://imbus.github.io/robotframework-jsonrpcremote/guides/tcp-and-stdio/), [several libraries on one server](https://imbus.github.io/robotframework-jsonrpcremote/guides/several-libraries/) and [the server in a container](https://imbus.github.io/robotframework-jsonrpcremote/guides/container/).
+*   [Transports](https://imbus.github.io/robotframework-jsonrpcremote/guides/transports/), [several libraries on one server](https://imbus.github.io/robotframework-jsonrpcremote/guides/several-libraries/) and [the server in a container](https://imbus.github.io/robotframework-jsonrpcremote/guides/container/).
 
 ## License
 

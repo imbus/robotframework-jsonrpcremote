@@ -41,21 +41,25 @@ def _write_message(stream: IO[bytes], message: dict[str, Any]) -> None:
     stream.flush()
 
 
-def main() -> None:
-    stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
-    while (message := _read_message(stdin)) is not None:
+def serve(reader: IO[bytes], writer: IO[bytes]) -> None:
+    """Answer the requests from ``reader`` on ``writer``, one after the other, until the end of the input."""
+    while (message := _read_message(reader)) is not None:
         method = message.get("method")
         if method == "robot/exit":
             return
         if "id" not in message:
             continue
         if method == "robot/run_keyword":
-            _write_message(stdout, {"id": message["id"], "result": {"result": message["params"]["args"][0]}})
+            _write_message(writer, {"id": message["id"], "result": {"result": message["params"]["args"][0]}})
         elif method in _RESULTS:
-            _write_message(stdout, {"id": message["id"], "result": _RESULTS[method]})
+            _write_message(writer, {"id": message["id"], "result": _RESULTS[method]})
         else:
             error = {"code": -32601, "message": f"Method '{method}' not found."}
-            _write_message(stdout, {"id": message["id"], "error": error})
+            _write_message(writer, {"id": message["id"], "error": error})
+
+
+def main() -> None:
+    serve(sys.stdin.buffer, sys.stdout.buffer)
 
 
 if __name__ == "__main__":

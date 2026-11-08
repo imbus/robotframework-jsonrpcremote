@@ -48,7 +48,7 @@ with `docker stop my-library-server` when you are done.
 - `--publish 127.0.0.1:8271:8271` publishes the port on the loopback address of
   the machine only. With `--publish 8271:8271`, every machine that can reach
   this one could connect; see the caution in
-  [TCP and stdio](/robotframework-jsonrpcremote/guides/tcp-and-stdio/#tcp).
+  [Transports](/robotframework-jsonrpcremote/guides/transports/#tcp).
 - The container needs a moment to start: run the suite once
   `docker logs my-library-server` shows `Server is up and running`.
 - `docker stop` sends SIGTERM, and the server stops as described in

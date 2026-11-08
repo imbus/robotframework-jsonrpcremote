@@ -3,10 +3,13 @@ is covered end-to-end by atests/stdio_echo.robot)."""
 
 import asyncio
 import os
+import re
+import secrets
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import threading
 import time
@@ -14,11 +17,14 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
+from fake_server import FakeServer
 
 from JsonRpcRemote import JsonRpcRemote, _Session
 
 _ROBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "atests"))
 _MINIMAL_SERVER = Path(__file__).resolve().parent / "minimal_stdio_server.py"
+_MINIMAL_PIPE_SERVER = Path(__file__).resolve().parent / "minimal_pipe_server.py"
+_NOT_ON_WINDOWS = pytest.mark.skipif(sys.platform == "win32", reason="socket files exist only off Windows")
 
 
 def _make_session(uri: str, timeout: float = 5.0) -> _Session:
@@ -68,8 +74,23 @@ def _wait_pid_gone(pid: int, timeout: float = 10.0) -> bool:
 
 
 async def test_create_connection_rejects_unknown_scheme() -> None:
-    session = _make_session("ws://localhost:1234")
-    with pytest.raises(ValueError, match="Unsupported URI scheme"):
+    session = _make_session("http://127.0.0.1:8271")
+    with pytest.raises(
+        ValueError, match="Unsupported URI scheme 'http'; supported schemes are 'tcp', 'pipe' and 'stdio'"
+    ):
+        await session.create_connection()
+
+
+async def test_a_stdio_uri_with_two_slashes_is_refused_without_starting_a_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def start(*command: str, **options: object) -> NoReturn:
+        pytest.fail(f"the client started {command}")
+
+    monkeypatch.setattr("JsonRpcRemote.create_stdio_subprocess", start)
+    session = _make_session("stdio://robot-jsonrpcremote-server --stdio MyLibrary")
+
+    with pytest.raises(ValueError, match=re.escape("write 'stdio:robot-jsonrpcremote-server --stdio MyLibrary'")):
         await session.create_connection()
 
 
@@ -186,6 +207,7 @@ class _FakeStartError(Exception):
     """Raised by the fake start of a server."""
 
 
+@pytest.mark.parametrize("scheme", ["stdio", "pipe"])
 @pytest.mark.parametrize(
     ("platform", "command", "argv"),
     [
@@ -204,18 +226,18 @@ class _FakeStartError(Exception):
         pytest.param("linux", r"server my\ library", ["server", "my library"], id="backslash_on_posix"),
     ],
 )
-async def test_a_stdio_command_is_split_as_its_platform_writes_paths(
-    monkeypatch: pytest.MonkeyPatch, platform: str, command: str, argv: list[str]
+async def test_a_command_is_split_as_its_platform_writes_paths(
+    monkeypatch: pytest.MonkeyPatch, platform: str, command: str, argv: list[str], scheme: str
 ) -> None:
     started: list[tuple[str, ...]] = []
 
-    async def start(*command: str) -> NoReturn:
+    async def start(*command: str, **options: object) -> NoReturn:
         started.append(command)
         raise _FakeStartError
 
-    monkeypatch.setattr("JsonRpcRemote.create_stdio_subprocess", start)
+    monkeypatch.setattr(f"JsonRpcRemote.create_{scheme}_subprocess", start)
     monkeypatch.setattr(sys, "platform", platform)
-    session = _make_session(f"stdio:{command}")
+    session = _make_session(f"{scheme}:{command}")
 
     with pytest.raises(_FakeStartError):
         await session.create_connection()
@@ -260,3 +282,113 @@ def test_a_stdio_command_with_a_space_in_its_path_reaches_the_server(tmp_path: P
         remote._stop_session()
 
     assert result == "Grüße"
+
+
+# pipe:<command>
+
+
+def _minimal_pipe_server_uri() -> str:
+    return f"pipe:{shlex.join([sys.executable, str(_MINIMAL_PIPE_SERVER)])}"
+
+
+def test_a_pipe_session_starts_and_reaps_its_server() -> None:
+    session = _Session(_minimal_pipe_server_uri(), "MinimalLibrary", (), None, 20.0)
+    session.start()
+    assert session.initialized.wait(20)
+    assert session.start_error is None
+
+    process = session._res.process
+    assert process is not None
+    pid = process.pid
+
+    session.stop()
+
+    assert process.returncode is not None
+    assert _wait_pid_gone(pid), f"server subprocess {pid} still alive after teardown"
+
+
+async def test_a_pipe_command_that_cannot_be_found_names_the_command_and_the_uri_of_a_listening_server() -> None:
+    session = _make_session("pipe:definitely-not-a-real-server-binary-xyz Lib")
+
+    with pytest.raises(FileNotFoundError) as error:
+        await session.create_connection()
+
+    assert "'definitely-not-a-real-server-binary-xyz'" in str(error.value)
+    assert "pipe://<name> connects to a server that listens on a pipe" in str(error.value)
+
+
+async def test_pipe_uri_requires_a_command() -> None:
+    session = _make_session("pipe:")
+    with pytest.raises(ValueError, match=re.escape("'pipe:<command>'")):
+        await session.create_connection()
+
+
+def test_the_output_of_a_pipe_server_goes_to_the_stderr_of_the_client(capfd: pytest.CaptureFixture[str]) -> None:
+    remote = JsonRpcRemote(_minimal_pipe_server_uri(), "MinimalLibrary", rpc_timeout=20)
+    try:
+        result = asyncio.run(remote.run_keyword("Echo", ["Grüße"], {}))
+    finally:
+        # Reaps the server, so its output is complete.
+        remote._stop_session()
+    out, err = capfd.readouterr()
+
+    assert result == "Grüße"
+    assert "minimal pipe server: a line from the server" in err
+    assert "minimal pipe server: a line from its child" in err
+    assert "minimal pipe server" not in out
+
+
+# pipe://<name>
+
+
+def test_a_pipe_uri_with_a_name_connects_to_a_server_that_listens_on_the_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with FakeServer(pipe=f"fake-server-{secrets.token_hex(8)}") as server:
+        remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+        try:
+            result = asyncio.run(remote.run_keyword("Echo", ["over a pipe"], {}))
+        finally:
+            remote._stop_session()
+
+    assert result == "echo: over a pipe"
+
+
+def test_the_import_from_a_pipe_that_nobody_listens_on_fails_with_its_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    name = f"fake-server-{secrets.token_hex(8)}"
+
+    # The import connects.
+    with pytest.raises(FileNotFoundError, match=name):
+        JsonRpcRemote(f"pipe://{name}", "FakeLib", rpc_timeout=5)
+
+
+@_NOT_ON_WINDOWS
+def test_a_pipe_uri_with_an_absolute_path_connects_to_that_socket_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Short, unlike tmp_path, which can be too long for a socket path on macOS; and not the working directory.
+    directory = tempfile.mkdtemp(prefix="jsonrpcremote-")
+    monkeypatch.chdir(tmp_path)
+    try:
+        path = os.path.join(directory, "robot.sock")
+        with FakeServer(pipe=path) as server:
+            remote = JsonRpcRemote(f"pipe://{path}", "FakeLib", rpc_timeout=5)
+            try:
+                result = asyncio.run(remote.run_keyword("Echo", ["absolute"], {}))
+            finally:
+                remote._stop_session()
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+    assert server.uri.startswith("pipe:///")
+    assert result == "echo: absolute"
+
+
+async def test_pipe_uri_requires_a_name() -> None:
+    session = _make_session("pipe://")
+    with pytest.raises(ValueError, match=re.escape("'pipe://<name>'")):
+        await session.create_connection()

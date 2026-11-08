@@ -49,10 +49,11 @@ log while the keyword runs, which matters for keywords that take long.
 
 ### The server starts with the tests
 
-Over stdio, the client starts the server for a session and stops it again: there
-is no server to set up beforehand and no port to manage. Over TCP, named pipes,
-Unix domain sockets, WebSockets or Streamable HTTP, with TLS, it reaches a
-server on another machine or in a container.
+Over a pipe or stdio, the client starts the server for a session and stops it
+again: there is no server to set up beforehand and no port to manage. Over a
+named pipe or a Unix domain socket, it reaches a server on the same machine, and
+over TCP, WebSockets or Streamable HTTP, with TLS, a server on another machine or
+in a container.
 
 ### A fresh library for each test or suite
 
@@ -78,7 +79,7 @@ hangs.
 | Connection                 | a new HTTP connection for each call | one connection per session, with a handshake and an orderly end |
 | Direction                  | the client calls the server | both ways: the server sends log messages while a keyword runs |
 | Log messages               | the output of a keyword arrives with its result | log messages arrive while the keyword runs |
-| Transports                 | HTTP and HTTPS | TCP; stdio, where the client starts and stops the server; named pipes, Unix domain sockets, WebSockets and Streamable HTTP |
+| Transports                 | HTTP and HTTPS | TCP; a pipe or stdio, where the client starts and stops the server; named pipes, Unix domain sockets, WebSockets and Streamable HTTP |
 | Libraries per server       | one | several, which the client chooses by name |
 | Making a library remote    | a script that creates the library and starts the server with it | `robot-jsonrpcremote-server MyLibrary`: Robot Framework itself imports and runs the library |
 | Arguments of the library   | fixed in the server script | given in the suite and converted on the server |

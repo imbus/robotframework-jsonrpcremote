@@ -1,4 +1,6 @@
+import asyncio
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -7,8 +9,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from server_over_pipes import TIMEOUT, connect_when_listening, echo, end, start_server
 
-from robot_jsonrpcremote_server.__main__ import _parse_addresses, build_arg_parser, run
+from jsonrpcpeer import open_pipe_connection, start_pipe_server
+from robot_jsonrpcremote_server.__main__ import _parse_addresses, build_arg_parser
 
 # --- _parse_addresses ------------------------------------------------------
 
@@ -61,9 +65,39 @@ def test_tracebacks_are_only_sent_with_the_option() -> None:
 
 
 def test_mode_aliases() -> None:
-    assert build_arg_parser().parse_args(["--pipe", "Lib"]).mode == "pipe"
     assert build_arg_parser().parse_args(["--stdio", "Lib"]).mode == "stdio"
     assert build_arg_parser().parse_args(["--tcp", "Lib"]).mode == "tcp"
+
+
+@pytest.mark.parametrize(
+    ("argv", "mode"),
+    [
+        pytest.param(["--pipe", "robot", "Lib"], "pipe", id="pipe_with_the_name_as_the_next_argument"),
+        pytest.param(["--pipe=robot", "Lib"], "pipe", id="pipe_with_an_equals_sign"),
+        pytest.param(["Lib", "--pipe=robot"], "pipe", id="pipe_as_the_last_argument"),
+        pytest.param(["--mode", "pipe", "--pipe-name", "robot", "Lib"], "pipe", id="mode_pipe"),
+        pytest.param(
+            ["--pipe-server", "robot", "Lib"], "pipe-server", id="pipe_server_with_the_name_as_the_next_argument"
+        ),
+        pytest.param(["--pipe-server=robot", "Lib"], "pipe-server", id="pipe_server_with_an_equals_sign"),
+        pytest.param(["--mode", "pipe-server", "--pipe-name", "robot", "Lib"], "pipe-server", id="mode_pipe_server"),
+    ],
+)
+def test_the_options_of_a_pipe_mode_set_the_mode_and_the_name(
+    server_environment: pytest.MonkeyPatch, argv: list[str], mode: str
+) -> None:
+    args = build_arg_parser().parse_args(argv)
+
+    assert (args.mode, args.pipe_name, args.libraries) == (mode, "robot", ["Lib"])
+
+
+def test_the_help_names_no_planned_mode() -> None:
+    help_text = " ".join(build_arg_parser().format_help().split())
+
+    assert "planned" not in help_text
+    assert "not yet implemented" not in help_text
+    assert "--pipe NAME" in help_text
+    assert "--pipe-server NAME" in help_text
 
 
 # --- configure_logging ------------------------------------------------------
@@ -83,27 +117,6 @@ logging.getLogger("library").info("shown")
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=True)
 
     assert result.stderr.splitlines() == ["[INFO] shown"]
-
-
-# --- run() rejects unsupported modes cleanly -------------------------------
-
-
-@pytest.mark.parametrize("source", ["--pipe", "ROBOT_JSONRPC_MODE"])
-def test_run_rejects_unsupported_mode(
-    source: str, server_environment: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    if source == "ROBOT_JSONRPC_MODE":
-        server_environment.setenv("ROBOT_JSONRPC_MODE", "pipe")
-        argv = ["robot-jsonrpcremote-server", "MyLib"]
-    else:
-        argv = ["robot-jsonrpcremote-server", source, "MyLib"]
-    server_environment.setattr(sys, "argv", argv)
-
-    with pytest.raises(SystemExit) as excinfo:
-        run()
-
-    assert excinfo.value.code == 2
-    assert "not supported yet" in capsys.readouterr().err
 
 
 # --- run() reports a failed start ------------------------------------------
@@ -135,6 +148,51 @@ def test_server_on_a_port_in_use_fails_to_start() -> None:
     assert "Server failed to start" in result.stderr
     assert f"('127.0.0.1', {port})" in result.stderr
     assert "up and running" not in result.stderr
+
+
+def test_server_on_a_pipe_that_nobody_listens_on_fails_to_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    name = f"robot-test-{secrets.token_hex(8)}"
+
+    result, seconds = _run_server("--pipe", name, "SomeLib")
+
+    assert result.returncode == 1
+    assert seconds < 5, "the server waited for a start timeout"
+    assert "Server failed to start" in result.stderr
+    assert name in result.stderr
+    assert "up and running" not in result.stderr
+
+
+async def test_server_on_a_pipe_name_in_use_fails_to_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    name = f"robot-test-{secrets.token_hex(8)}"
+
+    async def close(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.close()
+
+    other = await start_pipe_server(close, name)
+    try:
+        process = await start_server("--pipe-server", name)
+        try:
+            code = await asyncio.wait_for(process.wait(), TIMEOUT)
+        finally:
+            stderr = await end(process)
+        # The other server still accepts clients.
+        _, writer = await asyncio.wait_for(open_pipe_connection(name), TIMEOUT)
+        writer.close()
+        await asyncio.wait_for(writer.wait_closed(), TIMEOUT)
+    finally:
+        other.close()
+        # Until its connections have ended, also off Windows: a transport that outlives its server makes asyncio of
+        # Python 3.13 and later report a TypeError once it is collected.
+        await asyncio.wait_for(other.wait_closed(), TIMEOUT)
+
+    assert code == 1, stderr
+    assert "Server failed to start" in stderr
+    assert name in stderr
+    assert "up and running" not in stderr
 
 
 @pytest.mark.parametrize("stdin", ["null device", "regular file"])
@@ -213,10 +271,22 @@ def test_unknown_mode_from_the_environment_is_a_usage_error() -> None:
     result, _ = _run_server("SomeLib", env=_environment(ROBOT_JSONRPC_MODE="tpc"))
 
     assert result.returncode == 2
-    for text in ("--mode", "'tpc'", "tcp", "stdio"):
+    for text in ("--mode", "'tpc'", "tcp", "stdio", "pipe", "pipe-server"):
         assert text in result.stderr
-    assert "not supported yet" not in result.stderr
     assert "Traceback" not in result.stderr
+
+
+async def test_pipe_mode_from_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    name = f"robot-test-{secrets.token_hex(8)}"
+
+    process = await start_server(env=_environment(ROBOT_JSONRPC_MODE="pipe-server", ROBOT_JSONRPC_PIPE_NAME=name))
+    try:
+        result = await echo(*await connect_when_listening(name, process), "from the environment")
+    finally:
+        stderr = await end(process)
+
+    assert result == "echo: from the environment", stderr
 
 
 def _error_line(capsys: pytest.CaptureFixture[str], *args: str) -> str:

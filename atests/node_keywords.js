@@ -1,6 +1,16 @@
-// Keywords written in Node, which the client starts over stdin and stdout: keywords in any language are
-// what the protocol is for. It reads stdin and writes stdout with one reader and one writer.
+// Keywords written in Node, which the client starts over stdin and stdout, or over a pipe of its own with
+// --pipe=<address>: keywords in any language are what the protocol is for. It reads and writes the
+// connection with one reader and one writer.
 "use strict";
+
+const net = require("net");
+
+// A client that starts the server for a pipe: URI appends --pipe=<address>, a named pipe on Windows and a
+// socket file elsewhere; net.connect() takes both.
+const pipe = process.argv.slice(2).find((arg) => arg.startsWith("--pipe="));
+const connection = pipe === undefined ? null : net.connect(pipe.slice("--pipe=".length));
+const input = connection ?? process.stdin;
+const output = connection ?? process.stdout;
 
 const KEYWORDS = {
   Echo: { args: ["message"], run: async ([message]) => message },
@@ -37,7 +47,7 @@ const LIBRARY = {
 
 function send(message) {
   const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", ...message }), "utf8");
-  process.stdout.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "ascii"), body]));
+  output.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "ascii"), body]));
 }
 
 function failure(code, message) {
@@ -74,8 +84,12 @@ async function respond(method, params) {
 
 async function handle({ id, method, params }) {
   if (method === "robot/exit") {
-    // Nothing is left to read, so the process ends once stdout has been written.
-    process.stdin.destroy();
+    // Nothing is left to read, so the process ends once the output has been written.
+    if (connection === null) {
+      process.stdin.destroy();
+    } else {
+      connection.end();
+    }
     return;
   }
   if (id === undefined) {
@@ -89,7 +103,7 @@ async function handle({ id, method, params }) {
 }
 
 let received = Buffer.alloc(0);
-process.stdin.on("data", (chunk) => {
+input.on("data", (chunk) => {
   received = Buffer.concat([received, chunk]);
   for (;;) {
     const end = received.indexOf("\r\n\r\n");

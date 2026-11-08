@@ -19,9 +19,9 @@ ConnectionError: Connection to 'tcp://127.0.0.1:8271' was lost: the connection w
 The cause is "the connection was closed by the server" when the server closed
 the connection cleanly. Otherwise it is the type and message of the error that
 ended the connection, for example
-`ConnectionResetError: [Errno 104] Connection reset by peer`. For a `stdio:`
-URI, the exit code of the server process is added, for example
-`(server process exited with code 3)`.
+`ConnectionResetError: [Errno 104] Connection reset by peer`. For a `pipe:` or
+`stdio:` URI with a command, the exit code of the server process is added, for
+example `(server process exited with code 3)`.
 
 A keyword that is running when the connection is lost fails with:
 

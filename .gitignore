@@ -36,6 +36,8 @@ results/
 docs/node_modules/
 docs/.astro/
 docs/examples/container/wheels/
+# The socket file of the example on Linux and macOS, if a server was killed before it could remove it.
+docs/examples/pipe-server/robot.sock
 
 # Ignore temporary files
 *.tmp

@@ -6,6 +6,7 @@ import gc
 import itertools
 import logging
 import re
+import secrets
 import sys
 import threading
 import time
@@ -27,8 +28,14 @@ from robot_jsonrpcremote_protocol import (
 
 
 @pytest.fixture
-def server() -> Iterator[FakeServer]:
-    with FakeServer() as fake:
+def server(request: pytest.FixtureRequest) -> Iterator[FakeServer]:
+    """The fake server on a TCP port; parametrized indirectly with ``"pipe"``, on a pipe in the test's directory."""
+    pipe = None
+    if getattr(request, "param", "tcp") == "pipe":
+        monkeypatch: pytest.MonkeyPatch = request.getfixturevalue("monkeypatch")
+        monkeypatch.chdir(request.getfixturevalue("tmp_path"))
+        pipe = f"fake-server-{secrets.token_hex(8)}"
+    with FakeServer(pipe=pipe) as fake:
         yield fake
 
 
@@ -174,6 +181,7 @@ def test_connect_retry_options_are_not_forwarded(server: FakeServer) -> None:
 # --- retry window and giving up --------------------------------------------------
 
 
+@pytest.mark.parametrize("server", ["tcp", "pipe"], indirect=True)
 def test_import_waits_for_a_server_that_comes_up_within_the_window(
     server: FakeServer, connect: Callable[..., JsonRpcRemote]
 ) -> None:

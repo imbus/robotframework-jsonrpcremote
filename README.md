@@ -11,7 +11,7 @@ A modern alternative to Robot Framework's [Remote library](https://robotframewor
 *   **Language-agnostic:** the protocol is JSON-RPC 2.0, which every common programming language supports, so a server that offers keywords can be written in any of them; with a JSON-RPC library, that takes only a few lines of code. In Python, the package [`jsonrpcpeer`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/packages/jsonrpcpeer) does the JSON-RPC part, and it can be used on its own. Messages and values are JSON; between Python peers, Python objects also travel unchanged, as pickles.
 *   **JSON-RPC 2.0** over one persistent connection per session, framed as in the Language Server Protocol.
 *   **Both directions:** log messages of a remote keyword reach the Robot Framework log while the keyword runs.
-*   **Transports:** TCP; stdio, where the client starts the server for a session and stops it again; named pipes, Unix domain sockets, WebSockets and Streamable HTTP; encryption with TLS.
+*   **Transports:** TCP; a pipe or stdio, where the client starts the server for a session and stops it again; named pipes and Unix domain sockets to a server on the same machine; WebSockets and Streamable HTTP; encryption with TLS.
 *   **Almost any library, remote:** the server `robot-jsonrpcremote-server` makes Robot Framework libraries remote without code changes. Robot Framework itself imports and runs them, with its argument conversion and custom converters.
 *   **Several libraries on one server**, which a suite imports by name.
 *   **Library arguments from the suite**, converted on the server.
@@ -67,7 +67,7 @@ Greet Returns A Greeting
     Should Be Equal    ${greeting}    Hello, World!
 ```
 
-[Getting started](https://imbus.github.io/robotframework-jsonrpcremote/getting-started/) runs this example step by step. The guides cover TCP and stdio, sessions, failures of remote keywords, lost connections and connect retry, the server in a container, and several libraries on one server.
+[Getting started](https://imbus.github.io/robotframework-jsonrpcremote/getting-started/) runs this example step by step. The guides cover the transports, sessions, failures of remote keywords, lost connections and connect retry, the server in a container, and several libraries on one server.
 
 ## Contributing
 

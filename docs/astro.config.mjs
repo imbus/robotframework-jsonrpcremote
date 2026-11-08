@@ -27,7 +27,7 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
-						'guides/tcp-and-stdio',
+						'guides/transports',
 						'guides/sessions',
 						'guides/failures',
 						'guides/lost-connections',

@@ -24,7 +24,7 @@ See proposal.md for the motivation. The starting point:
 | No server | `FileNotFoundError`, WinError 2, without the name in the message | `FileNotFoundError`, without the path; `ConnectionRefusedError` for a socket file that is left over |
 | A bare name | `create_pipe_connection("probe_win.py")` opens the regular file of that name | a path relative to the working directory |
 | `//./pipe/<name>` | works as `\\.\pipe\<name>` | – |
-| `close()` of the server | accepted connections keep working; one whose accept callback had not run yet breaks with `BrokenPipeError`, WinError 232; new connections get `FileNotFoundError` | 3.12 leaves the socket file behind, 3.13 removes it |
+| `close()` of the server | accepted connections keep working; one whose accept callback had not run yet breaks with `BrokenPipeError`, WinError 232; new connections get `FileNotFoundError`, but while an accepted connection is open they wait, because the pipe is busy, and fail right after it has ended | 3.12 leaves the socket file behind, 3.13 removes it |
 | `os.path.exists()` on the name | `True`, and the server sees a connection | – |
 | The client listens, and a child started with `--pipe=<name>` connects | after 0.27 s, 1 MiB in both directions, and the child exits with 0 once the parent closes its writer | – |
 | A pipe opened with `open()`, without overlapped I/O | a write while a read waits takes 1.5 s, until the read returns | – |
@@ -89,7 +89,7 @@ The platform sets the limits. A socket path has at most 107 bytes on Linux and 1
 
 A new module `pipes.py` holds the functions, its Windows part goes to `_win32_pipes.py`, and `__init__.py` exports them:
 - **`open_pipe_connection(name)`** returns a `StreamReader` and a `StreamWriter`, as `asyncio.open_unix_connection()` does. On Windows, it builds them from a `StreamReaderProtocol` with `create_pipe_connection()`.
-- **`start_pipe_server(client_connected_cb, name)`** returns an `asyncio.AbstractServer`. On POSIX, it is the `asyncio.Server` of `asyncio.start_unix_server()`. On Windows, it is a small subclass of `asyncio.AbstractServer` around the list from `start_serving_pipe()`:
+- **`start_pipe_server(client_connected_cb, name)`** returns an `asyncio.AbstractServer`. On POSIX, it is a small subclass of `asyncio.AbstractServer` around the `asyncio.Server` of `asyncio.start_unix_server()`, whose `close()` also removes the socket file (decision 5): the `asyncio.Server` of Python 3.12 has no hook for that. On Windows, it is a small subclass of `asyncio.AbstractServer` around the list from `start_serving_pipe()`:
   - `close()` closes the `PipeServer`.
   - `is_serving()` and `get_loop()` work as for `asyncio.Server`.
   - `wait_closed()` returns once the server is closed. It does not wait for the connections, as `asyncio.Server.wait_closed()` does from 3.12.1 on, because the `PipeServer` does not track them. Our server closes its clients itself before, as in TCP mode, and the README says so.
@@ -124,6 +124,7 @@ The check and the bind are not atomic. Two servers that start at the same moment
   - On Windows, a close before that callback has run breaks the connection that the process has just made (probe), while accepted connections stay open (probe).
   - A further connection that is accepted before the close is closed at once.
   - On POSIX, the socket file and its directory are removed after the first connection, and the connection stays valid.
+  - On Windows, the name stays as long as the connected instance is open. Another connection finds the pipe busy (`ERROR_PIPE_BUSY`), and asyncio's `create_pipe_connection()` repeats `CreateFile()` until the first connection has ended; then it fails with `FileNotFoundError` (probe). It never reaches the caller. Node's `net.connect()` gives up after 30 seconds.
 - **A process that ends before it connects:** the function raises a `ConnectionError` that names the exit code and the address. It reaps the process, because the caller never gets it.
 - **Cancellation,** such as the caller's `wait_for()` timeout: the function kills the process, waits for it, closes the listener, removes the address and raises the cancellation again. If the start itself fails, as for a command that does not exist, it also removes the address.
 - **The window rule** is that of `create_stdio_subprocess()`: `CREATE_NO_WINDOW` if the caller has no console and passes no `creationflags`. The MODIFIED requirement covers both functions.

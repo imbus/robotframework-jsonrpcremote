@@ -77,7 +77,7 @@ The package SHALL export the coroutine functions `start_pipe_server(client_conne
 
 ### Requirement: Closing a pipe server stops it listening and leaves its connections open
 
-After `close()` of a pipe server, a new connection to its name SHALL fail, and the connections that the server had accepted SHALL stay open until their writers are closed. On platforms other than Windows, closing SHALL remove the socket file.
+After `close()` of a pipe server, a new connection to its name SHALL NOT reach the server, and the connections that the server had accepted SHALL stay open until their writers are closed. A new connection SHALL fail; on Windows, it waits while an accepted connection is open, because the pipe is busy then, and fails once those connections have ended. On platforms other than Windows, closing SHALL remove the socket file.
 
 #### Scenario: An accepted connection after close
 
@@ -86,7 +86,7 @@ After `close()` of a pipe server, a new connection to its name SHALL fail, and t
 
 #### Scenario: A new connection after close
 
-- **WHEN** a process connects to the name of a pipe server that was closed
+- **WHEN** a process connects to the name of a pipe server that was closed and has no open connections
 - **THEN** the connection fails with `FileNotFoundError`
 
 #### Scenario: The socket file after close
@@ -111,7 +111,9 @@ The package SHALL export the coroutine function `create_pipe_subprocess(*argv, *
 #### Scenario: Only the first connection
 
 - **WHEN** the process has connected, and another process connects to the same address
-- **THEN** that connection fails, and on Linux and macOS the directory of the address is gone
+- **THEN** that connection never reaches the caller
+- **AND** on Linux and macOS it fails, and the directory of the address is gone
+- **AND** on Windows it waits while the first connection is open, because the pipe is busy, and fails with `FileNotFoundError` once that connection has ended
 
 #### Scenario: A process that exits before it connects
 

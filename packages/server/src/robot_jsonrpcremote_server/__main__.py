@@ -4,9 +4,9 @@ import contextlib
 import logging
 import os
 import threading
-from typing import Any, Awaitable, Callable, Literal, Sequence
+from typing import Any, Awaitable, Callable, Literal, Sequence, assert_never
 
-from jsonrpcpeer import JsonRpcPeer, open_stdio_connection
+from jsonrpcpeer import JsonRpcPeer, open_pipe_connection, open_stdio_connection, pipe_address, start_pipe_server
 
 from .__version__ import __version__
 from ._endpoint import RobotServerEndpoint, end_connection
@@ -15,8 +15,8 @@ from ._signals import patch_robot_signal_handling
 
 DEFAULT_PORT = 8271
 
-# The values of --mode; "pipe" is reserved for a pipe mode.
-_MODES = ("tcp", "stdio", "pipe")
+# The values of --mode.
+_MODES = ("tcp", "stdio", "pipe", "pipe-server")
 
 logger = logging.getLogger("robot_jsonrpcremote_server")
 
@@ -50,6 +50,20 @@ def _mode(value: str) -> str:
     if value not in _MODES:
         raise argparse.ArgumentTypeError(f"invalid choice: {value!r} (choose from {', '.join(_MODES)})")
     return value
+
+
+class _PipeOption(argparse.Action):
+    """``--pipe NAME`` and ``--pipe-server NAME``: they set the mode and the name of the pipe at once."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        namespace.mode = self.const
+        namespace.pipe_name = values
 
 
 def configure_logging(verbose: bool) -> None:
@@ -155,7 +169,26 @@ async def run_tcp_server(
     server = await asyncio.start_server(client_handler, addresses, port)
     bind_targets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
     logger.info("Robot JSON-RPC Remote Server listening on %s", bind_targets)
+    await _serve_until_stopped(server)
 
+
+async def run_pipe_server(
+    remote_context: RobotRemoteContext,
+    pipe_name: str,
+    verbose: bool,
+    libraries: Sequence[str] | None,
+    send_tracebacks: bool,
+) -> None:
+    def client_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> Awaitable[None]:
+        return handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
+
+    server = await start_pipe_server(client_handler, pipe_name)
+    logger.info("Robot JSON-RPC Remote Server listening on the pipe %s", pipe_address(pipe_name))
+    await _serve_until_stopped(server)
+
+
+async def _serve_until_stopped(server: asyncio.AbstractServer) -> None:
+    """Serve the clients of ``server`` until stop_server() is called, then close their connections."""
     stop_requested = asyncio.Event()
     async with server:
         set_server(server)
@@ -187,9 +220,32 @@ async def run_stdio_server(
     send_tracebacks: bool,
 ) -> None:
     reader, writer = await open_stdio_connection()
-    loop = asyncio.get_running_loop()
     logger.info("Robot JSON-RPC Remote Server serving on stdio")
+    await _serve_single_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
 
+
+async def run_pipe_client(
+    remote_context: RobotRemoteContext,
+    pipe_name: str,
+    verbose: bool,
+    libraries: Sequence[str] | None,
+    send_tracebacks: bool,
+) -> None:
+    reader, writer = await open_pipe_connection(pipe_name)
+    logger.info("Robot JSON-RPC Remote Server serving the client of the pipe %s", pipe_address(pipe_name))
+    await _serve_single_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
+
+
+async def _serve_single_client(
+    remote_context: RobotRemoteContext,
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    verbose: bool,
+    libraries: Sequence[str] | None,
+    send_tracebacks: bool,
+) -> None:
+    """Serve the one client of a connection, and stop the server when the connection ends."""
+    loop = asyncio.get_running_loop()
     client_task = asyncio.ensure_future(
         handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
     )
@@ -213,18 +269,18 @@ async def run_stdio_server(
     try:
         await client_task
     except asyncio.CancelledError:
-        logger.debug("stdio client task cancelled; shutting down.")
+        logger.debug("Client task cancelled; shutting down.")
     finally:
         set_transport_stop(None, None)
         _server_started_event.clear()
         _server_stop_event.set()
-        # stdio has a single client: on EOF/stop, stop the runner so the main thread exits.
+        # A single client: at the end of its connection or on stop, stop the runner so the main thread exits.
         remote_context.stop()
 
 
 async def run_server_async(
     remote_context: RobotRemoteContext,
-    mode: Literal["tcp", "stdio", "pipe"],
+    mode: Literal["tcp", "stdio", "pipe", "pipe-server"],
     addresses: Sequence[str],
     port: int,
     pipe_name: str,
@@ -240,12 +296,20 @@ async def run_server_async(
         await run_stdio_server(remote_context, verbose, libraries, send_tracebacks)
         return
 
-    raise NotImplementedError(f"Mode '{mode}' is not implemented yet")
+    if mode == "pipe":
+        await run_pipe_client(remote_context, pipe_name, verbose, libraries, send_tracebacks)
+        return
+
+    if mode == "pipe-server":
+        await run_pipe_server(remote_context, pipe_name, verbose, libraries, send_tracebacks)
+        return
+
+    assert_never(mode)
 
 
 def run_server(
     remote_context: RobotRemoteContext,
-    mode: Literal["tcp", "stdio", "pipe"],
+    mode: Literal["tcp", "stdio", "pipe", "pipe-server"],
     addresses: Sequence[str],
     port: int,
     pipe_name: str,
@@ -280,9 +344,9 @@ def stop_server() -> None:
         stop = _stop_callable
     if loop is None or stop is None:
         return
-    # Run the transport's stop hook inside its own loop. For TCP this closes the
-    # server (serve_forever() then returns); for stdio it feeds EOF / cancels the
-    # single client task.
+    # Run the transport's stop hook inside its own loop. For TCP and pipe-server mode, it
+    # ends the wait of _serve_until_stopped(); for stdio and pipe mode, it closes the
+    # connection of the single client.
     loop.call_soon_threadsafe(stop)
 
 
@@ -309,7 +373,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=_mode,
         choices=_MODES,
         default=default_mode,
-        help=f"Server mode (default: {default_mode} or ROBOT_JSONRPC_MODE)",
+        help="Server mode: listen on a TCP port, serve one client over stdin/stdout, serve the client "
+        f"whose pipe it connects to, or listen on a pipe (default: {default_mode} or ROBOT_JSONRPC_MODE)",
     )
 
     mode_ex_group = mode_group.add_mutually_exclusive_group()
@@ -322,10 +387,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     mode_ex_group.add_argument(
         "--pipe",
-        action="store_const",
+        action=_PipeOption,
         dest="mode",
         const="pipe",
-        help="Run server in pipe mode (alias for --mode pipe) [planned, not yet implemented]",
+        metavar="NAME",
+        help="Connect to the pipe NAME, serve the client that listens there and stop when its connection ends "
+        "(alias for --mode pipe --pipe-name NAME); a client that starts the server passes --pipe=NAME",
+    )
+    mode_ex_group.add_argument(
+        "--pipe-server",
+        action=_PipeOption,
+        dest="mode",
+        const="pipe-server",
+        metavar="NAME",
+        help="Listen on the pipe NAME for any number of clients (alias for --mode pipe-server --pipe-name NAME)",
     )
     mode_ex_group.add_argument(
         "--stdio",
@@ -358,8 +433,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     pipe_group.add_argument(
         "--pipe-name",
         type=str,
+        metavar="NAME",
         default=os.environ.get("ROBOT_JSONRPC_PIPE_NAME", "robot_jsonrpcremote_pipe"),
-        help="Name of the pipe to use (default: robot_jsonrpcremote_pipe or ROBOT_JSONRPC_PIPE_NAME)",
+        help="Name of the pipe for --mode pipe and --mode pipe-server: on Windows, a bare name means "
+        r"\\.\pipe\NAME; elsewhere, the path of a socket file "
+        "(default: robot_jsonrpcremote_pipe or ROBOT_JSONRPC_PIPE_NAME)",
     )
 
     robot_group = parser.add_argument_group("robot settings", description="Settings for Robot Framework")
@@ -405,19 +483,13 @@ def run() -> None:
     configure_logging(args.verbose)
     logger.debug("Verbose mode is enabled.")
 
-    if args.mode == "pipe":
-        parser.error(
-            f"server mode '{args.mode}' is not supported yet; only 'tcp' and 'stdio' are available "
-            "('--pipe' is planned)."
-        )
-
     env_addresses = _parse_addresses(os.environ.get("ROBOT_JSONRPC_BIND"))
     addresses = args.addresses or env_addresses or ["127.0.0.1"]
 
-    if args.mode == "stdio":
-        logger.info("Server will start in stdio mode.")
-    else:
+    if args.mode == "tcp":
         logger.info("Server will start on %s:%s", ",".join(addresses), args.port)
+    else:
+        logger.info("Server will start in %s mode.", args.mode)
 
     logger.debug("Libraries to serve: %s", args.libraries)
     logger.debug("Python path additions: %s", args.pythonpath)

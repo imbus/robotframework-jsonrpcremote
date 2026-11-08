@@ -1,0 +1,184 @@
+---
+title: Transports
+description: Let the client start the server over a pipe, connect to a server that listens on a pipe or on a TCP port, or start a server that speaks only over its stdin and stdout.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import pipeSuite from '../../../../examples/pipe/greet.robot?raw';
+import pipeServerSuite from '../../../../examples/pipe-server/greet.robot?raw';
+import stdioSuite from '../../../../examples/stdio/greet.robot?raw';
+
+The scheme of the `uri` argument chooses how `JsonRpcRemote` reaches the server:
+
+| URI               | Server started by            | Clients per server              | Reaches a server on              |
+| ----------------- | ---------------------------- | ------------------------------- | -------------------------------- |
+| `pipe:command`    | the client, for each session | one, the client that started it | this machine                     |
+| `pipe://name`     | you, before the suite runs   | several                         | this machine                     |
+| `tcp://host:port` | you, before the suite runs   | several                         | this machine or another one      |
+| `stdio:command`   | the client, for each session | one, the client that started it | this machine                     |
+
+All of them work on Linux, macOS and Windows. A pipe is a named pipe on
+Windows and a Unix domain socket elsewhere. For a server that the client
+starts, use `pipe:`, and `stdio:` for a server that speaks only over its stdin
+and stdout.
+
+## Pipes
+
+### A server that the client starts
+
+A URI such as `pipe:robot-jsonrpcremote-server --pythonpath . MyLibrary` makes
+the client start the server itself, with the command after `pipe:`. The client
+listens on a new pipe, starts the command with `--pipe=<address>` as its last
+argument, as an editor starts a language server, and talks to the server over
+the first connection to that pipe. No network port is involved, and the server
+ends with the session.
+
+The example runs the suite from
+[Getting started](/robotframework-jsonrpcremote/getting-started/) this way. Its
+files are in
+[`docs/examples/pipe`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/pipe)
+in the repository:
+
+<Code code={pipeSuite} lang="text" title="greet.robot" />
+
+- The client splits the command into arguments as a shell does, with quotes
+  grouping an argument, but starts it without a shell: it expands no variables
+  or wildcards, and passes `|` or `>` on as plain arguments.
+- On Windows, a backslash in the command is an ordinary character, so a path
+  such as `C:\Tools\server.exe` needs no quotes. On other platforms, a
+  backslash escapes the next character, as in a POSIX shell.
+- `--pipe=<address>` puts the server into pipe mode: it connects to the pipe,
+  serves that one client and stops when the connection ends.
+- The server starts in the directory that `robot` runs in, so
+  `--pythonpath .` makes the libraries there importable.
+- Each [session](/robotframework-jsonrpcremote/guides/sessions/) starts a server
+  of its own: with the default `rpc_scope=SUITE`, one per suite.
+- What the server writes to stdout and stderr, its log included, appears on the
+  stderr of `robot`, and so does the output of its child processes. What a
+  library prints with `print()` while Robot Framework imports it or runs one of
+  its keywords is captured and logged as usual.
+- The server's stdin is the null device, so neither the server nor its child
+  processes read the console of `robot`: a child process that reads stdin sees
+  the end of its input at once.
+- Elsewhere than on Windows, the pipe is a socket file in a new directory that
+  only you can enter. Once the server has connected, the client stops
+  listening, so that no other process reaches it.
+
+There is no server to start beforehand: `robot greet.robot` runs the suite,
+and the client starts and stops the server.
+
+The client starts any command this way, also a server in another language: it
+only has to connect to the address after `--pipe=`. The
+[protocol page](/robotframework-jsonrpcremote/reference/protocol/#over-a-pipe)
+describes the convention.
+
+### A server that listens on a pipe
+
+A server that you start yourself can listen on a pipe instead of a TCP port,
+with `--pipe-server` and a name. The suite connects with `pipe://` and the same
+name:
+
+```text
+robot-jsonrpcremote-server --pipe-server robot.sock --pythonpath . MyLibrary
+```
+
+<Code code={pipeServerSuite} lang="text" title="greet.robot" />
+
+The files are in
+[`docs/examples/pipe-server`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/pipe-server)
+in the repository. Start the server in that directory, and then run the suite
+there with `robot greet.robot`. As over TCP, the server serves any number of
+clients until it is stopped, and
+[connect retry](/robotframework-jsonrpcremote/guides/lost-connections/) works
+as for `tcp://`.
+
+### Names
+
+- On Windows, a bare name such as `robot.sock` means the named pipe
+  `\\.\pipe\robot.sock`, and a name that starts with `\\` or `//` is used as
+  written.
+- Elsewhere, the name is the path of a socket file. A relative path such as
+  `robot.sock` is relative to the working directory, of the server and of
+  `robot` each, so both have to run in the same directory. With an absolute
+  path, as in `pipe:///tmp/jsonrpc/robot.sock`, they need not. The platform
+  allows 107 bytes for the path on Linux and 103 on macOS.
+- So a bare name such as `robot.sock` works on every platform when the server
+  and the suite run in the same directory.
+- If another server listens on the name, the server fails to start. A socket
+  file on which nobody listens, as a server that was killed leaves it behind,
+  is replaced, and the server removes its socket file when it stops.
+
+### Who can connect
+
+A pipe can be reached only from the same machine.
+
+- On Windows, the pipe gets the default security descriptor: the user who
+  started the server, administrators and SYSTEM can send requests. Other users
+  can open the pipe for reading only.
+- On Linux, a client needs write permission on the socket file, which gets its
+  rights from the umask. A directory that only you can enter keeps other users
+  out on every system.
+
+So locally, a pipe is safer than TCP, where every user of the machine can
+connect to the loopback address. The caution under [TCP](#tcp) holds for pipes
+as well: connect only to servers you trust.
+
+## TCP
+
+A URI such as `tcp://127.0.0.1:8271` connects to a server that is already
+running, on the same machine or on another one. Without a port, the client
+connects to port 8271. [Getting started](/robotframework-jsonrpcremote/getting-started/)
+uses TCP.
+
+The server listens on the loopback address `127.0.0.1` by default, so only
+programs on the same machine can connect. To accept clients from other
+machines, bind the server to an address they can reach with `--bind`, and
+choose the port with `--port`; see the
+[server reference](/robotframework-jsonrpcremote/reference/server/).
+
+:::caution
+The server does not authenticate clients and does not encrypt the connection.
+Whoever can connect can run the keywords of the libraries it serves. The
+Python implementation sends Python objects as pickles, and reading a pickle can
+run arbitrary code: on the server for keyword arguments, and on the client for
+return values. Make the server reachable only for clients you trust, and connect
+only to servers you trust.
+:::
+
+## stdio
+
+A URI such as `stdio:robot-jsonrpcremote-server --stdio MyLibrary` makes the
+client start the server itself, with the command after `stdio:`, and talk to it
+over the server's stdin and stdout. Use it for a server that speaks only over
+its stdin and stdout; the command follows `stdio:` directly, without `//`.
+
+The example runs the suite from
+[Getting started](/robotframework-jsonrpcremote/getting-started/) this way,
+with one more keyword, which starts a child process that writes to stdout. Its
+files are in
+[`docs/examples/stdio`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/stdio)
+in the repository:
+
+<Code code={stdioSuite} lang="text" title="greet.robot" />
+
+- The client splits the command as for `pipe:`, and each session starts a
+  server of its own, in the directory that `robot` runs in.
+- `--stdio` makes the server serve one client over its stdin and stdout.
+- What the server logs goes to its stderr, which appears on the console of
+  `robot`.
+- What a library prints with `print()` while Robot Framework imports it or runs
+  one of its keywords is captured and logged as usual.
+- All other output to stdout, such as that of `logger.console()`, of child
+  processes, or of a thread that keeps running after a keyword returned, also
+  goes to the server's stderr: the server keeps its stdout for the messages.
+- A child process that reads the stdin it inherited sees the end of its input
+  at once: the server keeps its stdin for the messages, too.
+
+### Limits of stdio
+
+- **One client.** The server serves only the client that started it.
+- **stdin must stay open.** The server needs a pipe on stdin, as the client
+  provides. If you start a stdio server through another command, such as
+  `docker run`, keep stdin open with `docker run -i`. With the null device or
+  a regular file on stdin, and on Windows with anything but a pipe, the server
+  fails to start and exits with code 1.
