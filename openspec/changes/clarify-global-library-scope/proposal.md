@@ -2,19 +2,17 @@
 
 ## Why
 
-Libraries with the scope `GLOBAL` behave differently on the server than the client's messages and the docs suggest. Every import runs under its own token, but Robot Framework's importer caches `GLOBAL` libraries by name and arguments. All clients of a server therefore share one instance of a `GLOBAL` library, across independent test runs, and that instance survives reconnects. `SUITE` and `TEST` libraries get a new instance for every import, because the server's internal test never ends. Verified with a counter keyword in three separate sessions: `GLOBAL` returns 1, 2, 3; `SUITE` and `TEST` return 1, 1, 1.
-
-The warning that the client logs after reconnecting therefore claims too much for a `GLOBAL` library: "the remote library was imported again, so its server-side state was reset". Its state is only reset if the server process restarted.
+The warning that the client logs after a reconnect claims too much for a library with the scope `GLOBAL`: "the remote library was imported again, so its server-side state was reset". Robot Framework's importer caches a `GLOBAL` library by its name and import arguments, so all clients of a TCP server share one instance of it, across sessions and test runs, and the instance survives a reconnect. Its state is only reset if the server process restarted. Over stdio, every session has a server process of its own, so there the warning is right for every scope. The pages Sessions and rpc_scope and Lost connections already describe this sharing; only the warning, and the copy of it on the second page, say otherwise.
 
 Found in the project review of 2026-10-27 (item SERVER-9).
 
 ## What Changes
 
-- **Semantics:** unchanged. A `GLOBAL` library has one instance for the lifetime of the server process, shared by all clients, as Robot Framework defines `GLOBAL`.
-- **Reconnect warning:** distinguishes the scopes. For a `GLOBAL` library it says that the server-side state is kept unless the server restarted.
-- **Finalizing:** a client that finalizes its `GLOBAL` library does not end the shared instance. The design checks when the instance is closed, and that it is closed when the server stops.
-- **Docs:** a section on the documentation site on how each library scope behaves on the server, including the sharing of `GLOBAL` libraries between clients and test runs, with a runnable example.
-- **Tests:** a Robot test with a counter keyword in a `GLOBAL` library over several sessions, the part of the Robot test gaps that depends on this change; a unit test for the warning.
+- **Semantics:** unchanged. A `GLOBAL` library has one instance per set of import arguments for the lifetime of the server process, shared by all clients, as Robot Framework defines `GLOBAL`.
+- **Reconnect warning:** for a `GLOBAL` library over a `tcp://` URI, it says that the server-side state is kept unless the server restarted. For the other scopes, and over stdio, where the client starts a new server process, it keeps saying that the state was reset.
+- **Finalizing:** unchanged. A client that finalizes its `GLOBAL` library leaves the shared instance and the library's listeners to the other clients, and the listeners are closed when the server stops. Tests pin this.
+- **Docs:** the page Lost connections gives the end of the warning for a `GLOBAL` library over TCP, next to the quoted one, and says what a reconnect over stdio leaves.
+- **Tests:** a Robot suite with counter libraries of the three scopes, the `GLOBAL` one with a listener of its own, over several sessions and clients, a finalize, a stop of the server and a reconnect; a Robot test of a reconnect over stdio; a unit test of the warning.
 
 Assumptions recorded for review:
 
@@ -28,12 +26,12 @@ _None._
 
 ### Modified Capabilities
 
-- `server`: adds requirements that a `GLOBAL` library is shared by all clients for the lifetime of the server, and that finalizing it for one client does not end it.
-- `client`: modifies the requirement on the warning after a reconnect (from `add-client-connect-retry`) for `GLOBAL` libraries.
+- `server`: adds requirements that a `GLOBAL` library is shared by all clients for the lifetime of the server, and that finalizing it for one client leaves it and its listeners to the others until the server stops.
+- `client`: modifies the requirement on the warning after a reconnect, for `GLOBAL` libraries over TCP.
 
 ## Impact
 
-- **Code:** `src/JsonRpcRemote/__init__.py` (the reconnect warning); `packages/server/src/robot_jsonrpcremote_server/_runner.py` (`_robot_finalize_library`) only if the check of the finalization finds a problem.
-- **Docs:** the documentation site (library scopes and reconnects).
-- **Tests:** a Robot suite with a counter library; a unit test with the fake server for the warning.
-- **Order:** after `add-server-runner-tests`, `add-robot-integration-tests` and `fix-server-library-import`.
+- **Code:** `src/JsonRpcRemote/__init__.py` (the reconnect warning).
+- **Docs:** `docs/src/content/docs/guides/lost-connections.mdx`.
+- **Tests:** `tests/test_client_connect_retry.py` with `tests/fake_server.py`; new test libraries and the suite `atests/global_library.robot`; `atests/stdio_connect_retry.robot` with `atests/stdio_vars.py`.
+- **Order:** independent of the other changes.
