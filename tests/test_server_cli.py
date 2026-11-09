@@ -276,6 +276,30 @@ def test_unknown_mode_from_the_environment_is_a_usage_error() -> None:
     assert "Traceback" not in result.stderr
 
 
+def test_pickles_turned_off_from_the_environment(server_environment: pytest.MonkeyPatch) -> None:
+    assert build_arg_parser().parse_args(["Lib"]).pickles is True
+
+    server_environment.setenv("ROBOT_JSONRPC_PICKLES", "no")
+
+    assert build_arg_parser().parse_args(["Lib"]).pickles is False
+
+
+def test_command_line_takes_precedence_for_pickles(server_environment: pytest.MonkeyPatch) -> None:
+    server_environment.setenv("ROBOT_JSONRPC_PICKLES", "off")
+
+    assert build_arg_parser().parse_args(["--pickles", "Lib"]).pickles is True
+
+
+def test_pickles_value_from_the_environment_that_is_no_truth_value_is_a_usage_error() -> None:
+    result, _ = _run_server("SomeLib", env=_environment(ROBOT_JSONRPC_PICKLES="maybe"))
+
+    assert result.returncode == 2
+    assert "ROBOT_JSONRPC_PICKLES" in result.stderr
+    assert "'maybe'" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "up and running" not in result.stderr
+
+
 async def test_pipe_mode_from_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     name = f"robot-test-{secrets.token_hex(8)}"

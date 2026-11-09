@@ -21,6 +21,13 @@ Message Longer Than The Buffer Of Its Print Calls
     ${messages}=    Get Captured Log Messages
     Should Contain    ${messages}    RUN_KEYWORD_REQUEST processing...
 
+Move Returns The Moved Point
+    [Documentation]    The example declares the type of Point, which the client imports by its name: the Point
+    ...                travels as typed JSON, since the example reads no pickles.
+    ${point}=    Evaluate    simple_robot_jsonrpcserver.shapes.Point(1, 2)    modules=simple_robot_jsonrpcserver.shapes
+    ${moved}=    Move    ${point}    2    3
+    Should Be Equal    ${moved}    ${{simple_robot_jsonrpcserver.shapes.Point(3, 5)}}
+
 Repeated Calls
     FOR    ${i}    IN RANGE    10
         ${result}=    Echo    message ${i}

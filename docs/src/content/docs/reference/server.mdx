@@ -29,15 +29,17 @@ them, clients may import any library that the server can import; see
 | `--outputdir DIR`, `-d DIR`    | the current directory                                | The value of `${OUTPUT_DIR}` for the libraries. The server writes no output files. |
 | `-v`, `--verbose`              | off                                                  | Log debug messages, with timestamps. |
 | `--send-tracebacks`            | off                                                  | Send the traceback of an unexpected error to the client; see [Errors and tracebacks](#errors-and-tracebacks). |
+| `--pickles`, `--no-pickles`    | on, or `ROBOT_JSONRPC_PICKLES`                       | Whether the server reads and sends pickles, which carry Python objects that JSON cannot hold between Python peers; see [Values](/robotframework-jsonrpcremote/reference/protocol/#values). |
 | `--version`                    |                                                      | Show the version and exit. |
 | `-h`, `--help`                 |                                                      | Show the options and exit. |
 
 ## Environment variables
 
 An option on the command line takes precedence over its environment variable.
-A value that the option does not take, such as a port that is not a number or
-an unknown mode, ends the server with the usage error of the option and exit
-code 2, as on the command line.
+A value that the option does not take, such as a port that is not a number,
+an unknown mode or a value of `ROBOT_JSONRPC_PICKLES` that is no truth value,
+ends the server with the usage error of the option and exit code 2, as on the
+command line.
 
 | Variable                  | Sets the default of |
 | ------------------------- | ------------------- |
@@ -45,6 +47,7 @@ code 2, as on the command line.
 | `ROBOT_JSONRPC_BIND`      | `--bind`; several addresses are separated by commas |
 | `ROBOT_JSONRPC_PORT`      | `--port`            |
 | `ROBOT_JSONRPC_PIPE_NAME` | `--pipe-name`       |
+| `ROBOT_JSONRPC_PICKLES`   | `--pickles` and `--no-pickles`: `true`, `yes`, `on` or `1` turn pickles on, and `false`, `no`, `off`, `0`, `none` or an empty value turn them off, ignoring case, as Robot Framework reads them |
 
 ## Pipe modes
 

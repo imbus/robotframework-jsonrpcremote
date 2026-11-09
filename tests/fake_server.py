@@ -7,6 +7,7 @@ answered by a default handler, unless a test scripted the next answers for its m
 
 import asyncio
 import contextlib
+import pickle
 import socket
 import struct
 import sys
@@ -132,6 +133,8 @@ class FakeServer:
         self.library_name: str | None = None
         # The scope of the library in the default answer to an import, as Robot Framework names it, such as "GLOBAL".
         self.library_scope: str | None = None
+        # The pickle protocol in the default answer to `initialize`; `None` states that the server reads no pickles.
+        self.pickle_protocol: int | None = pickle.HIGHEST_PROTOCOL
         self.connections: list[FakeConnection] = []
         # The method of each request and each ``robot/set_log_level`` notification, in order.
         self.requests: list[str] = []
@@ -278,7 +281,7 @@ class FakeServer:
     def _default_answer(self, method: str, params: Any) -> Any:
         if method == INITIALIZE_REQUEST:
             return InitializeResult(
-                capabilities=ServerCapabilities(support_exit=True),
+                capabilities=ServerCapabilities(support_exit=True, pickle_protocol=self.pickle_protocol),
                 server_info=ServerInfo(name="FakeServer", version="0"),
             )
         if method == IMPORT_LIBRARY_REQUEST:

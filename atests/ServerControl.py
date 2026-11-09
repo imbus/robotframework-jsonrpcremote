@@ -1,5 +1,6 @@
 """Robot library to start/stop the real JSON-RPC remote server for integration tests."""
 
+import os
 import socket
 import subprocess
 import sys
@@ -41,12 +42,15 @@ class ServerControl:
         send_tracebacks: bool = False,
         variablefile: str = "",
         pipe: str = "",
+        pickles: bool = True,
     ) -> None:
         """Start the real server as a subprocess and wait until it accepts connections.
 
         ``libraries`` and ``variables`` (``name:value``) are whitespace-separated lists.
         With ``wait`` false, it returns at once, so that calls can be made while the server starts.
         With ``pipe``, the server listens on the pipe of that name, with ``--pipe-server``, instead of a port.
+        With ``pickles`` false, the server is started with ``--no-pickles``. ``pythonpath`` may hold several folders,
+        separated as in ``PYTHONPATH``.
         """
         if self._process is not None:
             raise RuntimeError("JSON-RPC server is already running")
@@ -55,8 +59,11 @@ class ServerControl:
         command += ["--pipe-server", pipe] if pipe else ["--port", str(port)]
         if send_tracebacks:
             command += ["--send-tracebacks"]
-        if pythonpath:
-            command += ["--pythonpath", pythonpath]
+        if not pickles:
+            command += ["--no-pickles"]
+        # Several folders are separated as in PYTHONPATH.
+        for folder in pythonpath.split(os.pathsep) if pythonpath else ():
+            command += ["--pythonpath", folder]
         for variable in variables.split():
             command += ["--variable", variable]
         if variablefile:

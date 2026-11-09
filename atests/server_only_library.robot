@@ -31,7 +31,7 @@ A Keyword With A Default That Cannot Be Pickled Runs Without The Argument
 Libdoc Shows The Default Of A Type That Only The Server Has
     ${keywords}=    Keywords In Json Spec    JsonRpcRemote::${URI}::ServerOnlyLib
     ...    ${OUTPUT_DIR}${/}libdoc-server-only.json
-    Should Be Equal    ${keywords}[Click][args][0][repr]    button: Button = LEFT
+    Should Be Equal    ${keywords}[Click][args][0][repr]    button: ServerOnlyLib.Button = LEFT
 
 
 *** Keywords ***

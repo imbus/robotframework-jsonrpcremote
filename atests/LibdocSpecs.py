@@ -8,8 +8,11 @@ from typing import Any
 from xml.etree import ElementTree
 
 
-def _write_spec(library: str, spec_format: str, output: str) -> None:
-    command = [sys.executable, "-m", "robot.libdoc", "--format", spec_format, library, output]
+def _write_spec(library: str, spec_format: str, output: str, pythonpath: str = "") -> None:
+    command = [sys.executable, "-m", "robot.libdoc", "--format", spec_format]
+    if pythonpath:
+        command += ["--pythonpath", pythonpath]
+    command += [library, output]
     completed = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
     if completed.returncode != 0:
         raise AssertionError(
@@ -23,6 +26,16 @@ class LibdocSpecs:
         _write_spec(library, "JSON", output)
         return {
             keyword["name"]: keyword for keyword in json.loads(Path(output).read_text(encoding="utf-8"))["keywords"]
+        }
+
+    def typedocs_in_json_spec(self, library: str, output: str, pythonpath: str = "") -> dict[str, dict[str, Any]]:
+        """Writes the JSON spec file of ``library`` to ``output`` and returns its type docs by name.
+
+        ``pythonpath`` is a folder for the module search path of Libdoc, as ``--pythonpath`` gives it.
+        """
+        _write_spec(library, "JSON", output, pythonpath)
+        return {
+            typedoc["name"]: typedoc for typedoc in json.loads(Path(output).read_text(encoding="utf-8"))["typedocs"]
         }
 
     def keywords_in_xml_spec(self, library: str, output: str) -> dict[str, dict[str, str]]:

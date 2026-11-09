@@ -14,6 +14,8 @@ const output = connection ?? process.stdout;
 
 const KEYWORDS = {
   Echo: { args: ["message"], run: async ([message]) => message },
+  // The value as it arrived on the wire, as a server in another language sees it.
+  "Json Of": { args: ["value"], run: async ([value]) => JSON.stringify(value) },
   "Add Numbers": { args: ["first", "second"], run: async ([first, second]) => Number(first) + Number(second) },
   "Fail With": {
     args: ["message"],

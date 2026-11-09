@@ -83,6 +83,31 @@ async def test_the_example_server_handles_a_whole_session(caplog: pytest.LogCapt
         assert "Received error" not in caplog.text
 
 
+async def test_the_example_server_states_no_pickle_protocol() -> None:
+    async with _connection_to_the_example_server() as peer:
+        initialize = await peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams())
+
+    assert initialize.capabilities is not None
+    assert initialize.capabilities.pickle_protocol is None
+
+
+async def test_move_returns_the_moved_point() -> None:
+    async with _connection_to_the_example_server() as peer:
+        await peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams())
+        await peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
+        library = await peer.send_request_typed(
+            ImportLibraryResult, IMPORT_LIBRARY_REQUEST, ImportLibraryParams(name="SimpleRobotLibrary")
+        )
+        # A Point as the client sends it for the declared type: an object with its fields.
+        params = RunKeywordParams(library_token=library.token, name="move", args=[{"x": 1, "y": 2}, 2, 3])
+        result = await peer.send_request_typed(RunKeywordResult, RUN_KEYWORD_REQUEST, params)
+
+    move = next(keyword for keyword in library.definition.keywords if keyword.name == "move")
+    assert [arg.type for arg in move.args] == ["simple_robot_jsonrpcserver.shapes.Point", "int", "int"]
+    assert move.return_type == "simple_robot_jsonrpcserver.shapes.Point"
+    assert result.result == {"x": 3, "y": 5}
+
+
 async def test_the_example_server_gives_the_path_of_its_file_as_the_source_of_a_keyword() -> None:
     async with _connection_to_the_example_server() as peer:
         await peer.send_request_typed(InitializeResult, INITIALIZE_REQUEST, InitializeParams())

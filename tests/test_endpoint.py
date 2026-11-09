@@ -7,6 +7,7 @@ running Robot suite.
 import asyncio
 import datetime
 import logging
+import pickle
 from collections.abc import Awaitable
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -15,6 +16,7 @@ import pytest
 
 from jsonrpcpeer import JsonRpcErrorCode, JsonRpcResponseError
 from robot_jsonrpcremote_protocol import (
+    ClientCapabilities,
     ExitParams,
     FinalizeLibraryParams,
     ImportLibraryParams,
@@ -66,6 +68,27 @@ async def test_import_tracks_token_and_finalize_releases_it() -> None:
     await endpoint.finalize_library(FinalizeLibraryParams(token=result.token))
     assert result.token not in endpoint._imported_tokens
     assert context.finalized == [result.token]
+
+
+@pytest.mark.parametrize(("pickles", "stated"), [(True, pickle.HIGHEST_PROTOCOL), (False, None)])
+async def test_initialize_states_the_pickle_protocol(pickles: bool, stated: int | None) -> None:
+    endpoint = RobotServerEndpoint(remote_context=cast(RobotRemoteContext, _StubContext()), pickles=pickles)
+
+    result = await endpoint.initialize(InitializeParams())
+
+    assert result.capabilities is not None
+    assert result.capabilities.pickle_protocol == stated
+
+
+async def test_the_agreement_is_kept_for_each_client() -> None:
+    context = cast(RobotRemoteContext, _StubContext())
+    reading, not_reading = RobotServerEndpoint(remote_context=context), RobotServerEndpoint(remote_context=context)
+
+    await reading.initialize(InitializeParams(capabilities=ClientCapabilities(pickle_protocol=4)))
+    await not_reading.initialize(InitializeParams(capabilities=ClientCapabilities()))
+
+    assert reading.value_format.pickle_protocol == 4
+    assert not_reading.value_format.pickle_protocol is None
 
 
 async def test_shutdown_sets_flag_and_returns_empty_result() -> None:
@@ -270,7 +293,9 @@ class _BlockingContext(_StubContext):
         super().__init__()
         self.release = asyncio.Event()
 
-    async def run_keyword(self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None) -> str:
+    async def run_keyword(
+        self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None, **options: Any
+    ) -> str:
         await self.release.wait()
         return "done"
 
@@ -317,7 +342,9 @@ class _ReleasedByNameContext(_StubContext):
         super().__init__()
         self.releases = {name: asyncio.Event() for name in names}
 
-    async def run_keyword(self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None) -> str:
+    async def run_keyword(
+        self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None, **options: Any
+    ) -> str:
         await self.releases[name].wait()
         return "done"
 
@@ -345,7 +372,9 @@ class _FailingContext(_StubContext):
         super().__init__()
         self.error = error
 
-    async def run_keyword(self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None) -> str:
+    async def run_keyword(
+        self, token: str, name: str, args: Any, kwargs: Any, subscriber: Any = None, **options: Any
+    ) -> str:
         raise self.error
 
 

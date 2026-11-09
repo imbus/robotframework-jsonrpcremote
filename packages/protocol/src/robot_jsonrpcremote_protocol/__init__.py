@@ -5,6 +5,18 @@ from typing import Any, TypeAlias
 
 from jsonrpcpeer import JsonRpcEndpoint, rpc_notification, rpc_request
 
+from .values import NOT_DECLARED as NOT_DECLARED
+from .values import PICKLED_KEY as PICKLED_KEY
+from .values import TYPE_KEY as TYPE_KEY
+from .values import VALUE_KEY as VALUE_KEY
+from .values import PickleNotAgreedError as PickleNotAgreedError
+from .values import ValueCannotTravelError as ValueCannotTravelError
+from .values import ValueDoesNotFitError as ValueDoesNotFitError
+from .values import ValueFormat as ValueFormat
+from .values import agreed_pickle_protocol as agreed_pickle_protocol
+from .values import resolve_type_name as resolve_type_name
+from .values import type_name as type_name
+
 SimpleType: TypeAlias = str | int | float | bool | None
 AnyType: TypeAlias = SimpleType | list[Any] | dict[str, Any]
 
@@ -58,6 +70,8 @@ class ClientInfo:
 class ClientCapabilities:
     supports_log: bool | None = None
     supports_trace: bool | None = None
+    # The highest pickle protocol that the client reads; without it, the client reads no pickles.
+    pickle_protocol: int | None = None
 
 
 @dataclass
@@ -104,6 +118,8 @@ class KeywordDefinition:
     tags: list[str] | None = None
     source: str | None = None
     lineno: int | None = None
+    # The declared return type, written as the types of the arguments are; none if the keyword declares none.
+    return_type: str | None = None
 
 
 @dataclass
@@ -122,6 +138,8 @@ class LibraryDefinition:
 class ServerCapabilities:
     support_exit: bool | None = None
     libraries: list[str] | None = None
+    # The highest pickle protocol that the server reads; without it, the server reads no pickles.
+    pickle_protocol: int | None = None
 
 
 @dataclass

@@ -4,9 +4,11 @@ import contextlib
 import functools
 import inspect
 import logging
+import pickle
 import shlex
 import sys
 import time
+import typing
 import weakref
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, fields
@@ -20,7 +22,7 @@ from robot.api import TypeInfo, logger
 from robot.api.interfaces import Arguments, Tags, TypeHints
 from robot.errors import RemoteError
 from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
-from robot.utils import secs_to_timestr, timestr_to_secs
+from robot.utils import DotDict, secs_to_timestr, timestr_to_secs
 
 from jsonrpcpeer import (
     JsonRpcPeer,
@@ -29,8 +31,8 @@ from jsonrpcpeer import (
     create_stdio_subprocess,
     open_pipe_connection,
 )
-from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from robot_jsonrpcremote_protocol import (
+    NOT_DECLARED,
     ArgumentDefinition,
     ArgumentKind,
     ClientCapabilities,
@@ -44,6 +46,7 @@ from robot_jsonrpcremote_protocol import (
     KeywordDefinition,
     LibraryDefinition,
     LogParams,
+    PickleNotAgreedError,
     RunKeywordError,
     RunKeywordErrorMode,
     RunKeywordParams,
@@ -53,6 +56,11 @@ from robot_jsonrpcremote_protocol import (
     ServerInfo,
     SetLogLevelParams,
     ShutdownParams,
+    ValueCannotTravelError,
+    ValueDoesNotFitError,
+    ValueFormat,
+    agreed_pickle_protocol,
+    resolve_type_name,
 )
 
 from .__version__ import __version__
@@ -169,6 +177,80 @@ def _response_failure(error: JsonRpcResponseError) -> RemoteError:
     return _keyword_failure(
         RunKeywordError(message=error.message, traceback=str(error.data) if error.data is not None else None)
     )
+
+
+def _hint_of(info: TypeInfo) -> Any:
+    """The type hint of a parsed type text; raises ``LookupError`` if a part of it does not resolve."""
+    if info.is_union:
+        return typing.Union[tuple(_hint_of(member) for member in info.nested or ())]
+    base = info.type
+    if base is None:
+        # A name that Robot Framework does not know, such as `mytypes.Point`: a class of the remote library.
+        base = resolve_type_name(info.name)
+    if info.nested:
+        return base[tuple(_hint_of(item) for item in info.nested)]
+    return base
+
+
+def _type_hint(text: str) -> Any:
+    """The type hint for a type text of the library definition, or ``NOT_DECLARED`` if a part does not resolve."""
+    try:
+        return _hint_of(TypeInfo.from_string(text))
+    except (LookupError, ValueError, TypeError):
+        return NOT_DECLARED
+
+
+def _without_pickles(session: "_Session") -> str:
+    """Why the session sends and unpickles no pickles."""
+    return "rpc_pickles is off" if not session.reads_pickles else "the server reads no pickles"
+
+
+_POSITIONAL_KINDS = (ArgumentKind.POSITIONAL_ONLY, ArgumentKind.POSITIONAL_OR_NAMED, None)
+_NAMED_KINDS = (ArgumentKind.POSITIONAL_OR_NAMED, ArgumentKind.NAMED_ONLY, None)
+
+
+def _encode_arguments(
+    session: "_Session",
+    keyword: KeywordDefinition,
+    args: Sequence[Any],
+    named: Mapping[str, Any],
+    declared_type: Callable[[str | None], Any],
+) -> tuple[list[Any], dict[str, Any]]:
+    """The arguments of a call in the value format of the session; one that may not travel fails the call."""
+    positional = [arg for arg in keyword.args if arg.kind in _POSITIONAL_KINDS]
+    var_positional = next((arg for arg in keyword.args if arg.kind == ArgumentKind.VAR_POSITIONAL), None)
+    by_name = {arg.name: arg for arg in keyword.args if arg.kind in _NAMED_KINDS}
+    var_named = next((arg for arg in keyword.args if arg.kind == ArgumentKind.VAR_NAMED), None)
+
+    def encode(value: Any, argument: ArgumentDefinition | None, label: str) -> Any:
+        declared = declared_type(argument.type) if argument is not None else NOT_DECLARED
+        try:
+            return session.value_format.encode(value, declared)
+        except ValueCannotTravelError as error:
+            raise TypeError(
+                f"Argument '{label}' of type '{error.type_name}' cannot be sent: it is not JSON, "
+                f"and {_without_pickles(session)}."
+            ) from None
+
+    encoded_args = []
+    for index, value in enumerate(args):
+        argument = positional[index] if index < len(positional) else var_positional
+        encoded_args.append(encode(value, argument, argument.name if argument is not None else str(index + 1)))
+    encoded_named = {key: encode(value, by_name.get(key, var_named), key) for key, value in named.items()}
+    return encoded_args, encoded_named
+
+
+def _decode_return_value(
+    session: "_Session", keyword: KeywordDefinition, data: Any, declared_type: Callable[[str | None], Any]
+) -> Any:
+    """The return value of a call from the value format of the session, by the declared return type."""
+    try:
+        return session.value_format.decode(data, declared_type(keyword.return_type))
+    except PickleNotAgreedError:
+        reason = "rpc_pickles is off" if not session.reads_pickles else "no pickles are agreed"
+        raise TypeError(f"The server sent the return value as a pickle, but {reason}.") from None
+    except ValueDoesNotFitError as error:
+        raise ValueError(error.describe("Return value")) from None
 
 
 def _attempts(count: int) -> str:
@@ -420,8 +502,13 @@ class _Session:
         timeout: float | None = 30.0,
         log_sink: _LogSink | None = None,
         log_level: str | None = None,
+        pickles: bool = True,
     ) -> None:
         self._uri = uri
+        # Whether the client reads pickles; with rpc_pickles=False, it states none in `initialize`.
+        self.reads_pickles = pickles
+        # The value format that the session agreed with the server in `initialize`.
+        self.value_format = ValueFormat()
         self._library_name = library_name
         self._library_args = library_args
         self._library_kw_args = library_kw_args
@@ -545,7 +632,9 @@ class _Session:
     async def _initialize_server(self) -> None:
         initialize_result = await self.client_endpoint.server.initialize(
             InitializeParams(
-                capabilities=ClientCapabilities(),
+                capabilities=ClientCapabilities(
+                    pickle_protocol=pickle.HIGHEST_PROTOCOL if self.reads_pickles else None
+                ),
                 client_info=ClientInfo(name="RobotFramework JsonRpcRemote Client", version=__version__),
                 log_level=self.client_endpoint.log_level,
             )
@@ -553,6 +642,9 @@ class _Session:
 
         self.server_capabilities = initialize_result.capabilities
         self.server_info = initialize_result.server_info
+        own = pickle.HIGHEST_PROTOCOL if self.reads_pickles else None
+        theirs = initialize_result.capabilities.pickle_protocol if initialize_result.capabilities else None
+        self.value_format = ValueFormat(agreed_pickle_protocol(own, theirs), dict_types=(DotDict,))
         self.client_endpoint.server_capabilities = initialize_result.capabilities
 
         await self.client_endpoint.server.initialized(InitializedParams())
@@ -799,6 +891,7 @@ class JsonRpcRemote:
         rpc_scope: SessionScope | str = SessionScope.SUITE,
         rpc_connect_retry_timeout: float | str = 0,
         rpc_connect_retry_interval: float | str = 1.0,
+        rpc_pickles: bool = True,
         **library_kw_args: Any,
     ) -> None:
         # First: __del__ runs even if the options below are rejected.
@@ -816,12 +909,15 @@ class JsonRpcRemote:
         self._retry_interval = _time_option("rpc_connect_retry_interval", rpc_connect_retry_interval)
         if self._retry_timeout > 0 and self._retry_interval <= 0:
             raise ValueError("Invalid value for rpc_connect_retry_interval: must be greater than 0 with connect retry.")
+        self._pickles = rpc_pickles
 
         self._library_name = library_name
         self._library_args = library_args
         self._library_kw_args = library_kw_args or None
 
         self.ROBOT_LIBRARY_LISTENER = self
+        # The type hints of the type texts of the definition, by text, resolved once.
+        self._declared_types: dict[str, Any] = {}
 
         # Robot Framework registers the keywords from this definition and never asks again.
         self._registered_definition: LibraryDefinition | None = None
@@ -921,6 +1017,7 @@ class JsonRpcRemote:
             self._timeout,
             self._log_sink,
             _robot_log_level(),
+            pickles=self._pickles,
         )
         session.start()
 
@@ -1015,11 +1112,22 @@ class JsonRpcRemote:
 
         return [arg_tuple(arg) for arg in keyword.args] if keyword.args is not None else None
 
+    def _declared_type(self, text: str | None) -> Any:
+        """The type hint of a type text of the definition, resolved once; ``NOT_DECLARED`` if it does not resolve."""
+        if not text:
+            return NOT_DECLARED
+        if text not in self._declared_types:
+            self._declared_types[text] = _type_hint(text)
+        return self._declared_types[text]
+
     def get_keyword_types(self, name: str) -> TypeHints | None:
-        type_hints = {}
+        type_hints: dict[str, Any] = {}
         for arg in self._get_keyword_definition(name).args:
             if arg.type:
-                type_hints[arg.name] = arg.type
+                # The class itself, so that Robot Framework converts on the client and Libdoc describes it; the
+                # text as it is where a class is not installed on the client.
+                declared = self._declared_type(arg.type)
+                type_hints[arg.name] = arg.type if declared is NOT_DECLARED else declared
 
         return type_hints if type_hints else None
 
@@ -1034,23 +1142,23 @@ class JsonRpcRemote:
     async def run_keyword(self, name: str, args: Sequence[Any], named: Mapping[str, Any]) -> Any:
         # Read once: the call stays with this session, and the `finally` cannot start a new one.
         session = self._session
+        # A keyword that the definition of this session lacks is sent without declared types: the server says
+        # whether it has it.
+        keyword = next(
+            (kw for kw in self._library_definition.keywords if kw.name == name), KeywordDefinition(name=name, args=[])
+        )
+        # Before anything is sent: an argument that may not travel fails the call here.
+        encoded_args, encoded_named = _encode_arguments(session, keyword, args, named, self._declared_type)
         self._log_sink.attach(asyncio.get_event_loop())
         try:
             result = await asyncio.wrap_future(
-                session.submit(
-                    session.run_keyword(
-                        name,
-                        [value_to_jsonable(arg) for arg in args],
-                        {key: value_to_jsonable(value) for key, value in named.items()},
-                        _robot_log_level(),
-                    )
-                )
+                session.submit(session.run_keyword(name, encoded_args, encoded_named, _robot_log_level()))
             )
 
             if result.error is not None:
                 raise _keyword_failure(result.error)
 
-            return jsonable_to_value(result.result)
+            return _decode_return_value(session, keyword, result.result, self._declared_type)
         except JsonRpcResponseError as error:
             raise _response_failure(error) from None
         except (ConnectionError, asyncio.CancelledError) as error:

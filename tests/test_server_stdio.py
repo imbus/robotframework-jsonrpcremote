@@ -239,7 +239,9 @@ async def test_stdio_server_stops_via_stop_server(
 async def test_run_server_async_dispatches_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
     called: dict[str, Any] = {}
 
-    async def fake_run_stdio_server(remote_context: Any, verbose: bool, libraries: Any, send_tracebacks: bool) -> None:
+    async def fake_run_stdio_server(
+        remote_context: Any, verbose: bool, libraries: Any, send_tracebacks: bool, pickles: bool = True
+    ) -> None:
         called["args"] = (remote_context, verbose, libraries, send_tracebacks)
 
     monkeypatch.setattr(server_main, "run_stdio_server", fake_run_stdio_server)

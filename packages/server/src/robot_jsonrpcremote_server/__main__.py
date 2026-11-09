@@ -52,6 +52,32 @@ def _mode(value: str) -> str:
     return value
 
 
+# The truth values that Robot Framework knows for booleans, in English.
+_TRUE_TEXTS = ("TRUE", "YES", "ON", "1")
+_FALSE_TEXTS = ("FALSE", "NO", "OFF", "0", "NONE", "")
+
+
+def _truth_value(value: str) -> bool:
+    """The type of the default of --pickles from ROBOT_JSONRPC_PICKLES; argparse calls it for a text default."""
+    if value.upper() in _TRUE_TEXTS:
+        return True
+    if value.upper() in _FALSE_TEXTS:
+        return False
+    raise argparse.ArgumentTypeError(
+        f"invalid value of ROBOT_JSONRPC_PICKLES: {value!r} (choose from true, yes, on, 1, false, no, off, 0, none "
+        "or nothing)"
+    )
+
+
+class _PicklesOption(argparse.BooleanOptionalAction):
+    """``--pickles`` and ``--no-pickles``; a text default from the environment is read as a truth value."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Set after the fact: BooleanOptionalAction takes no type, and argparse only uses it for a text default.
+        self.type = _truth_value
+
+
 class _PipeOption(argparse.Action):
     """``--pipe NAME`` and ``--pipe-server NAME``: they set the mode and the name of the pipe at once."""
 
@@ -113,12 +139,13 @@ async def handle_client(
     verbose: bool,
     libraries: Sequence[str] | None,
     send_tracebacks: bool,
+    pickles: bool = True,
 ) -> None:
     addr = writer.get_extra_info("peername")
     logger.debug("Client connected from %s", addr)
 
     peer = JsonRpcPeer(reader, writer, send_tracebacks=send_tracebacks)
-    endpoint = RobotServerEndpoint(remote_context=remote_context, libraries=libraries, verbose=verbose)
+    endpoint = RobotServerEndpoint(remote_context=remote_context, libraries=libraries, verbose=verbose, pickles=pickles)
     peer.attach_endpoint(endpoint)
     task = asyncio.current_task()
     assert task is not None
@@ -162,9 +189,10 @@ async def run_tcp_server(
     verbose: bool,
     libraries: Sequence[str] | None,
     send_tracebacks: bool,
+    pickles: bool = True,
 ) -> None:
     def client_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> Awaitable[None]:
-        return handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
+        return handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks, pickles)
 
     server = await asyncio.start_server(client_handler, addresses, port)
     bind_targets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
@@ -178,9 +206,10 @@ async def run_pipe_server(
     verbose: bool,
     libraries: Sequence[str] | None,
     send_tracebacks: bool,
+    pickles: bool = True,
 ) -> None:
     def client_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> Awaitable[None]:
-        return handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
+        return handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks, pickles)
 
     server = await start_pipe_server(client_handler, pipe_name)
     logger.info("Robot JSON-RPC Remote Server listening on the pipe %s", pipe_address(pipe_name))
@@ -218,10 +247,11 @@ async def run_stdio_server(
     verbose: bool,
     libraries: Sequence[str] | None,
     send_tracebacks: bool,
+    pickles: bool = True,
 ) -> None:
     reader, writer = await open_stdio_connection()
     logger.info("Robot JSON-RPC Remote Server serving on stdio")
-    await _serve_single_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
+    await _serve_single_client(remote_context, reader, writer, verbose, libraries, send_tracebacks, pickles)
 
 
 async def run_pipe_client(
@@ -230,10 +260,11 @@ async def run_pipe_client(
     verbose: bool,
     libraries: Sequence[str] | None,
     send_tracebacks: bool,
+    pickles: bool = True,
 ) -> None:
     reader, writer = await open_pipe_connection(pipe_name)
     logger.info("Robot JSON-RPC Remote Server serving the client of the pipe %s", pipe_address(pipe_name))
-    await _serve_single_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
+    await _serve_single_client(remote_context, reader, writer, verbose, libraries, send_tracebacks, pickles)
 
 
 async def _serve_single_client(
@@ -243,11 +274,12 @@ async def _serve_single_client(
     verbose: bool,
     libraries: Sequence[str] | None,
     send_tracebacks: bool,
+    pickles: bool = True,
 ) -> None:
     """Serve the one client of a connection, and stop the server when the connection ends."""
     loop = asyncio.get_running_loop()
     client_task = asyncio.ensure_future(
-        handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks)
+        handle_client(remote_context, reader, writer, verbose, libraries, send_tracebacks, pickles)
     )
     stopping: set["asyncio.Task[None]"] = set()
 
@@ -287,21 +319,22 @@ async def run_server_async(
     libraries: Sequence[str] | None,
     verbose: bool,
     send_tracebacks: bool,
+    pickles: bool = True,
 ) -> None:
     if mode == "tcp":
-        await run_tcp_server(remote_context, addresses, port, verbose, libraries, send_tracebacks)
+        await run_tcp_server(remote_context, addresses, port, verbose, libraries, send_tracebacks, pickles)
         return
 
     if mode == "stdio":
-        await run_stdio_server(remote_context, verbose, libraries, send_tracebacks)
+        await run_stdio_server(remote_context, verbose, libraries, send_tracebacks, pickles)
         return
 
     if mode == "pipe":
-        await run_pipe_client(remote_context, pipe_name, verbose, libraries, send_tracebacks)
+        await run_pipe_client(remote_context, pipe_name, verbose, libraries, send_tracebacks, pickles)
         return
 
     if mode == "pipe-server":
-        await run_pipe_server(remote_context, pipe_name, verbose, libraries, send_tracebacks)
+        await run_pipe_server(remote_context, pipe_name, verbose, libraries, send_tracebacks, pickles)
         return
 
     assert_never(mode)
@@ -316,6 +349,7 @@ def run_server(
     libraries: Sequence[str] | None,
     verbose: bool,
     send_tracebacks: bool,
+    pickles: bool = True,
 ) -> None:
     global _server_start_error
     try:
@@ -329,6 +363,7 @@ def run_server(
                 libraries=libraries,
                 verbose=verbose,
                 send_tracebacks=send_tracebacks,
+                pickles=pickles,
             )
         )
     except Exception as error:
@@ -363,6 +398,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Send the traceback of an unexpected error to the client, for debugging; "
         "it shows the server's code and paths to every client",
+    )
+    parser.add_argument(
+        "--pickles",
+        action=_PicklesOption,
+        default=os.environ.get("ROBOT_JSONRPC_PICKLES", True),
+        help="Read and send pickles, which carry Python objects that JSON cannot hold between Python peers "
+        "(default: on, or ROBOT_JSONRPC_PICKLES)",
     )
 
     mode_group = parser.add_argument_group("server mode")
@@ -516,6 +558,7 @@ def run() -> None:
             args.libraries,
             args.verbose,
             args.send_tracebacks,
+            args.pickles,
         ),
         name="RobotJsonRpcRemoteServerThread",
     )

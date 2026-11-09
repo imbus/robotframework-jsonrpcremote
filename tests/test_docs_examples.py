@@ -189,6 +189,9 @@ def test_own_server(tmp_path: Path) -> None:
     # The hand-written server of examples/simple-robot-jsonrpcserver.
     with _server(folder, tmp_path / "server.txt", "simple-robot-jsonrpcserver"):
         code, result = _robot(folder, tmp_path, "echo.robot")
+        assert code == 0, _failed(result)
+        # A keyword with a type of the example, which the client has installed too.
+        code, result = _robot(folder, tmp_path, "move.robot")
     assert code == 0, _failed(result)
 
     # The same server over stdio and over a pipe: the client starts it for the suite.

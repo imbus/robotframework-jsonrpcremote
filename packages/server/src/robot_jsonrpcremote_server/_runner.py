@@ -3,8 +3,10 @@ import contextlib
 import datetime
 import io
 import math
+import pickle
 import sys
 import threading
+import typing
 from concurrent.futures import Future, InvalidStateError
 from pathlib import Path
 from queue import Empty, Queue
@@ -16,25 +18,36 @@ from robot.api.interfaces import ListenerV3
 from robot.conf import RobotSettings
 from robot.errors import ExecutionFailed
 from robot.output import LOGGER
-from robot.running.arguments import ArgInfo
+from robot.running.arguments import ArgInfo, TypeInfo, typeconverters
 from robot.running.librarykeywordrunner import LibraryKeywordRunner
-from robot.utils import NOT_SET, ErrorDetails, escape, text
+from robot.utils import NOT_SET, DotDict, ErrorDetails, escape, text
 
 from jsonrpcpeer import JsonRpcErrorCode, JsonRpcResponseError
-from jsonrpcpeer.json_helpers import jsonable_to_value, value_to_jsonable
 from robot_jsonrpcremote_protocol import (
+    NOT_DECLARED,
+    PICKLED_KEY,
+    TYPE_KEY,
     AnyType,
     ArgumentDefinition,
     ArgumentKind,
     KeywordDefinition,
     LibraryDefinition,
+    PickleNotAgreedError,
     RobotJsonRpcErrorCode,
     RunKeywordError,
     RunKeywordErrorMode,
     SimpleType,
+    ValueCannotTravelError,
+    ValueDoesNotFitError,
+    ValueFormat,
+    resolve_type_name,
+    type_name,
 )
 
 _T = TypeVar("_T")
+
+# The value format of a client that reads pickles, for a caller that agreed on none.
+DEFAULT_VALUE_FORMAT = ValueFormat(pickle.HIGHEST_PROTOCOL, dict_types=(DotDict,))
 
 
 def _shutting_down() -> JsonRpcResponseError:
@@ -91,6 +104,26 @@ def _as_robot_data(value: Any) -> Any:
     return escape(value)
 
 
+# Robot Framework's names stay for the types of these modules, such as `int`, `Any` or `Sequence`.
+_ROBOT_NAMED_MODULES = ("builtins", "typing", "collections.abc")
+
+
+def _type_text(info: TypeInfo | None) -> str:
+    """The text of a type in the library definition: as Robot Framework writes it, with classes named by module."""
+    if info is None or not info.name:
+        return ""
+    if info.is_union:
+        return " | ".join(_type_text(member) for member in info.nested or ())
+    cls = info.type
+    if isinstance(cls, type) and cls.__module__ not in _ROBOT_NAMED_MODULES:
+        name = type_name(cls)
+    else:
+        name = info.name
+    if info.nested:
+        return f"{name}[{', '.join(_type_text(item) for item in info.nested)}]"
+    return name
+
+
 def _default_of(arg: ArgInfo) -> SimpleType:
     """The default of ``arg`` for the library definition: a JSON scalar as it is, any other value as Libdoc shows it.
 
@@ -124,7 +157,7 @@ def _robot_import_library(
             result.append(
                 ArgumentDefinition(
                     name=arg.name,
-                    type=str(arg.type),
+                    type=_type_text(arg.type),
                     has_default=arg.default is not NOT_SET,
                     default=_default_of(arg) if arg.default is not NOT_SET else None,
                     kind=ArgumentKind.from_value(arg.kind),
@@ -140,6 +173,7 @@ def _robot_import_library(
             tags=list(kw.tags),
             source=str(kw.source),
             lineno=kw.lineno,
+            return_type=_type_text(kw.args.return_type) or None,
         )
 
     return LibraryDefinition(
@@ -179,8 +213,105 @@ def _run_keyword_error(failure: ExecutionFailed) -> RunKeywordError:
     )
 
 
+# Robot Framework 7.5 gives this converter for a type that it cannot convert, where 7.2 gives none.
+_UNKNOWN_CONVERTER: tuple[type, ...] = tuple(
+    converter for converter in (getattr(typeconverters, "UnknownConverter", None),) if converter is not None
+)
+
+
+def _hint_part(info: TypeInfo) -> Any:
+    """The type hint of a part of a parsed type; raises ``LookupError`` if it is not resolved."""
+    if info.is_union:
+        return typing.Union[tuple(_hint_part(member) for member in info.nested or ())]
+    base = info.type
+    if base is None:
+        raise LookupError(info.name)
+    if info.nested:
+        return base[tuple(_hint_part(item) for item in info.nested)]
+    return base
+
+
+def _hint_of(info: TypeInfo | None) -> Any:
+    """The type hint of a declared type, or ``NOT_DECLARED`` if there is none or a part of it is not resolved."""
+    if info is None or not info.name:
+        return NOT_DECLARED
+    try:
+        return _hint_part(info)
+    except (LookupError, TypeError):
+        return NOT_DECLARED
+
+
+def _robot_converts(type_name_: str) -> bool:
+    """Whether Robot Framework converts a value to the named type itself, as it would for a local library."""
+    try:
+        cls = resolve_type_name(type_name_)
+    except LookupError:
+        return False
+    converter = typeconverters.TypeConverter.converter_for(TypeInfo.from_type_hint(cls))
+    return converter is not None and not isinstance(converter, _UNKNOWN_CONVERTER)
+
+
+def _decode_arguments(
+    kw: "running.LibraryKeyword",
+    args: list[AnyType],
+    kwargs: dict[str, AnyType],
+    value_format: ValueFormat,
+    server_reads_pickles: bool,
+) -> tuple[list[Any], dict[str, Any]]:
+    """The arguments of a call from the value format of its client; one that is refused fails the call."""
+    spec = kw.args
+    positional = list(spec.positional)
+    types = spec.types
+
+    def decode(data: AnyType, label: str, argument: str | None) -> Any:
+        try:
+            return value_format.decode(data, _hint_of(types.get(argument) if argument is not None else None))
+        except PickleNotAgreedError:
+            reason = "no pickles are agreed" if server_reads_pickles else "the server reads no pickles"
+            raise JsonRpcResponseError(
+                JsonRpcErrorCode.INVALID_PARAMS, f"Argument '{label}' is a pickle, but {reason}."
+            ) from None
+        except ValueDoesNotFitError as error:
+            if _robot_converts(error.type_name) and not (type(data) is dict and _has_marker(data)):
+                # Robot Framework converts the value itself, or fails as it would for a local library.
+                return data
+            raise JsonRpcResponseError(JsonRpcErrorCode.INVALID_PARAMS, error.describe("Argument", label)) from None
+
+    named = set(positional) | set(spec.named_only)
+    decoded_args = []
+    for index, data in enumerate(args):
+        argument = positional[index] if index < len(positional) else spec.var_positional
+        decoded_args.append(decode(data, argument or str(index + 1), argument))
+    decoded_kwargs = {key: decode(data, key, key if key in named else spec.var_named) for key, data in kwargs.items()}
+    return decoded_args, decoded_kwargs
+
+
+def _has_marker(data: dict[str, Any]) -> bool:
+    return PICKLED_KEY in data or TYPE_KEY in data
+
+
+def _encode_return_value(
+    value: Any, declared: TypeInfo | None, value_format: ValueFormat, server_reads_pickles: bool
+) -> AnyType:
+    try:
+        return cast(AnyType, value_format.encode(value, _hint_of(declared)))
+    except ValueCannotTravelError as error:
+        without_pickles = (
+            "the client reads no pickles" if server_reads_pickles else "pickles are turned off with --no-pickles"
+        )
+        raise JsonRpcResponseError(
+            JsonRpcErrorCode.INTERNAL_ERROR,
+            f"The return value of type '{error.type_name}' cannot be sent: it is not JSON, and {without_pickles}.",
+        ) from None
+
+
 def _robot_run_keyword(
-    library_token: str, name: str, args: list[AnyType], kwargs: dict[str, AnyType]
+    library_token: str,
+    name: str,
+    args: list[AnyType],
+    kwargs: dict[str, AnyType],
+    value_format: ValueFormat = DEFAULT_VALUE_FORMAT,
+    server_reads_pickles: bool = True,
 ) -> AnyType | None:
     context: "running.context._ExecutionContext" = running.context.EXECUTION_CONTEXTS.current
     if context is None:
@@ -199,13 +330,12 @@ def _robot_run_keyword(
 
     kw: "running.LibraryKeyword" = kws[0]
 
+    decoded_args, decoded_kwargs = _decode_arguments(kw, args, kwargs, value_format, server_reads_pickles)
     runner = LibraryKeywordRunner(kw) if kw.embedded else kw.create_runner(name)
     keyword_data = running.Keyword(
         name=kw.name,
-        args=[_as_robot_data(jsonable_to_value(a)) for a in args],
-        named_args={
-            _as_robot_data(jsonable_to_value(k)): _as_robot_data(jsonable_to_value(v)) for k, v in kwargs.items()
-        },
+        args=[_as_robot_data(a) for a in decoded_args],
+        named_args={_as_robot_data(k): _as_robot_data(v) for k, v in decoded_kwargs.items()},
     )
 
     keyword_result = result.Keyword(kw.name)
@@ -214,7 +344,7 @@ def _robot_run_keyword(
     except ExecutionFailed as failure:
         raise KeywordFailedError(_run_keyword_error(failure)) from None
 
-    return cast(AnyType, value_to_jsonable(r))
+    return _encode_return_value(r, kw.args.return_type, value_format, server_reads_pickles)
 
 
 def _robot_finalize_library(library_token: str) -> None:
@@ -410,11 +540,16 @@ class RobotRemoteContext:
         args: list[AnyType],
         kwargs: dict[str, AnyType],
         subscriber: LogMessageSubscriber | None = None,
+        value_format: ValueFormat = DEFAULT_VALUE_FORMAT,
+        server_reads_pickles: bool = True,
     ) -> AnyType | None:
         if threading.current_thread() == self._runner_thread:
             raise RuntimeError("run_keyword cannot be called from the runner thread.")
 
-        future = self._submit(lambda: _robot_run_keyword(library_token, name, args, kwargs), subscriber)
+        future = self._submit(
+            lambda: _robot_run_keyword(library_token, name, args, kwargs, value_format, server_reads_pickles),
+            subscriber,
+        )
 
         return await asyncio.wrap_future(future)
 

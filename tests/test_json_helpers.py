@@ -1,12 +1,11 @@
 import collections
 import json
-import pickle
 import subprocess
 import sys
 import textwrap
 import typing
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping, MutableSequence, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, MutableSequence, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Literal, NamedTuple, Optional, Union
@@ -22,12 +21,9 @@ from jsonrpcpeer.json_helpers import (
     as_json,
     from_dict,
     from_json,
-    jsonable_dict_to_object,
-    jsonable_to_value,
     to_camel_case,
     to_snake_case,
     validate_types,
-    value_to_jsonable,
 )
 
 
@@ -809,6 +805,21 @@ def test_as_json_value_that_json_cannot_hold() -> None:
     assert str(error.value) == "Can't get default value for <class 'bytes'> with value b'x'"
 
 
+@dataclass
+class _Measure:
+    value: float
+
+
+@pytest.mark.parametrize("number", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"])
+@pytest.mark.parametrize(
+    "wrap", [lambda n: n, lambda n: [1, n], _Measure], ids=["alone", "in a list", "in a dataclass"]
+)
+def test_as_json_fails_for_floats_that_json_does_not_allow(number: float, wrap: Callable[[float], Any]) -> None:
+    # JSON has no NaN or Infinity; a peer that reads JSON strictly could not read the message.
+    with pytest.raises(ValueError, match="not JSON compliant"):
+        as_json(wrap(number))
+
+
 def test_as_json_leaves_out_fields_by_their_metadata_and_none_with_a_default() -> None:
     assert json.loads(as_json(FieldsWithMetadata())) == {"plain": 1, "no_init_forced": "f"}
 
@@ -868,38 +879,6 @@ def test_as_dict_remove_defaults_writes_a_field_without_a_default() -> None:
 def test_as_dict_remove_defaults_in_a_nested_dataclass() -> None:
     value = HoldsAny(SimpleItemWithOnlyOptionalFields(a=5))
     assert as_dict(value, remove_defaults=True) == {"value": {"a": 5}}
-
-
-# --- pickle-backed object transfer -----------------------------------------
-
-
-def test_value_to_jsonable_primitives() -> None:
-    for v in (5, "x", 3.14, True):
-        assert value_to_jsonable(v) == v
-    assert value_to_jsonable(None) is None
-
-
-def test_object_pickle_roundtrip() -> None:
-    obj = complex(1, 2)
-    encoded = value_to_jsonable(obj)
-    assert isinstance(encoded, dict)
-    assert "__pickled__" in encoded
-    assert jsonable_to_value(encoded) == obj
-
-
-def test_jsonable_to_value_passthrough() -> None:
-    assert jsonable_to_value({"a": 1}) == {"a": 1}
-    assert jsonable_to_value(None) is None
-
-
-def test_jsonable_dict_to_object_requires_the_key() -> None:
-    with pytest.raises(ValueError, match=r"^Dictionary does not contain pickled data$"):
-        jsonable_dict_to_object({"a": 1})
-
-
-def test_value_that_cannot_be_pickled_fails_naming_the_value() -> None:
-    with pytest.raises((AttributeError, pickle.PicklingError), match="lambda"):
-        value_to_jsonable(lambda: None)
 
 
 # --- ValidateMixin ---------------------------------------------------------

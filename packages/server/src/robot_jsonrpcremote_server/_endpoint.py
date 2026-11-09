@@ -2,9 +2,12 @@ import asyncio
 import datetime
 import functools
 import logging
+import pickle
 import uuid
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from typing import Any, TypeVar, cast
+
+from robot.utils import DotDict
 
 from jsonrpcpeer import JsonRpcErrorCode, JsonRpcPeer, JsonRpcResponseError
 from robot_jsonrpcremote_protocol import (
@@ -28,10 +31,12 @@ from robot_jsonrpcremote_protocol import (
     SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
+    ValueFormat,
+    agreed_pickle_protocol,
 )
 
 from .__version__ import __version__
-from ._runner import KeywordFailedError, RobotRemoteContext
+from ._runner import DEFAULT_VALUE_FORMAT, KeywordFailedError, RobotRemoteContext
 
 logger = logging.getLogger("robot_jsonrpcremote_server.endpoint")
 
@@ -80,9 +85,17 @@ def _robot_log_level_to_protocol_level(level: str) -> LogLevel:
 
 class RobotServerEndpoint(ServerEndpoint):
     def __init__(
-        self, remote_context: RobotRemoteContext, libraries: Sequence[str] | None = None, verbose: bool = False
+        self,
+        remote_context: RobotRemoteContext,
+        libraries: Sequence[str] | None = None,
+        verbose: bool = False,
+        pickles: bool = True,
     ) -> None:
         self.remote_context = remote_context
+        # Whether the server reads pickles; with --no-pickles, it states none in its answer to `initialize`.
+        self.reads_pickles = pickles
+        # The value format that this client agreed with the server in `initialize`.
+        self.value_format = DEFAULT_VALUE_FORMAT
         self.libraries = list(libraries) if libraries is not None else []
         self.verbose = verbose
         # The log level that the client reported; the runner runs this client's commands at it.
@@ -164,9 +177,12 @@ class RobotServerEndpoint(ServerEndpoint):
         self.initialize_received = True
         if params.log_level is not None:
             self.log_level = params.log_level
+        own = pickle.HIGHEST_PROTOCOL if self.reads_pickles else None
+        theirs = params.capabilities.pickle_protocol if params.capabilities is not None else None
+        self.value_format = ValueFormat(agreed_pickle_protocol(own, theirs), dict_types=(DotDict,))
 
         return InitializeResult(
-            capabilities=ServerCapabilities(support_exit=True, libraries=self.libraries),
+            capabilities=ServerCapabilities(support_exit=True, libraries=self.libraries, pickle_protocol=own),
             server_info=ServerInfo(name="RobotJsonRpcRemoteServer", version=__version__),
         )
 
@@ -227,7 +243,13 @@ class RobotServerEndpoint(ServerEndpoint):
         try:
             return RunKeywordResult(
                 result=await self.remote_context.run_keyword(
-                    params.library_token, params.name, params.args or [], params.kwargs or {}, subscriber=self
+                    params.library_token,
+                    params.name,
+                    params.args or [],
+                    params.kwargs or {},
+                    subscriber=self,
+                    value_format=self.value_format,
+                    server_reads_pickles=self.reads_pickles,
                 )
             )
         except KeywordFailedError as failure:

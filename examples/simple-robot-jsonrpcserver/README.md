@@ -2,9 +2,10 @@
 
 A minimal, **hand-written** JSON-RPC 2.0 remote server built directly on `jsonrpcpeer` and `robotframework-jsonrpcremote-protocol` — without the ready-made `robotframework-jsonrpcremote-server` package. It shows how to implement the protocol handlers yourself.
 
-It exposes a single library, `SimpleRobotLibrary`, with one keyword:
+It exposes a single library, `SimpleRobotLibrary`, with two keywords:
 
 *   **`Echo`** — returns the given `message` unchanged, and emits a few `robot/log` notifications while it runs (to demonstrate live log forwarding).
+*   **`Move`** — returns a `Point` moved by `dx` and `dy`. `Point` is a dataclass of `simple_robot_jsonrpcserver.shapes`, which the library definition names by its module and qualified name. The server reads no pickles, as a server in another language, so the `Point` travels as typed JSON, `{"x": 1, "y": 2}`; the client must have the package installed to get a `Point` back.
 
 ## Run it
 

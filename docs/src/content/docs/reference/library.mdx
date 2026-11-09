@@ -12,7 +12,7 @@ options of the client:
 Library    JsonRpcRemote    uri    library_name    *library_args
 ...        rpc_timeout=10.0    rpc_scope=SUITE
 ...        rpc_connect_retry_timeout=0    rpc_connect_retry_interval=1.0
-...        **library_kw_args
+...        rpc_pickles=True    **library_kw_args
 ```
 
 | Argument                     | Default                | Meaning |
@@ -24,6 +24,7 @@ Library    JsonRpcRemote    uri    library_name    *library_args
 | `rpc_scope`                  | `SUITE`                | When a session ends: `TEST`, `SUITE` or `GLOBAL`; see [Sessions and rpc_scope](/robotframework-jsonrpcremote/guides/sessions/). |
 | `rpc_connect_retry_timeout`  | `0`                    | How long to keep trying to connect while the server is not reachable, in seconds or as a time string such as `1 minute`. `0` turns connect retry off; see [Lost connections and connect retry](/robotframework-jsonrpcremote/guides/lost-connections/). |
 | `rpc_connect_retry_interval` | `1.0`                  | How long to wait between two attempts to connect, in seconds or as a time string. It must be greater than 0 when connect retry is on. |
+| `rpc_pickles`                | `True`                 | Whether the client reads and sends pickles, which carry Python objects that JSON cannot hold between Python peers. With `False`, it states no pickle protocol, and a value that needs a pickle fails the call; see [Values](/robotframework-jsonrpcremote/reference/protocol/#values). |
 | `**library_kw_args`          | none                   | Named arguments of the remote library. |
 
 ## Arguments of the remote library
@@ -48,10 +49,28 @@ of the library's `__init__`, so `int`, `float`, `bool`, `Decimal`, `date`,
 without type hints, they arrive as strings. Strings arrive as the suite resolved
 them, so a Windows path or a regular expression stays as it is.
 
+## Keyword arguments and return values
+
+Arguments and return values of keywords travel as the
+[protocol](/robotframework-jsonrpcremote/reference/protocol/#values) describes:
+JSON values as they are, values of dataclasses, enums, named tuples and types
+such as `datetime`, `Decimal` or `bytes` as typed JSON, and other Python
+objects as pickles, if both sides read them.
+
+The client gives Robot Framework the classes of the declared types of the
+keywords, so that Robot Framework converts arguments on the client, as for a
+local library, and Libdoc describes the classes. A return value of a declared
+class becomes an instance of that class. For that, the classes must be
+installed on the client, in the same modules as on the server. A class that the
+client cannot import goes to Robot Framework by its name, and its place counts
+as one without a declared type: a return value in the form of the class arrives
+in that form, as a dict, and one that names the class in `__type__` fails the
+call with a message that names the class.
+
 ## Options of the client
 
-The options `rpc_timeout`, `rpc_scope`, `rpc_connect_retry_timeout` and
-`rpc_connect_retry_interval` belong to `JsonRpcRemote` itself and do not reach
+The options `rpc_timeout`, `rpc_scope`, `rpc_connect_retry_timeout`,
+`rpc_connect_retry_interval` and `rpc_pickles` belong to `JsonRpcRemote` itself and do not reach
 the remote library, so they can be mixed with its named arguments:
 
 ```text

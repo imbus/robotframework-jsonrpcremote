@@ -35,7 +35,7 @@ class _FakeRobot:
     def set_log_level(self, level: str) -> None:
         self.log_levels.append(level)
 
-    def run_keyword(self, library_token: str, name: str, args: Any, kwargs: Any) -> str:
+    def run_keyword(self, library_token: str, name: str, args: Any, kwargs: Any, *value_format: Any) -> str:
         self.calls.append(name)
         if name == "Blocking":
             self.blocking.set()

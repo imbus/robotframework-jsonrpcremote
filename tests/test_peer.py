@@ -1835,6 +1835,20 @@ async def test_result_that_cannot_be_written_is_answered_and_logged(
     assert "object" in errors[0].getMessage()
 
 
+async def _not_a_number(params: Any) -> Any:
+    return {"value": float("nan")}
+
+
+async def test_result_with_nan_is_answered_with_an_internal_error(raw_peer: _RawPeer) -> None:
+    # JSON has no NaN, and a peer that reads JSON strictly, such as vscode-jsonrpc, could not read it.
+    raw_peer.peer.register_request_handler("call", _not_a_number)
+
+    answers = await raw_peer.answers_to(_raw_frame(_rpc(id=7, method="call", params={})))
+
+    assert _codes_and_ids(answers) == [(JsonRpcErrorCode.INTERNAL_ERROR, 7)]
+    assert not any(b"NaN" in written for written in raw_peer.writer.written)
+
+
 async def test_response_above_the_size_limit_is_answered_and_logged(caplog: pytest.LogCaptureFixture) -> None:
     raw = await _start_raw_peer(max_message_size=200)
     raw.peer.register_request_handler("call", _too_long)

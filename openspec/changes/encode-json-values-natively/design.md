@@ -115,7 +115,7 @@ The client takes the declared type of each value from the keyword's `ArgumentDef
 The return value is decoded by `return_type`.
 
 The server takes the same from Robot Framework's `ArgumentSpec` of the keyword. It decodes each argument before it builds `running.Keyword`, and `_as_robot_data()` still escapes the strings that remain. When decoding fails:
-- If the value was plain JSON and Robot Framework has a converter for the declared type, the server hands the plain value to Robot Framework unchanged. `TypeConverter.converter_for()` says so: it returns no converter in 7.2 and an `UnknownConverter` in 7.5 for a type without one, such as a dataclass, so both count as none. Robot Framework then converts it, as `"red"` for an enum, or fails with its own message, as for `"BLUE"`.
+- If the value carries no marker and Robot Framework has a converter for the type at which decoding failed, the server hands the value to Robot Framework unchanged. The type is the one that `ValueDoesNotFitError` names, not the declared type of the argument: for `list[Point]`, Robot Framework's list converter would let a dict that is no `Point` through. `TypeConverter.converter_for()` says whether there is a converter: it returns no converter in 7.2 and an `UnknownConverter` in 7.5 for a type without one, such as a dataclass, so both count as none. Robot Framework then converts the value, as `"red"` for an enum, or fails with its own message, as for `"BLUE"`.
 - Otherwise the server raises `JsonRpcResponseError(INVALID_PARAMS, ...)` with the message of decision 7, and the keyword does not run.
 
 Robot Framework then converts what it gets once more. Decoded values are already of their type, so its converters leave them alone.
@@ -126,15 +126,16 @@ Robot Framework then converts what it gets once more. Decoded values are already
 
 The value format raises two errors, which the module exports:
 
-- **`ValueCannotTravelError(TypeError)`:** a value that may not travel without pickles, and a pickle that arrives without the agreement. It carries the type of the value.
-- **`ValueDoesNotFitError(ValueError)`:** a typed value that does not fit, whose class cannot be imported, or whose name is not a supported kind. It carries the type name and the reason.
+- **`ValueCannotTravelError(TypeError)`:** a value that may not travel without pickles. It carries the type name of the value. Its subclass `PickleNotAgreedError` is a pickle that arrives without the agreement.
+- **`ValueDoesNotFitError(ValueError)`:** a typed value that does not fit, whose class cannot be imported, or whose name is not a supported kind. It carries the type name, the value and the reason, and its method `describe(kind, name)` words the failure as Robot Framework words a failed conversion, with Robot Framework's names for the types of JSON values, such as `dictionary`.
 
-Client and server add the argument or the return value, and the side:
+Client and server add the argument or the return value, and why no pickles travel:
 
 - `Argument 'at' of type 'Widget' cannot be sent: it is not JSON, and the server reads no pickles.`, or `... and rpc_pickles is off.`
-- `The return value of type 'Widget' cannot be sent: it is not JSON, and the client reads no pickles.`; the server answers it with `-32603`.
-- `The server sent the return value as a pickle, but the client reads no pickles.` and `Argument 'at' is a pickle, but the server reads no pickles.`; the server answers the second with `-32602`.
-- `Argument 'at' got value {'x': 1} that cannot be converted to mytypes.Point: missing field 'y'.` and `Return value got value {'x': 1} that cannot be converted to mytypes.Point: missing field 'y'.`, after Robot Framework's wording. A value in these messages is shown with `repr()`, shortened as Robot Framework shortens values in its messages.
+- `The return value of type 'Widget' cannot be sent: it is not JSON, and the client reads no pickles.`, or `... and pickles are turned off with --no-pickles.`; the server answers it with `-32603`.
+- `The server sent the return value as a pickle, but rpc_pickles is off.`, or `... but no pickles are agreed.`
+- `Argument 'at' is a pickle, but the server reads no pickles.`, or `... but no pickles are agreed.` where the server reads pickles and the client stated none; the server answers it with `-32602`.
+- `Argument 'at' got value '{'x': 1}' (dictionary) that cannot be converted to mytypes.Point: missing field 'y'` and `Return value '{'x': 1}' (dictionary) cannot be converted to mytypes.Point: missing field 'y'`, as Robot Framework words them, with and without the name of an argument.
 
 ### 8. Turning pickles off on the server
 

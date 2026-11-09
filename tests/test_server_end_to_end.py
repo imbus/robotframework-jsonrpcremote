@@ -5,6 +5,7 @@ some of the fields of an error, and it does not see what the server logs.
 """
 
 import asyncio
+import pickle
 import socket
 import subprocess
 import sys
@@ -27,6 +28,7 @@ from robot_jsonrpcremote_protocol import (
     RUN_KEYWORD_REQUEST,
     SET_LOG_LEVEL_NOTIFICATION,
     ArgumentKind,
+    ClientCapabilities,
     FinalizeLibraryParams,
     FinalizeLibraryResult,
     ImportLibraryParams,
@@ -34,6 +36,7 @@ from robot_jsonrpcremote_protocol import (
     InitializedParams,
     InitializeParams,
     InitializeResult,
+    KeywordDefinition,
     LibraryDefinition,
     LogLevel,
     LogParams,
@@ -46,14 +49,60 @@ from robot_jsonrpcremote_protocol import (
 )
 from robot_jsonrpcremote_server.__version__ import __version__
 
+# The types of the typed keywords of EndToEndLib, in a module of their own.
+TYPES = """\
+from dataclasses import dataclass
+from enum import Enum
+
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+
+class Color(Enum):
+    RED = "red"
+    GREEN = "green"
+"""
+
 LIBRARY = """\
 import logging
+from datetime import datetime
+
+from end_to_end_types import Color, Point
 
 from robot.api import ContinuableFailure, FatalError, SkipExecution, logger
 from robot.api.deco import keyword
 
 
+# An object of a class that has no form in the value format.
+class Thing:
+    pass
+
+
 class EndToEndLib:
+    def paint(self, color: Color, at: list[Point] | None = None) -> Point:
+        return Point(len(color.name), len(at or []))
+
+    def move(self, at: Point) -> Point:
+        return Point(at.x + 1, at.y + 1)
+
+    def repr_of_point(self, at: Point) -> str:
+        return repr(at)
+
+    def make_point(self):
+        return Point(1, 2)
+
+    def when(self, when: datetime) -> datetime:
+        return when
+
+    def make_tuple(self):
+        return (1, 2)
+
+    def make_thing(self):
+        return Thing()
+
     def log_at_each_level(self):
         logger.trace("library at TRACE")
         logger.debug("library at DEBUG")
@@ -334,6 +383,7 @@ def _running_server(directory: Path, *arguments: str) -> Iterator[_Server]:
 @pytest.fixture(scope="module")
 def library_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
     directory: Path = tmp_path_factory.mktemp("library")
+    (directory / "end_to_end_types.py").write_text(TYPES)
     (directory / "EndToEndLib.py").write_text(LIBRARY)
     (directory / "MissingDependencyLib.py").write_text(MISSING_DEPENDENCY_LIBRARY)
     (directory / "FailingInitLib.py").write_text(FAILING_INIT_LIBRARY)
@@ -372,6 +422,12 @@ def server_with_tracebacks(library_directory: Path) -> Iterator[_Server]:
 
 
 @pytest.fixture(scope="module")
+def server_without_pickles(library_directory: Path) -> Iterator[_Server]:
+    with _running_server(library_directory, "--no-pickles", "EndToEndLib") as running:
+        yield running
+
+
+@pytest.fixture(scope="module")
 def port(server: _Server) -> int:
     return server.port
 
@@ -389,13 +445,14 @@ class _Session:
         self.messages.append(params.message)
         self.log_params.append(params)
 
-    async def initialize(self, log_level: str | None = None) -> InitializeResult:
+    async def initialize(self, log_level: str | None = None, pickle_protocol: int | None = None) -> InitializeResult:
+        capabilities = ClientCapabilities(pickle_protocol=pickle_protocol)
         return await self.peer.send_request_typed(
-            InitializeResult, INITIALIZE_REQUEST, InitializeParams(log_level=log_level)
+            InitializeResult, INITIALIZE_REQUEST, InitializeParams(capabilities=capabilities, log_level=log_level)
         )
 
-    async def handshake(self, log_level: str | None = None) -> None:
-        await self.initialize(log_level)
+    async def handshake(self, log_level: str | None = None, pickle_protocol: int | None = None) -> None:
+        await self.initialize(log_level, pickle_protocol)
         await self.peer.send_notification(INITIALIZED_NOTIFICATION, InitializedParams())
 
     async def import_library(
@@ -442,10 +499,12 @@ async def _connection(port: int) -> AsyncIterator[_Session]:
 
 
 @asynccontextmanager
-async def _session(port: int, log_level: str | None = None) -> AsyncIterator[_Session]:
+async def _session(
+    port: int, log_level: str | None = None, pickle_protocol: int | None = None
+) -> AsyncIterator[_Session]:
     """A connection to the server, after the handshake and with the library imported."""
     async with _connection(port) as session:
-        await session.handshake(log_level)
+        await session.handshake(log_level, pickle_protocol)
         await session.import_library("EndToEndLib")
         yield session
 
@@ -594,6 +653,157 @@ async def test_keyword_that_does_not_exist_is_answered_with_keyword_not_found(se
     assert error.message not in server.log()
 
 
+def _keyword(imported: ImportLibraryResult, name: str) -> KeywordDefinition:
+    assert imported.definition is not None
+    return next(keyword for keyword in imported.definition.keywords if keyword.name == name)
+
+
+async def test_the_definition_names_classes_with_their_module(port: int) -> None:
+    async with _connection(port) as session:
+        await session.handshake()
+        imported = await session.import_library("EndToEndLib")
+
+    paint = _keyword(imported, "Paint")
+    assert [arg.type for arg in paint.args] == ["end_to_end_types.Color", "list[end_to_end_types.Point] | None"]
+
+
+async def test_the_definition_gives_the_return_type(port: int) -> None:
+    async with _connection(port) as session:
+        await session.handshake()
+        imported = await session.import_library("EndToEndLib")
+
+    assert _keyword(imported, "Paint").return_type == "end_to_end_types.Point"
+
+
+async def test_a_keyword_without_a_return_type_has_none(port: int) -> None:
+    async with _connection(port) as session:
+        await session.handshake()
+        imported = await session.import_library("EndToEndLib")
+
+    assert _keyword(imported, "Make Point").return_type is None
+
+
+async def test_the_definition_names_standard_types_as_robot_framework_does(port: int) -> None:
+    async with _connection(port) as session:
+        await session.handshake()
+        imported = await session.import_library("EndToEndLib")
+
+    when = _keyword(imported, "When")
+    assert [arg.type for arg in when.args] == ["datetime"]
+    assert when.return_type == "datetime"
+
+
+async def test_a_dataclass_argument_becomes_its_class(port: int) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Repr Of Point", [{"x": 1, "y": 2}])
+
+    assert result.error is None
+    assert result.result == "Point(x=1, y=2)"
+
+
+async def test_an_enum_name_is_converted_as_by_a_local_library(port: int) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Paint", ["red"])
+
+    # Paint returns a Point whose x is the length of the name of the member.
+    assert result.error is None
+    assert result.result == {"x": 3, "y": 0}
+
+
+async def test_an_enum_name_that_is_no_member_fails_with_robot_frameworks_message(port: int) -> None:
+    async with _session(port) as session:
+        result = await session.run_keyword("Paint", ["BLUE"])
+
+    assert result.error is not None
+    assert result.error.message == (
+        "ValueError: Argument 'color' got value 'BLUE' that cannot be converted to Color: "
+        "Color does not have member 'BLUE'. Available: 'GREEN' and 'RED'"
+    )
+
+
+async def test_a_dataclass_form_that_does_not_fit_is_refused(port: int) -> None:
+    async with _session(port) as session:
+        error = await _error_of(session.run_keyword("Move", [{"x": 1}]))
+
+    assert error.code == -32602
+    assert error.message == (
+        "Argument 'at' got value '{'x': 1}' (dictionary) that cannot be converted to end_to_end_types.Point: "
+        "missing field 'y'"
+    )
+
+
+@pytest.mark.parametrize("pickle_protocol", [None, pickle.HIGHEST_PROTOCOL], ids=["no pickles", "pickles"])
+async def test_a_declared_return_value_travels_in_its_form(port: int, pickle_protocol: int | None) -> None:
+    async with _session(port, pickle_protocol=pickle_protocol) as session:
+        result = await session.run_keyword("Move", [{"x": 1, "y": 2}])
+
+    assert result.result == {"x": 2, "y": 3}
+
+
+async def test_a_return_value_without_a_declared_type_is_tagged_or_pickled_by_client(port: int) -> None:
+    async with _session(port) as not_reading, _session(port, pickle_protocol=pickle.HIGHEST_PROTOCOL) as reading:
+        to_not_reading = await not_reading.run_keyword("Make Point")
+        to_reading = await reading.run_keyword("Make Point")
+
+    assert to_not_reading.result == {"__type__": "end_to_end_types.Point", "x": 1, "y": 2}
+    assert isinstance(to_reading.result, dict)
+    assert set(to_reading.result) == {"__pickled__"}
+
+
+# A pickle whose unpickling would import a module that does not exist.
+_PICKLE_OF_A_MISSING_MODULE = {"__pickled__": b"cmodule_that_does_not_exist\nThing\n.".hex()}
+
+
+async def test_pickles_go_only_to_a_client_that_reads_them(port: int) -> None:
+    async with _session(port, pickle_protocol=pickle.HIGHEST_PROTOCOL) as reading, _session(port) as not_reading:
+        to_reading = await reading.run_keyword("Make Tuple")
+        to_not_reading = await not_reading.run_keyword("Make Tuple")
+
+    assert isinstance(to_reading.result, dict)
+    assert set(to_reading.result) == {"__pickled__"}
+    assert to_not_reading.result == {"__type__": "tuple", "value": [1, 2]}
+
+
+async def test_a_pickle_argument_without_the_agreement_is_refused(port: int) -> None:
+    async with _session(port) as session:
+        error = await _error_of(session.run_keyword("Repr Of", [_PICKLE_OF_A_MISSING_MODULE]))
+
+    # Not the ModuleNotFoundError of unpickling it.
+    assert error.code == -32602
+    assert error.message == "Argument 'value' is a pickle, but no pickles are agreed."
+
+
+async def test_a_pickle_argument_to_a_server_without_pickles_is_refused(server_without_pickles: _Server) -> None:
+    async with _session(server_without_pickles.port, pickle_protocol=pickle.HIGHEST_PROTOCOL) as session:
+        error = await _error_of(session.run_keyword("Repr Of", [_PICKLE_OF_A_MISSING_MODULE]))
+
+    assert error.code == -32602
+    assert error.message == "Argument 'value' is a pickle, but the server reads no pickles."
+
+
+async def test_a_return_value_that_cannot_travel_to_a_client_without_pickles_is_an_error(port: int) -> None:
+    async with _session(port) as session:
+        error = await _error_of(session.run_keyword("Make Thing"))
+
+    assert error.code == -32603
+    assert error.message == (
+        "The return value of type 'EndToEndLib.Thing' cannot be sent: it is not JSON, and the client reads no pickles."
+    )
+
+
+async def test_a_return_value_that_cannot_travel_from_a_server_without_pickles_names_the_option(
+    server_without_pickles: _Server,
+) -> None:
+    async with _session(server_without_pickles.port, pickle_protocol=pickle.HIGHEST_PROTOCOL) as session:
+        error = await _error_of(session.run_keyword("Make Thing"))
+
+    assert error.code == -32603
+    assert error.message == (
+        "The return value of type 'EndToEndLib.Thing' cannot be sent: it is not JSON, "
+        "and pickles are turned off with --no-pickles."
+    )
+
+
 async def test_name_with_embedded_values_is_answered_with_keyword_not_found(port: int) -> None:
     async with _session(port) as session:
         error = await _error_of(session.run_keyword("Do It Now"))
@@ -691,7 +901,8 @@ async def test_library_whose_initialization_fails_is_reported_with_the_message_o
 
 
 async def test_return_value_that_cannot_be_transferred_is_answered_with_a_json_rpc_error(port: int) -> None:
-    async with _session(port) as session:
+    # With pickles, so that the lambda gets as far as pickling.
+    async with _session(port, pickle_protocol=pickle.HIGHEST_PROTOCOL) as session:
         error = await _error_of(session.run_keyword("Return A Lambda"))
 
     assert error.code == -32603
@@ -1175,5 +1386,7 @@ async def test_initialize_reports_what_the_server_serves(server_with_two_librari
     async with _connection(server_with_two_libraries.port) as session:
         result = await session.initialize()
 
-    assert result.capabilities == ServerCapabilities(support_exit=True, libraries=["SecondLib", "EndToEndLib"])
+    assert result.capabilities == ServerCapabilities(
+        support_exit=True, libraries=["SecondLib", "EndToEndLib"], pickle_protocol=pickle.HIGHEST_PROTOCOL
+    )
     assert result.server_info == ServerInfo(name="RobotJsonRpcRemoteServer", version=__version__)

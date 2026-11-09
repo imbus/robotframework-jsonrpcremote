@@ -5,7 +5,6 @@ import functools
 import inspect
 import itertools
 import json
-import pickle
 import re
 import types
 from typing import (
@@ -160,6 +159,8 @@ def as_json(obj: Any, indent: Optional[bool] = None, compact: Optional[bool] = N
         indent=4 if indent else None,
         separators=(",", ":") if compact else None,
         ensure_ascii=False,
+        # JSON has no NaN or Infinity, which json.dumps would write otherwise.
+        allow_nan=False,
     )
 
 
@@ -821,33 +822,3 @@ class ValidateMixin:
     def __post_init__(self) -> None:
         self._convert()
         self._validate()
-
-
-def is_jsonable_dict(o: Any) -> bool:
-    return isinstance(o, dict) and "__pickled__" in o
-
-
-def object_to_jsonable_dict(o: Any) -> dict[str, Any]:
-    return {"__pickled__": pickle.dumps(o).hex()}
-
-
-def jsonable_dict_to_object(d: dict[str, Any]) -> Any:
-    if is_jsonable_dict(d):
-        return pickle.loads(bytes.fromhex(d["__pickled__"]))
-    raise ValueError("Dictionary does not contain pickled data")
-
-
-def value_to_jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return object_to_jsonable_dict(value)
-
-
-def jsonable_to_value(value: Any) -> Any:
-    if value is None:
-        return None
-
-    if is_jsonable_dict(value):
-        return jsonable_dict_to_object(value)
-
-    return value

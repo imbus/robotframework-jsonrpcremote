@@ -60,8 +60,18 @@ welcome as
 - Arguments and return values of keywords and the arguments of a library import
   are JSON values, nested to any depth. Argument defaults are JSON scalars or the
   text that Libdoc shows for them.
+- Lists and dicts of JSON values travel as plain JSON.
 - Between Python peers, keyword arguments and return values that JSON cannot
-  carry travel as pickles, so they keep their type.
+  carry travel as pickles, so they keep their type, if both sides read pickles,
+  as they state in `robot/initialize`; `--no-pickles` on the server and
+  `rpc_pickles=False` on the client turn them off.
+- Typed values: dataclasses, enums, named tuples, standard types such as
+  `datetime`, `Decimal`, `bytes`, `UUID` and `Path`, and tuples, sets and dicts
+  with keys other than strings travel as JSON in a form of their own, which a
+  server in another language reads and writes, with classes that client and
+  server share by their module names. The library definition names the types of
+  arguments and return values; see the
+  [protocol](/robotframework-jsonrpcremote/reference/protocol/#values).
 
 **Package `jsonrpcpeer`**
 
@@ -83,16 +93,7 @@ welcome as
 
 - **More transports:** WebSockets and Streamable HTTP, and encryption with TLS.
 - **Servers in other languages:** example servers in other languages, such as
-  Rust, Java and .NET, and values that every language can read. The Python
-  implementation sends lists and dicts of JSON values as plain JSON, and other
-  values by these conventions:
-  - date and time as ISO 8601 strings, such as `"2025-12-18T14:30:00+00:00"`;
-  - binary data as Base64 strings;
-  - decimal numbers as strings, to keep their precision, such as `"123.45"`;
-  - UUIDs as strings, such as `"123e4567-e89b-12d3-a456-426614174000"`;
-  - paths as strings, preferably with `/` as the separator;
-  - other objects as JSON objects with a field such as `__type__` that names the
-    type, such as `{"__type__": "MyCustomObject", "id": 1, "name": "foo"}`.
+  Rust, Java and .NET.
 - **A Robot Framework process per session** on the server, so that sessions run
   apart from each other.
 - **Keyword timeouts and cancellation**, including the test and keyword

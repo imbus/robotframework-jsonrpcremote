@@ -163,8 +163,9 @@ The server does not authenticate clients and does not encrypt the connection.
 Whoever can connect can run the keywords of the libraries it serves. The
 Python implementation sends Python objects as pickles, and reading a pickle can
 run arbitrary code: on the server for keyword arguments, and on the client for
-return values. Make the server reachable only for clients you trust, and connect
-only to servers you trust.
+return values. With `--no-pickles` on the server or `rpc_pickles=False` on the
+client, no pickles travel in either direction. Make the server reachable only
+for clients you trust, and connect only to servers you trust.
 :::
 
 ## stdio

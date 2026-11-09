@@ -27,7 +27,14 @@ from robot_jsonrpcremote_protocol import (
     SetLogLevelParams,
     ShutdownParams,
     ShutdownResult,
+    ValueFormat,
+    type_name,
 )
+
+from .shapes import Point
+
+# This server reads and sends no pickles, as a server in another language: values travel as JSON and typed JSON.
+VALUES = ValueFormat()
 
 
 class SimpleRobotServerEndpoint(ServerEndpoint):
@@ -45,6 +52,7 @@ class SimpleRobotServerEndpoint(ServerEndpoint):
         print(f"Initializing client: {params}")
         self.initialize_received = True
 
+        # It states no pickle_protocol, since it reads no pickles.
         return InitializeResult(
             capabilities=ServerCapabilities(support_exit=True, libraries=["SimpleRobotLibrary"]),
             server_info=ServerInfo(name="SimpleRobotServer", version="1.0"),
@@ -79,7 +87,20 @@ class SimpleRobotServerEndpoint(ServerEndpoint):
                         doc="Echoes the given message.",
                         tags=["example"],
                         source=__file__,
-                    )
+                    ),
+                    KeywordDefinition(
+                        name="move",
+                        args=[
+                            # A class goes by its module and its qualified name, which the client imports too.
+                            ArgumentDefinition(name="point", type=type_name(Point), doc="The point to move."),
+                            ArgumentDefinition(name="dx", type="int", doc="How far to move it along x."),
+                            ArgumentDefinition(name="dy", type="int", doc="How far to move it along y."),
+                        ],
+                        return_type=type_name(Point),
+                        doc="Returns the point moved by ``dx`` and ``dy``.",
+                        tags=["example"],
+                        source=__file__,
+                    ),
                 ],
             ),
         )
@@ -102,6 +123,13 @@ class SimpleRobotServerEndpoint(ServerEndpoint):
             for i in range(3):
                 await self.log(f"Echo {i} request received with params: {params}", level=LogLevel.WARN, html=True)
             return RunKeywordResult(result=result)
+
+        if params.name == "move":
+            args = params.args or []
+            # A Point arrives as an object with its fields, and goes back as one.
+            point = VALUES.decode(args[0], Point)
+            moved = Point(point.x + args[1], point.y + args[2])
+            return RunKeywordResult(result=VALUES.encode(moved, Point))
 
         raise JsonRpcResponseError(
             RobotJsonRpcErrorCode.KEYWORD_NOT_FOUND,

@@ -22,6 +22,27 @@ A Failing Keyword Fails Only Its Call
     ${result}=    Echo    still there
     Should Be Equal    ${result}    still there
 
+Lists And Dicts Reach A Server In Another Language As JSON
+    [Documentation]    The Node server states no pickle protocol, so the client sends it no pickles.
+    ${json}=    Json Of    ${{[1, 2]}}
+    Should Be Equal    ${json}    [1,2]
+    &{dict}=    Create Dictionary    a=${1}
+    ${json}=    Json Of    ${dict}
+    Should Be Equal    ${json}    {"a":1}
+
+A Tuple Comes Back Through A Server In Another Language
+    [Documentation]    The tuple travels as typed JSON that names its type, which the Node server returns as it is.
+    ${json}=    Json Of    ${{(1, "a")}}
+    Should Be Equal    ${json}    {"__type__":"tuple","value":[1,"a"]}
+    ${result}=    Echo    ${{(1, "a")}}
+    Should Be Equal    ${result}    ${{(1, "a")}}
+    Should Be True    isinstance($result, tuple)
+
+An Object That Needs A Pickle Fails Before It Is Sent
+    Run Keyword And Expect Error
+    ...    TypeError: Argument 'message' of type 'object' cannot be sent: it is not JSON, and the server reads no pickles.
+    ...    Echo    ${{object()}}
+
 A Log Message Reaches The Log
     Write To The Log    message-from-node
     ${messages}=    Get Captured Log Messages
