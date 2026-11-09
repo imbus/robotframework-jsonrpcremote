@@ -26,6 +26,7 @@ SERVER_ARGS = _server_args("StdioEchoLib")
 LOSS_SERVER_ARGS = _server_args("ConnectionLossLib")
 PROBE_SERVER_COMMAND = _server_command("ServerProbeLib")
 LOSS_SERVER_COMMAND = _server_command("ConnectionLossLib")
+GLOBAL_COUNTER_COMMAND = _server_command("GlobalCounterLib")
 OUTPUT_SERVER_COMMAND = _server_command("StdioOutputLib")
 # Where StdioOutputLib on the server writes the PID of the child process that keeps running.
 CHILD_PID_FILE = os.path.join(tempfile.gettempdir(), "jsonrpcremote-pipe-output-child.pid")

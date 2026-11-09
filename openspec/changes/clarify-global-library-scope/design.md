@@ -47,7 +47,7 @@ Probed again on 2026-11-09, after `add-pipe-transport`, with the same libraries:
 
 When the new session did not start its server process, as for `tcp://` and `pipe://<name>`, and the registered definition has the scope `GLOBAL`, the warning ends with "the remote library was imported again; its library scope is GLOBAL, so its server-side state is kept unless the server restarted". When the session started the server process, as for `stdio:` and `pipe:<command>`, and for the other scopes, it keeps "the remote library was imported again, so its server-side state was reset". The text says "library scope", so that it is not read as `rpc_scope=GLOBAL`.
 
-The session tells whether it started its server process from its resources, which hold the process for exactly these URIs. The registered definition is the one Robot Framework registered the keywords for. The definition of the new session has the same scope whenever the warning is logged, since `_check_definition()` fails the call otherwise.
+The session notes that it started its server process when it starts it, which it does for exactly these URIs. Its resources are no proof: they drop the process once it has been reaped, which can happen before the warning if the new process exits at once. The registered definition is the one Robot Framework registered the keywords for. The definition of the new session has the same scope whenever the warning is logged, since `_check_definition()` fails the call otherwise.
 
 *Alternatives considered:*
 

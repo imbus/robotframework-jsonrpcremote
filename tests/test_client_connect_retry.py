@@ -328,6 +328,29 @@ def test_call_after_a_lost_connection_reconnects_and_logs_a_warning(
     assert float(match.group(1)) >= 0.4, "the time until it reconnected includes the wait for the server"
 
 
+@pytest.mark.parametrize("server", ["tcp", "pipe"], indirect=True)
+def test_reconnect_warning_for_a_global_library_says_its_state_is_kept(
+    server: FakeServer, connect: Callable[..., JsonRpcRemote], caplog: pytest.LogCaptureFixture
+) -> None:
+    # A server that the client did not start keeps one instance of a GLOBAL library for all its clients.
+    server.library_scope = "GLOBAL"
+    remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
+    lost = _session(remote)
+    server.close_connections()
+    wait_until(lambda: lost.lost)
+    caplog.set_level(logging.WARNING, logger="RobotFramework")
+
+    assert _call(remote, "again") == "echo: again"
+
+    [(level, message)] = _robot_log(caplog)
+    assert level == logging.WARNING
+    assert message.endswith(
+        "; the remote library was imported again; its library scope is GLOBAL, "
+        "so its server-side state is kept unless the server restarted."
+    ), message
+    assert "was reset" not in message
+
+
 def test_reconnect_warning_counts_the_failed_attempts(
     server: FakeServer, connect: Callable[..., JsonRpcRemote], caplog: pytest.LogCaptureFixture
 ) -> None:

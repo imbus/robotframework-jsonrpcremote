@@ -130,6 +130,8 @@ class FakeServer:
         self.keywords = list(keywords)
         # The name of the library in the default answer to an import; `None` names it as the import asked for it.
         self.library_name: str | None = None
+        # The scope of the library in the default answer to an import, as Robot Framework names it, such as "GLOBAL".
+        self.library_scope: str | None = None
         self.connections: list[FakeConnection] = []
         # The method of each request and each ``robot/set_log_level`` notification, in order.
         self.requests: list[str] = []
@@ -285,7 +287,9 @@ class FakeServer:
             requested = params.get("name") or "FakeLib"
             # Like the real server: every import gets a token of its own, and the library keeps its name.
             token = f"{requested}_{len(self.requests)}"
-            definition = LibraryDefinition(name=self.library_name or requested, keywords=keywords)
+            definition = LibraryDefinition(
+                name=self.library_name or requested, keywords=keywords, scope=self.library_scope
+            )
             return ImportLibraryResult(token=token, definition=definition)
         if method == RUN_KEYWORD_REQUEST:
             args = params.get("args") or []

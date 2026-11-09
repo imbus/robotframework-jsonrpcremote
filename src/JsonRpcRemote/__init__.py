@@ -175,6 +175,17 @@ def _attempts(count: int) -> str:
     return f"{count} attempt" if count == 1 else f"{count} attempts"
 
 
+def _state_after_reimport(definition: LibraryDefinition | None, started_server: bool) -> str:
+    """The end of the warning after a reconnect: what the new import means for the library's server-side state."""
+    if definition is not None and definition.scope == "GLOBAL" and not started_server:
+        # Robot Framework keeps one instance of a GLOBAL library for the lifetime of the server process.
+        return (
+            "the remote library was imported again; its library scope is GLOBAL, "
+            "so its server-side state is kept unless the server restarted."
+        )
+    return "the remote library was imported again, so its server-side state was reset."
+
+
 def _definition_changes(registered: LibraryDefinition | None, current: LibraryDefinition | None) -> str:
     """Describe how ``current`` differs from ``registered``; empty if they are equal."""
     if registered is None or current is None:
@@ -436,6 +447,9 @@ class _Session:
         self.connection_error: BaseException | None = None
         # Exit code of the server that the session started, once close_connection() has released it.
         self.process_returncode: int | None = None
+        # Whether the session started its server process, for a stdio: or pipe: URI with a command; the
+        # resources drop the process once it is reaped, so they cannot tell it later.
+        self.started_server = False
         # Set when the client ends the session itself; the end of its connection is then no loss.
         self.closed_by_client = False
 
@@ -609,6 +623,7 @@ class _Session:
                 f"{error.strerror}: {argv[0]!r} (pipe://<name> connects to a server that listens on a pipe)",
             ) from None
         self._res.process = process
+        self.started_server = True
         return reader, writer
 
     async def _create_stdio_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
@@ -625,6 +640,7 @@ class _Session:
 
         process, reader, writer = await asyncio.wait_for(create_stdio_subprocess(*argv), timeout=self._timeout)
         self._res.process = process
+        self.started_server = True
         return reader, writer
 
     async def close_connection(self) -> None:
@@ -844,7 +860,7 @@ class JsonRpcRemote:
                 logger.warn(
                     f"Connection to '{self._uri}' was lost: {outage.loss}. Reconnected after "
                     f"{time.monotonic() - outage.since:.1f}s ({_attempts(outage.failed_attempts + 1)}); "
-                    "the remote library was imported again, so its server-side state was reset."
+                    f"{_state_after_reimport(self._registered_definition, session.started_server)}"
                 )
             elif outage is not None and self._retry_timeout > 0:
                 logger.info(

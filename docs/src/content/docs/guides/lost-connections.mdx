@@ -95,12 +95,21 @@ logs a warning such as:
 Connection to 'tcp://127.0.0.1:8271' was lost: the connection was closed by the server. Reconnected after 12.4s (7 attempts); the remote library was imported again, so its server-side state was reset.
 ```
 
+For a library with the scope `GLOBAL` on a server that the client connects to
+over `tcp://` or `pipe://`, the warning ends instead with:
+
+```text
+the remote library was imported again; its library scope is GLOBAL, so its server-side state is kept unless the server restarted.
+```
+
 If the server restarted, nothing of the earlier library instance is left:
 whatever it kept in memory, such as an open application or a login, is gone. If
-the server kept running, a library with the global scope keeps its instance, as
-[Sessions and rpc_scope](/robotframework-jsonrpcremote/guides/sessions/)
-describes. A keyword that was running when the connection was lost still fails
-and is not sent again.
+the server kept running, a library with the scope `GLOBAL` keeps its instance,
+as [Sessions and rpc_scope](/robotframework-jsonrpcremote/guides/sessions/)
+describes. With a `pipe:` or `stdio:` URI with a command, the new session starts
+a new server process, so nothing of the earlier instance is left, whatever the
+scope of the library. A keyword that was running when the connection was lost
+still fails and is not sent again.
 
 Robot Framework registers the remote library's keywords once, at the library
 import. After a reconnect, the client therefore compares the library
