@@ -6,12 +6,12 @@ A library with the scope `GLOBAL` SHALL have one instance per set of import argu
 
 #### Scenario: Counter in a GLOBAL library over several sessions
 
-- **WHEN** three sessions one after the other import the same `GLOBAL` library and each calls a keyword that counts the calls of its instance
-- **THEN** the calls return 1, 2 and 3
+- **WHEN** two sessions one after the other import the same `GLOBAL` library and each calls a keyword that counts the calls of its instance
+- **THEN** the calls return 1 and 2
 
 #### Scenario: Counter in a SUITE or TEST library over several sessions
 
-- **WHEN** three sessions one after the other import the same `SUITE` library and the same `TEST` library and call their counting keywords
+- **WHEN** two sessions one after the other import the same `SUITE` library and the same `TEST` library and call their counting keywords
 - **THEN** every call returns 1
 
 ### Requirement: Finalizing a GLOBAL library for one client leaves it to the others
