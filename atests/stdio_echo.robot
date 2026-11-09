@@ -18,3 +18,9 @@ Echo Over Stdio Handles Repeated Calls
         ${result}=    Echo    msg-${i}
         Should Be Equal    ${result}    echo: msg-${i}
     END
+
+A Command As A List
+    VAR    @{server}    stdio:    @{SERVER_ARGS}
+    Import Library    JsonRpcRemote    ${server}    StdioEchoLib    AS    StdioFromList
+    ${result}=    StdioFromList.Echo    from a list
+    Should Be Equal    ${result}    echo: from a list

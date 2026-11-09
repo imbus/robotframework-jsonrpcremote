@@ -238,7 +238,10 @@ def test_connect_retry(tmp_path: Path) -> None:
 def test_pipe(tmp_path: Path) -> None:
     # No server to start: the client starts it for the suite and stops it afterwards.
     code, result = _robot(_EXAMPLES / "pipe", tmp_path, "greet.robot")
+    assert code == 0, _failed(result)
 
+    # The same with the command as a list.
+    code, result = _robot(_EXAMPLES / "pipe", tmp_path, "greet_list.robot")
     assert code == 0, _failed(result)
 
 

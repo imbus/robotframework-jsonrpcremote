@@ -270,6 +270,37 @@ def _split_command(command: str) -> list[str]:
     return list(lexer)
 
 
+# The schemes whose URI can be a list: those with a command.
+_LIST_SCHEMES = ("pipe:", "stdio:")
+
+
+def _uri_from_list(uri: Sequence[object]) -> str:
+    """The string form of a URI given as a list: its scheme, followed by its command as a POSIX shell quotes it.
+
+    The first element is the scheme, alone or in front of the program; the others are the arguments.
+    ``_split_command()`` gives the command back, element by element, with the rules of every platform.
+    """
+    elements = [str(element) for element in uri]
+    first = elements[0] if elements else ""
+    for scheme in _LIST_SCHEMES:
+        if not first.lower().startswith(scheme):
+            continue
+        program = first[len(scheme) :]
+        command = [program, *elements[1:]] if program else elements[1:]
+        # The scheme followed by // names a pipe or is refused, as in a string URI.
+        if command and not program.startswith("//"):
+            joined = shlex.join(command)
+            if joined.startswith("//"):
+                # A program such as //server/share/tool.exe, which pipe:// would turn into the name of a pipe.
+                joined = "'" + command[0].replace("'", "'\"'\"'") + "'" + joined[len(shlex.quote(command[0])) :]
+            return scheme + joined
+        break
+    raise ValueError(
+        "A list for uri must hold the command of a pipe: or stdio: URI, "
+        f"as in ['pipe:', 'robot-jsonrpcremote-server', 'MyLibrary'], not {list(uri)!r}."
+    )
+
+
 class _SessionResources:
     """Mutable runtime state shared with the session finalizer.
 
@@ -743,7 +774,9 @@ class JsonRpcRemote:
 
     def __init__(
         self,
-        uri: str = "tcp://127.0.0.1:8271",
+        # The list first: Robot Framework tries the types in order, and with str first, it would turn a list
+        # that holds a number, such as ${8271}, into the repr of the whole list.
+        uri: list[str] | str = "tcp://127.0.0.1:8271",
         library_name: str | None = None,
         *library_args: Any,
         rpc_timeout: float | str = 10.0,
@@ -759,7 +792,8 @@ class JsonRpcRemote:
         # The error for every call after the library definition changed, until the session's scope ends.
         self._incompatible: str | None = None
 
-        self._uri = uri
+        # A list is the command of a pipe: or stdio: URI; from here on, the client works with its string form.
+        self._uri = uri if isinstance(uri, str) else _uri_from_list(uri)
         self._timeout = _time_option("rpc_timeout", rpc_timeout)
         self._scope = _scope_option(rpc_scope)
         self._retry_timeout = _time_option("rpc_connect_retry_timeout", rpc_connect_retry_timeout)

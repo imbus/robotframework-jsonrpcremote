@@ -17,7 +17,7 @@ Library    JsonRpcRemote    uri    library_name    *library_args
 
 | Argument                     | Default                | Meaning |
 | ---------------------------- | ---------------------- | ------- |
-| `uri`                        | `tcp://127.0.0.1:8271` | Where the server is, or how to start it: `pipe:command` starts the server with a pipe of its own, `pipe://name` connects to a server that listens on a pipe, `tcp://host:port` to one that listens on a TCP port, and `stdio:command` starts a server that speaks over its stdin and stdout; see [Transports](/robotframework-jsonrpcremote/guides/transports/). |
+| `uri`                        | `tcp://127.0.0.1:8271` | Where the server is, or how to start it: `pipe:command` starts the server with a pipe of its own, `pipe://name` connects to a server that listens on a pipe, `tcp://host:port` to one that listens on a TCP port, and `stdio:command` starts a server that speaks over its stdin and stdout; see [Transports](/robotframework-jsonrpcremote/guides/transports/). For `pipe:` and `stdio:`, the command can also be a list whose first element is the scheme; see [The command as a list](/robotframework-jsonrpcremote/guides/transports/#the-command-as-a-list). |
 | `library_name`               | none                   | The remote library to import. Without it, the server imports the first library of its command line. |
 | `*library_args`              | none                   | Positional arguments of the remote library. |
 | `rpc_timeout`                | `10.0`                 | How long to wait for the connection and the start of a session, and for the end of a session, in seconds or as a time string such as `15s`. Keyword calls are not limited. |

@@ -19,7 +19,7 @@ from typing import NoReturn
 import pytest
 from fake_server import FakeServer
 
-from JsonRpcRemote import JsonRpcRemote, _Session
+from JsonRpcRemote import JsonRpcRemote, _Session, _split_command, _uri_from_list
 
 _ROBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "atests"))
 _MINIMAL_SERVER = Path(__file__).resolve().parent / "minimal_stdio_server.py"
@@ -392,3 +392,129 @@ async def test_pipe_uri_requires_a_name() -> None:
     session = _make_session("pipe://")
     with pytest.raises(ValueError, match=re.escape("'pipe://<name>'")):
         await session.create_connection()
+
+
+# uri as a list
+
+
+@pytest.mark.parametrize(
+    ("uri", "string"),
+    [
+        pytest.param(
+            ["pipe:", "robot-jsonrpcremote-server", "--pythonpath", ".", "MyLibrary"],
+            "pipe:robot-jsonrpcremote-server --pythonpath . MyLibrary",
+            id="scheme_as_an_element_of_its_own",
+        ),
+        pytest.param(
+            ["pipe:robot-jsonrpcremote-server", "--pythonpath", ".", "MyLibrary"],
+            "pipe:robot-jsonrpcremote-server --pythonpath . MyLibrary",
+            id="scheme_in_front_of_the_program",
+        ),
+        pytest.param(["PIPE:", "server"], "pipe:server", id="scheme_in_upper_case"),
+        pytest.param(
+            ["stdio:", "robot-jsonrpcremote-server", "--stdio", "MyLibrary"],
+            "stdio:robot-jsonrpcremote-server --stdio MyLibrary",
+            id="stdio",
+        ),
+        pytest.param(["pipe:", Path("server"), "--port", 8271], "pipe:server --port 8271", id="elements_no_strings"),
+        pytest.param(["pipe:", "server", "my library"], "pipe:server 'my library'", id="argument_that_needs_quotes"),
+        # Not pipe://server/..., which would be the name of a pipe.
+        pytest.param(
+            ["pipe:", "//server/share/tool.exe"], "pipe:'//server/share/tool.exe'", id="program_with_two_slashes"
+        ),
+    ],
+)
+def test_a_list_becomes_the_string_form_of_its_uri(uri: list[object], string: str) -> None:
+    assert _uri_from_list(uri) == string
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(["server", "my library"], id="argument_with_a_space"),
+        pytest.param(["//server/share/tool.exe", "it's"], id="program_with_two_slashes"),
+    ],
+)
+def test_the_string_form_of_a_list_splits_into_the_same_command(command: list[str]) -> None:
+    string = _uri_from_list(["pipe:", *command])
+
+    assert _split_command(string.removeprefix("pipe:")) == command
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        pytest.param([], id="an_empty_list"),
+        pytest.param(["pipe:"], id="the_scheme_alone"),
+        pytest.param(["pipe://robot"], id="a_pipe_name"),
+        pytest.param(["stdio://robot-jsonrpcremote-server", "--stdio"], id="stdio_with_two_slashes"),
+        pytest.param(["tcp://127.0.0.1:8271"], id="tcp"),
+        pytest.param(["robot-jsonrpcremote-server", "MyLibrary"], id="no_supported_scheme"),
+    ],
+)
+def test_a_list_without_a_command_is_refused_and_starts_no_session(
+    monkeypatch: pytest.MonkeyPatch, uri: list[str]
+) -> None:
+    started: list[_Session] = []
+    monkeypatch.setattr(_Session, "start", lambda session: started.append(session))
+
+    with pytest.raises(ValueError, match=re.escape("A list for uri must hold the command of a pipe: or stdio: URI")):
+        JsonRpcRemote(uri, "MyLibrary", rpc_timeout=1)
+
+    assert started == []
+
+
+# The awkward arguments of the probe in the design of add-command-lists.
+_AWKWARD_COMMAND = [
+    r"C:\Program Files\tool\server.exe",
+    "/opt/my tools/server",
+    "my library",
+    "it's",
+    'say "hi"',
+    "a\\b",
+    "",
+    "new\nline",
+    "ümlaut",
+]
+
+
+@pytest.mark.parametrize("scheme", ["pipe", "stdio"])
+@pytest.mark.parametrize("form", ["scheme_as_an_element_of_its_own", "scheme_in_front_of_the_program"])
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+async def test_a_list_reaches_the_start_of_the_server_element_by_element(
+    monkeypatch: pytest.MonkeyPatch, scheme: str, form: str, platform: str
+) -> None:
+    started: list[tuple[str, ...]] = []
+
+    async def start(*command: str, **options: object) -> NoReturn:
+        started.append(command)
+        raise _FakeStartError
+
+    monkeypatch.setattr(f"JsonRpcRemote.create_{scheme}_subprocess", start)
+    monkeypatch.setattr(sys, "platform", platform)
+    if form == "scheme_as_an_element_of_its_own":
+        uri = [f"{scheme}:", *_AWKWARD_COMMAND]
+    else:
+        uri = [f"{scheme}:{_AWKWARD_COMMAND[0]}", *_AWKWARD_COMMAND[1:]]
+    session = _make_session(_uri_from_list(uri))
+
+    with pytest.raises(_FakeStartError):
+        await session.create_connection()
+
+    assert started == [tuple(_AWKWARD_COMMAND)]
+
+
+def test_a_list_starts_a_server_from_a_folder_with_a_space_in_its_name(tmp_path: Path) -> None:
+    # No quotes: the path is one element of the list.
+    directory = tmp_path / "with space"
+    directory.mkdir()
+    for helper in (_MINIMAL_PIPE_SERVER, _MINIMAL_SERVER):
+        shutil.copy(helper, directory / helper.name)
+    server = directory / _MINIMAL_PIPE_SERVER.name
+    remote = JsonRpcRemote(["pipe:", sys.executable, str(server)], "MinimalLibrary", rpc_timeout=20)
+    try:
+        result = asyncio.run(remote.run_keyword("Echo", ["Grüße"], {}))
+    finally:
+        remote._stop_session()
+
+    assert result == "Grüße"

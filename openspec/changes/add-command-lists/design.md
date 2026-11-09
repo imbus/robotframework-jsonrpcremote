@@ -59,6 +59,7 @@ See proposal.md for the motivation. The starting point in `src/JsonRpcRemote/__i
   - `shlex.join()` is documented as the inverse of `shlex.split()`, and `_split_command()` is `shlex.split()` on POSIX.
   - On Windows, `_split_command()` differs only in having no escape character. `shlex.join()` writes a backslash only inside single quotes, where POSIX mode has no escapes either.
   - The probe in the context confirms it with both rules.
+  - **A program that starts with `//`,** such as `//server/share/tool.exe`, needs no quotes for `shlex.join()`. The string `pipe://server/share/tool.exe` would then name a pipe, so the helper quotes such a program itself: `pipe:'//server/share/tool.exe'`.
 - **The result:**
   - The session, its transports, the split and every message work with the string as they do now.
   - The scheme check of `clarify-global-library-scope` sees `pipe:` or `stdio:` as for a string.
@@ -68,7 +69,7 @@ See proposal.md for the motivation. The starting point in `src/JsonRpcRemote/__i
 ### 4. Refusing a list without a command
 
 - The helper raises `ValueError` before `JsonRpcRemote.__init__` starts the session, so no process is started. Robot Framework reports it as the failed import of the library.
-- **The message** names the form, with an example: "A list for uri holds the command of a pipe: or stdio: URI, as in ['pipe:', 'robot-jsonrpcremote-server', 'MyLibrary']". It also shows what the list held.
+- **The message** names the form, with an example, and shows what the list held: "A list for uri must hold the command of a pipe: or stdio: URI, as in ['pipe:', 'robot-jsonrpcremote-server', 'MyLibrary'], not […]".
 - **It is refused:**
   - an empty list;
   - a scheme without a program, as in `pipe:` alone;

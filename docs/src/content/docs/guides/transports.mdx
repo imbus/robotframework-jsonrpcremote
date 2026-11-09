@@ -5,6 +5,7 @@ description: Let the client start the server over a pipe, connect to a server th
 
 import { Code } from '@astrojs/starlight/components';
 import pipeSuite from '../../../../examples/pipe/greet.robot?raw';
+import pipeListSuite from '../../../../examples/pipe/greet_list.robot?raw';
 import pipeServerSuite from '../../../../examples/pipe-server/greet.robot?raw';
 import stdioSuite from '../../../../examples/stdio/greet.robot?raw';
 
@@ -71,6 +72,27 @@ The client starts any command this way, also a server in another language: it
 only has to connect to the address after `--pipe=`. The
 [protocol page](/robotframework-jsonrpcremote/reference/protocol/#over-a-pipe)
 describes the convention.
+
+### The command as a list
+
+The command can also be a list, as Robot Framework keeps arguments. The first
+element is the scheme, and the others are the program and its arguments. The
+example is in the same folder:
+
+<Code code={pipeListSuite} lang="text" title="greet_list.robot" />
+
+- The elements reach the server as they are: the client neither splits nor
+  unquotes them, so a path with a space needs no quotes, and on Windows a
+  backslash needs no rule.
+- A list of arguments that the suite already has fits in after the scheme, as
+  `@{SERVER ARGS}` does in the example. An element that is not a string, such
+  as `${8271}`, becomes one.
+- The scheme can also stand in front of the program, as in
+  `pipe:robot-jsonrpcremote-server`, and the list works for `stdio:` the same
+  way.
+- The messages of the client name such a URI by its string form, here
+  `pipe:robot-jsonrpcremote-server --pythonpath . MyLibrary`, which works as
+  `uri` as well.
 
 ### A server that listens on a pipe
 

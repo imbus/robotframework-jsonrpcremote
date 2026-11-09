@@ -8,12 +8,18 @@ import tempfile
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def _server_args(library: str) -> list[str]:
+    """The arguments of our server for ``library``, for the suites that give the command as a list."""
+    return [sys.executable, "-m", "robot_jsonrpcremote_server", "--stdio", "--pythonpath", _HERE, library]
+
+
 def _server_command(library: str) -> str:
     """The command of our server for ``library``, quoted, so that a path with a space survives the client's split."""
-    return shlex.join([sys.executable, "-m", "robot_jsonrpcremote_server", "--stdio", "--pythonpath", _HERE, library])
+    return shlex.join(_server_args(library))
 
 
 SERVER_COMMAND = _server_command("StdioEchoLib")
+SERVER_ARGS = _server_args("StdioEchoLib")
 PROBE_SERVER_COMMAND = _server_command("ServerProbeLib")
 LOSS_SERVER_COMMAND = _server_command("ConnectionLossLib")
 OUTPUT_SERVER_COMMAND = _server_command("StdioOutputLib")
