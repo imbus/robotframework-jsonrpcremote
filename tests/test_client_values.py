@@ -58,9 +58,12 @@ def _call(remote: JsonRpcRemote, *args: Any) -> Any:
     return asyncio.run(remote.run_keyword("Echo", list(args), {}))
 
 
-def _define(server: FakeServer, *args: tuple[str, str], return_type: str | None = None) -> None:
-    """Let the fake server define the keyword ``Echo`` with these arguments, as names and type texts."""
-    arguments = [ArgumentDefinition(name=name, type=text, kind=ArgumentKind.POSITIONAL_OR_NAMED) for name, text in args]
+def _define(server: FakeServer, *args: tuple[Any, ...], return_type: str | None = None) -> None:
+    """Let the fake server define the keyword ``Echo`` with these arguments: names, type texts and kinds."""
+    arguments = [
+        ArgumentDefinition(name=arg[0], type=arg[1], kind=arg[2] if len(arg) > 2 else ArgumentKind.POSITIONAL_OR_NAMED)
+        for arg in args
+    ]
     keyword = KeywordDefinition(name="Echo", args=arguments, return_type=return_type)
     definition = LibraryDefinition(name="FakeLib", keywords=[keyword])
     server.script(IMPORT_LIBRARY_REQUEST, ImportLibraryResult(token="t", definition=definition))
@@ -269,3 +272,30 @@ def test_a_return_value_that_needs_nothing_of_a_missing_class_comes_back(
     server.script(RUN_KEYWORD_REQUEST, RunKeywordResult(result=result))
 
     assert _call(remote, "x") == result
+
+
+def test_named_arguments_travel_by_their_declared_types(server: FakeServer, connect: Any) -> None:
+    # With pickles agreed: without its declared type, the Point would go as a pickle.
+    _define(server, ("at", "value_types.Point"), ("color", "value_types.Color", ArgumentKind.NAMED_ONLY))
+    remote = connect()
+
+    asyncio.run(remote.run_keyword("Echo", [], {"at": Point(1, 2), "color": Color.RED}))
+
+    [run] = _params_of(server, RUN_KEYWORD_REQUEST)
+    assert run["kwargs"] == {"at": {"x": 1, "y": 2}, "color": "RED"}
+
+
+def test_star_args_and_star_star_kwargs_travel_by_their_declared_types(server: FakeServer, connect: Any) -> None:
+    _define(
+        server,
+        ("label", "str"),
+        ("points", "value_types.Point", ArgumentKind.VAR_POSITIONAL),
+        ("colors", "value_types.Color", ArgumentKind.VAR_NAMED),
+    )
+    remote = connect()
+
+    asyncio.run(remote.run_keyword("Echo", ["total", Point(1, 2), Point(3, 4)], {"first": Color.RED}))
+
+    [run] = _params_of(server, RUN_KEYWORD_REQUEST)
+    assert run["args"] == ["total", {"x": 1, "y": 2}, {"x": 3, "y": 4}]
+    assert run["kwargs"] == {"first": "RED"}

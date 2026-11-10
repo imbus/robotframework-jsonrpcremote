@@ -70,6 +70,16 @@ Undeclared Values Make A Round Trip Without Pickles
         Should Be Equal    ${type}    ${{type($value).__module__ + "." + type($value).__qualname__}}
     END
 
+Named And Variable Arguments Travel By Their Declared Types With Pickles
+    Start A Typed Server    ${WITH_PICKLES}
+    Import The Typed Library    ${WITH_PICKLES}    ArgumentsWithPickles
+    Named And Variable Arguments Travel By Their Declared Types    ArgumentsWithPickles
+
+Named And Variable Arguments Travel By Their Declared Types Without Pickles
+    Start A Typed Server    ${WITHOUT_PICKLES}    pickles=${False}
+    Import The Typed Library    ${WITHOUT_PICKLES}    ArgumentsWithoutPickles
+    Named And Variable Arguments Travel By Their Declared Types    ArgumentsWithoutPickles
+
 A Dict From A Robot Variable Reaches The Server As A Dict
     Start A Typed Server    ${WITH_PICKLES}
     Import The Typed Library    ${WITH_PICKLES}    DotDicts
@@ -120,10 +130,26 @@ Declared Values Make A Round Trip
     [Arguments]    ${alias}
     ${keywords}=    Create List    Same Point    Same Pair    Same Color    Same Datetime    Same Decimal
     ...    Same Bytes    Same Uuid    Same Path    Same Tuple    Same Set    Same Int Keys    Same Float
+    ...    Same Date    Same Time    Same Timedelta    Same Bytearray    Same Frozenset    Same Ordered Dict
+    ...    Same Level
     FOR    ${keyword}    ${value}    IN ZIP    ${keywords}    ${TYPED_VALUES}    mode=STRICT
         ${result}=    Run Keyword    ${alias}.${keyword}    ${value}
         Should Be The Same Value    ${result}    ${value}
     END
+
+Named And Variable Arguments Travel By Their Declared Types
+    [Documentation]    Each keyword of TypedValuesLib checks the types that it got.
+    [Arguments]    ${alias}
+    ${point}=    Evaluate    typed_values_types.Point(1, 2)    modules=typed_values_types
+    ${text}=    Run Keyword    ${alias}.Describe Named    point=${point}    color=red
+    Should Be Equal    ${text}    Point RED
+    ${sum}=    Run Keyword    ${alias}.Sum Points    ${point}    ${{typed_values_types.Point(3, 4)}}
+    Should Be The Same Value    ${sum}    ${{typed_values_types.Point(4, 6)}}
+    ${colors}=    Run Keyword    ${alias}.Colors By Name    first=red    second=GREEN
+    Should Be Equal    ${colors}
+    ...    ${{ {"first": typed_values_types.Color.RED, "second": typed_values_types.Color.GREEN} }}
+    ${points}=    Run Keyword    ${alias}.Points By Name    a=${point}
+    Should Be Equal    ${points}    ${{ {"a": typed_values_types.Point(1, 2)} }}
 
 Declared Class Of The Server Fails
     [Arguments]    ${alias}

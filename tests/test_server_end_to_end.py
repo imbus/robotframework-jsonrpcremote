@@ -92,6 +92,18 @@ class EndToEndLib:
     def repr_of_point(self, at: Point) -> str:
         return repr(at)
 
+    def paint_named(self, *, at: Point, color: Color) -> str:
+        return f"{color.name} at {at.x},{at.y}"
+
+    def sum_points(self, label: str, *points: Point) -> Point:
+        return Point(sum(point.x for point in points), sum(point.y for point in points))
+
+    def names_of_colors(self, **colors: Color) -> str:
+        return ", ".join(f"{name}={color.name}" for name, color in sorted(colors.items()))
+
+    def names_of_points(self, **points: Point) -> str:
+        return ", ".join(f"{name}={point.x},{point.y}" for name, point in sorted(points.items()))
+
     def make_point(self):
         return Point(1, 2)
 
@@ -723,6 +735,32 @@ async def test_a_dataclass_argument_becomes_its_class(port: int) -> None:
 
     assert result.error is None
     assert result.result == "Point(x=1, y=2)"
+
+
+async def test_named_arguments_become_their_declared_types(port: int) -> None:
+    async with _session(port) as session:
+        named_only = await session.run_keyword("Paint Named", kwargs={"at": {"x": 1, "y": 2}, "color": "RED"})
+        positional_or_named = await session.run_keyword("Paint", kwargs={"color": "RED", "at": [{"x": 1, "y": 2}]})
+
+    assert named_only.error is None
+    assert named_only.result == "RED at 1,2"
+    # Paint returns a Point of the length of the name of the member and the number of points.
+    assert positional_or_named.result == {"x": 3, "y": 1}
+
+
+async def test_star_args_and_star_star_kwargs_become_their_declared_types(port: int) -> None:
+    async with _session(port) as session:
+        total = await session.run_keyword("Sum Points", ["total", {"x": 1, "y": 2}, {"x": 3, "y": 4}])
+        names = await session.run_keyword("Names Of Colors", kwargs={"first": "RED", "second": "green"})
+        # A dataclass, which Robot Framework cannot build itself.
+        points = await session.run_keyword("Names Of Points", kwargs={"a": {"x": 1, "y": 2}})
+
+    assert total.result == {"x": 4, "y": 6}
+    assert points.error is None
+    assert points.result == "a=1,2"
+    # "green" is no name of a member: Robot Framework converts it, as for a local library.
+    assert names.error is None
+    assert names.result == "first=RED, second=GREEN"
 
 
 async def test_an_enum_name_is_converted_as_by_a_local_library(port: int) -> None:

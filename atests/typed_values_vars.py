@@ -4,8 +4,9 @@ import datetime
 import decimal
 import pathlib
 import uuid
+from collections import OrderedDict
 
-from typed_values_types import Color, Pair, Point
+from typed_values_types import Color, Level, Pair, Point
 
 TYPED_VALUES = [
     Point(1, 2),
@@ -20,4 +21,11 @@ TYPED_VALUES = [
     {1, 2},
     {1: "a"},
     float("nan"),
+    datetime.date(2025, 12, 18),
+    datetime.time(14, 30, 15),
+    datetime.timedelta(minutes=1, seconds=30.5),
+    bytearray([0, 1]),
+    frozenset({1, 2}),
+    OrderedDict([("b", 2), ("a", 1)]),
+    Level.HIGH,
 ]

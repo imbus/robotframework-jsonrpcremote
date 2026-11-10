@@ -3,14 +3,15 @@
 Each ``Same ...`` keyword checks that the value arrived as its declared type and returns it unchanged.
 """
 
-from datetime import datetime
+from collections import OrderedDict
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypeVar
 from uuid import UUID
 
 from ServerOnlyTypes import OnlyOnTheServer
-from typed_values_types import Color, Pair, Point
+from typed_values_types import Color, Level, Pair, Point
 
 _T = TypeVar("_T")
 
@@ -57,6 +58,43 @@ class TypedValuesLib:
 
     def same_float(self, value: float) -> float:
         return _checked(value, float)
+
+    def same_date(self, value: date) -> date:
+        return _checked(value, date)
+
+    def same_time(self, value: time) -> time:
+        return _checked(value, time)
+
+    def same_timedelta(self, value: timedelta) -> timedelta:
+        return _checked(value, timedelta)
+
+    def same_bytearray(self, value: bytearray) -> bytearray:
+        return _checked(value, bytearray)
+
+    def same_frozenset(self, value: frozenset[int]) -> frozenset[int]:
+        return _checked(value, frozenset)
+
+    def same_ordered_dict(self, value: OrderedDict[str, int]) -> OrderedDict[str, int]:
+        return _checked(value, OrderedDict)
+
+    def same_level(self, value: Level) -> Level:
+        return _checked(value, Level)
+
+    def describe_named(self, *, point: Point, color: Color) -> str:
+        """Takes its arguments only by name, and returns the names of their types and the color."""
+        return f"{type(_checked(point, Point)).__name__} {_checked(color, Color).name}"
+
+    def sum_points(self, *points: Point) -> Point:
+        """Returns the sum of the points that it got as variable arguments."""
+        return Point(sum(_checked(point, Point).x for point in points), sum(point.y for point in points))
+
+    def colors_by_name(self, **colors: Color) -> dict[str, Color]:
+        """Returns the colors that it got as free named arguments."""
+        return {name: _checked(color, Color) for name, color in colors.items()}
+
+    def points_by_name(self, **points: Point) -> dict[str, Point]:
+        """Returns the points that it got as free named arguments."""
+        return {name: _checked(point, Point) for name, point in points.items()}
 
     def same_any(self, value: Any) -> Any:
         """Returns the value that it got, without a declared type."""
