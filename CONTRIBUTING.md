@@ -180,8 +180,8 @@ The repository is a uv workspace organized into a client library, several suppor
 - **[`packages/jsonrpcpeer`](packages/jsonrpcpeer)** — an asynchronous JSON-RPC 2.0 peer implementation built on `asyncio`.
 - **[`packages/server`](packages/server)** — the server runtime that hosts Robot Framework libraries (`robot-jsonrpcremote-server` CLI).
 - **[`examples/`](examples)** — runnable usage examples, e.g. a minimal hand-written server.
-- **[`tests`](tests)** — fast unit tests (pytest).
-- **[`atests`](atests)** — Robot Framework integration tests; each suite starts its own server.
+- **[`tests`](tests)** — fast unit tests (pytest), in a folder per package: `peer/`, `protocol/`, `client/` and `server/`, plus `examples/` for the example server, `docs/` for the examples of the documentation site and `atests/` for the tools of the Robot tests. The shared helpers sit in `tests/` itself.
+- **[`atests`](atests)** — Robot Framework integration tests, in a folder per topic, with the libraries that the tests run in `atests/libraries/` and the tools of the suites in `atests/resources/`.
 - **[`docs`](docs)** — the documentation site (Starlight), with its runnable examples in `docs/examples/`.
 
 #### Development Workflow
@@ -206,14 +206,14 @@ The repository is a uv workspace organized into a client library, several suppor
 uv run --all-packages pytest
 ```
 
-`pytest` is configured (in [`pyproject.toml`](pyproject.toml)) to collect from `tests` and runs in asyncio auto mode. To run a single file or test:
+`pytest` is configured (in [`pyproject.toml`](pyproject.toml)) to collect from `tests` and runs in asyncio auto mode. It also puts `tests` on the module search path, so that the modules in the package folders import the shared helpers, such as `fake_server.py`, by their names. To run a single file or test:
 
 ```bash
-uv run --all-packages pytest tests/test_peer.py
-uv run --all-packages pytest tests/test_peer.py::test_name -q
+uv run --all-packages pytest tests/peer/test_peer.py
+uv run --all-packages pytest tests/peer/test_peer.py::test_name -q
 ```
 
-[`tests/test_json_helpers_nested.py`](tests/test_json_helpers_nested.py) draws its values with [Hypothesis](https://hypothesis.readthedocs.io/). On CI it uses the same examples on each run. Locally it draws new ones, so a run can fail on an example nobody has seen before. It then shows the smallest failing example and keeps it in `.hypothesis/` (gitignored) to try it first next time.
+[`tests/peer/test_json_helpers_nested.py`](tests/peer/test_json_helpers_nested.py) draws its values with [Hypothesis](https://hypothesis.readthedocs.io/). On CI it uses the same examples on each run. Locally it draws new ones, so a run can fail on an example nobody has seen before. It then shows the smallest failing example and keeps it in `.hypothesis/` (gitignored) to try it first next time.
 
 **Integration tests (Robot Framework):**
 
@@ -221,7 +221,7 @@ uv run --all-packages pytest tests/test_peer.py::test_name -q
 uv run --all-packages robotcode run
 ```
 
-This runs the Robot Framework suites under [`atests`](atests) (configured via [`robot.toml`](robot.toml)). Each suite starts and stops its own server, so no separate server process is required. `robotcode run` writes its `output.xml`, `log.html`, and `report.html` to the `results/` directory by default (gitignored).
+This runs the Robot Framework suites under [`atests`](atests) (configured via [`robot.toml`](robot.toml)). The suites start the servers they need: `__init__.robot` starts a shared one, and a suite that needs a server of its own starts that, so no separate server process is required. The suites sit in a folder per topic: `keywords/`, `values/`, `library/`, `logging/`, `failures/`, `connection/`, `stdio/` and `pipe/`. The libraries that the tests run, on a server or locally, are in `atests/libraries/`, and the tools of the suites, such as `ServerControl.py`, in `atests/resources/`. Both folders are on the module search path of the run, and the variable file `atests/resources/paths.py` gives the suites the paths of the folders, such as `${LIBRARIES}` for the module search path of a server that a suite starts. `robotcode run` writes its `output.xml`, `log.html`, and `report.html` to the `results/` directory by default (gitignored).
 
 Run the unit tests on every change; run the integration tests before opening or updating a pull request.
 
@@ -343,7 +343,7 @@ A good PR description:
 
 Documentation helps users understand and use the project effectively. Ways you can help:
 
-1. **The documentation site** — [`docs/`](docs), published to <https://imbus.github.io/robotframework-jsonrpcremote/>. It is a [Starlight](https://starlight.astro.build/) site with its own Node.js toolchain: run `npm ci` once and `npm run build` in `docs/` to build it, which fails on broken internal links, or `npm run dev` to preview it. The libraries, suites and other files that a page shows are files in `docs/examples/<name>/`, which the page includes. [`tests/test_docs_examples.py`](tests/test_docs_examples.py) runs each example against the current code, with the commands of its page, on Linux, macOS and Windows: `uv run --all-packages pytest tests/test_docs_examples.py`. The container example runs only where docker can run Linux containers. The [docs workflow](.github/workflows/docs.yml) builds the site and publishes it from `main`.
+1. **The documentation site** — [`docs/`](docs), published to <https://imbus.github.io/robotframework-jsonrpcremote/>. It is a [Starlight](https://starlight.astro.build/) site with its own Node.js toolchain: run `npm ci` once and `npm run build` in `docs/` to build it, which fails on broken internal links, or `npm run dev` to preview it. The libraries, suites and other files that a page shows are files in `docs/examples/<name>/`, which the page includes. [`tests/docs/test_docs_examples.py`](tests/docs/test_docs_examples.py) runs each example against the current code, with the commands of its page, on Linux, macOS and Windows: `uv run --all-packages pytest tests/docs/test_docs_examples.py`. The container example runs only where docker can run Linux containers. The [docs workflow](.github/workflows/docs.yml) builds the site and publishes it from `main`.
 2. **README files** — the main [README](README.md) and the per-package READMEs under [`packages/`](packages) and [`examples/`](examples). They are short and link to the site.
 3. **Code documentation** — docstrings for public classes and functions, inline comments for non-obvious logic, and type hints.
 

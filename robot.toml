@@ -1,6 +1,7 @@
 paths = ["atests"]
-# So that the client imports the types of the remote libraries of the tests by their names, as on the server.
-python-path = ["atests"]
+# The libraries that the tests run and the tools of the suites. The client imports the types of the
+# libraries by their names from there, as the server does.
+python-path = ["atests/libraries", "atests/resources"]
 output-dir = "results"
 default-profiles = ["windows", "non_windows"]
 #log-level = "TRACE"

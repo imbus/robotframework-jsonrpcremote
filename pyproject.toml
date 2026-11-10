@@ -191,6 +191,7 @@ no_implicit_reexport = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["tests"]
 
 
 [tool.commitizen]

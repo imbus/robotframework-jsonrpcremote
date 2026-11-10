@@ -1,8 +1,8 @@
 *** Settings ***
 Documentation     Run by connection_reset.robot in a nested Robot process, not on its own: Robot skips directories
 ...               starting with an underscore. Needs the variable PORT.
-Library           ../ResetServer.py
-Library           ../ServerControl.py
+Library           ../resources/ResetServer.py
+Library           ../resources/ServerControl.py
 Suite Teardown    Stop Jsonrpc Server
 
 

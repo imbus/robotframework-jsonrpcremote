@@ -81,13 +81,13 @@ Alternative considered: one folder for all Python files. That is one folder less
 
 ### Paths from a variable file
 
-`atests/resources/paths.py` is a variable file with `__all__ = ["LIBRARIES", "SERVER_ONLY", "NESTED"]`. It computes absolute paths from its own place. Without `__all__`, the imported `os` would become a variable `${os}` as well. Every suite that starts a server with libraries, imports a library by its path, or runs a nested suite imports `Variables  paths.py`, `__init__.robot` included:
+`atests/resources/paths.py` is a variable file with `__all__ = ["LIBRARIES", "NESTED", "SERVER_ONLY"]`. It computes absolute paths from its own place. Without `__all__`, the imported `os` would become a variable `${os}` as well. Every suite that starts a server with libraries, imports a library by its path, or runs a nested suite imports `Variables  paths.py`, `__init__.robot` included:
 
 - `pythonpath=${CURDIR}` becomes `pythonpath=${LIBRARIES}`, and `${CURDIR}${:}${CURDIR}${/}_server_only` becomes `${LIBRARIES}${:}${SERVER_ONLY}`.
 - `${CURDIR}${/}_nested${/}…` becomes `${NESTED}${/}…`.
 - `${CURDIR}${/}LibdocLib.py`, `${CURDIR}${/}ArgumentValuesLib.py` and `${CURDIR}${/}TestScopedRemote.py` become `${LIBRARIES}${/}…`, and `${CURDIR}${/}server_vars.py` becomes `${LIBRARIES}${/}server_vars.py`.
 
-A value in the Variables section may use `${LIBRARIES}`, as `libdoc.robot`, `global_library.robot` and `server_only_library.robot` need. A probe passed on Robot Framework 7.2 and 7.5. `_nested/console_messages.robot` imports `${CURDIR}${/}..${/}libraries${/}ConsoleMessagesLib.py`, because nested runs have no module search path to find `paths.py`.
+A value in the Variables section may use `${LIBRARIES}`, as `libdoc.robot`, `global_library.robot` and `server_only_library.robot` need. A probe passed on Robot Framework 7.2 and 7.5. `_nested/console_messages.robot` imports `${CURDIR}${/}..${/}libraries${/}ConsoleMessagesLib.py`, and `_nested/reset_at_session_start.robot` imports `../resources/ResetServer.py` and `../resources/ServerControl.py`, because nested runs have no module search path to find `paths.py` or the tools.
 
 `stdio_vars.py` and `pipe_vars.py` move to `resources/`, but the server commands that they build need the libraries and the Node server. Their `_HERE` becomes a path to `libraries/`. The same holds for the paths into `atests/` in `tests/`: `server_over_pipes.py`, `test_server_stdio.py` and `test_client_connection.py` point at `atests/libraries`, and `test_server_control.py` at `atests/resources/ServerControl.py`.
 
@@ -100,7 +100,7 @@ Docstrings and suite documentation that name a moved file get its new path. Thes
 ## Risks / Trade-offs
 
 - [Robot runs the suites in a new order, folder by folder] → The tests are independent and the suites with servers of their own use ports of their own. A run with `--randomize suites` checks that the order does not matter.
-- [`git log` and blame of a moved file need `--follow` or rename detection] → The moved files change only in a few path lines, so git still detects every move as a rename. The check is `git diff --cached -M --stat` before the commit.
+- [`git log` and blame of a moved file need `--follow` or rename detection] → The moved files change only in a few path lines, so git still detects the moves as renames. The check is `git diff --cached -M --stat` before the commit. The one exception is the three-line `node_keywords.cmd`: its changed comment is most of the file, so git sees it as deleted and added.
 - [A path missed in the move fails only on one platform, such as the `.cmd` wrapper or `${:}` on Windows] → The Windows VM runs pytest and all Robot suites before the commit.
 - [Local run configurations and commands point at old paths] → `CONTRIBUTING.md` names the new commands.
 

@@ -18,5 +18,5 @@ Import The Library
     IF    '${URI}'
         Import Library    JsonRpcRemote    ${URI}    ConsoleMessagesLib
     ELSE
-        Import Library    ${CURDIR}${/}..${/}ConsoleMessagesLib.py
+        Import Library    ${CURDIR}${/}..${/}libraries${/}ConsoleMessagesLib.py
     END

@@ -20,14 +20,14 @@ from robot_jsonrpcremote_protocol import (
     RunKeywordResult,
 )
 
-ATESTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "atests"))
+ATESTS_LIBRARIES = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "atests", "libraries"))
 # A hard limit for every wait, so that a server that never answers fails the test instead of hanging it.
 TIMEOUT = 30
 
 
 def server_command(*args: str) -> list[str]:
     """The command that starts our server with ``StdioEchoLib`` and the further ``args``."""
-    return [sys.executable, "-m", "robot_jsonrpcremote_server", "--pythonpath", ATESTS, *args, "StdioEchoLib"]
+    return [sys.executable, "-m", "robot_jsonrpcremote_server", "--pythonpath", ATESTS_LIBRARIES, *args, "StdioEchoLib"]
 
 
 async def start_server(*args: str, env: dict[str, str] | None = None) -> asyncio.subprocess.Process:
