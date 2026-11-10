@@ -24,14 +24,14 @@ A connection failure SHALL be a failure to reach the server or to keep the conne
 
 #### Scenario: Server does not serve the library
 
-- **WHEN** connect retry is enabled with a window of 30 seconds
+- **WHEN** connect retry is enabled with a window of 10 seconds
 - **AND** the server answers the library import with the message `Library 'OtherLibrary' is not available.`
 - **THEN** the import fails at once with the message `Library 'OtherLibrary' is not available.`
 - **AND** the server receives a single library import
 
 #### Scenario: Library fails to import on the server
 
-- **WHEN** connect retry is enabled with a window of 30 seconds
+- **WHEN** connect retry is enabled with a window of 10 seconds
 - **AND** the library fails to import on the server because a module it needs is missing
 - **THEN** the import fails at once with the error of the server, which names the missing module
 
@@ -50,7 +50,7 @@ A connection failure SHALL be a failure to reach the server or to keep the conne
 
 #### Scenario: URI that the client cannot use
 
-- **WHEN** connect retry is enabled with a window of 30 seconds
+- **WHEN** connect retry is enabled with a window of 10 seconds
 - **AND** the library is imported with the URI `htp://127.0.0.1:8271`
 - **THEN** the import fails at once with an error that names the unsupported scheme `htp`
 

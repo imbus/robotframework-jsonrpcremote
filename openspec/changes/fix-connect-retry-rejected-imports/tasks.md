@@ -13,11 +13,11 @@ Every new or changed test that covers a part of the change is run against a copy
 
 ## 2. Connect retry repeats only connection failures
 
-- [ ] 2.1 In `_connect_with_retry` of `src/JsonRpcRemote/__init__.py`, raise every failure that is neither an `OSError` nor a `JsonRpcResponseError` with the code `SHUTTING_DOWN` at once, before it begins an outage or counts as an attempt (design, first decision). Add these tests to `tests/client/test_client_connect_retry.py`, with the fake server and a window of 30 seconds where retry is on:
-  - `test_refused_import_fails_at_once_with_connect_retry`, parametrized over `-32602` with `Library 'FakeLib' is not available.` and `-32603` with the error of a library that fails to import: the import fails with the `RemoteError` of the message, after a single import and well within the window. This covers the scenarios "Server does not serve the library" and "Library fails to import on the server".
+- [ ] 2.1 In `_connect_with_retry` of `src/JsonRpcRemote/__init__.py`, raise every failure that is neither an `OSError` nor a `JsonRpcResponseError` with the code `SHUTTING_DOWN` at once, before it begins an outage or counts as an attempt (design, first decision). Add these tests to `tests/client/test_client_connect_retry.py`, with the fake server and a window of 10 seconds where retry is on:
+  - `test_refused_import_fails_at_once_with_connect_retry`, parametrized over `-32602` with `Library 'FakeLib' is not available.` and `-32603` with the error of a library that fails to import: the import fails with the `RemoteError` of the message, after a single import and within 5 seconds. This covers the scenarios "Server does not serve the library" and "Library fails to import on the server".
   - `test_import_answered_with_shutting_down_is_tried_again`: the first import is answered with `-32002`, and the import succeeds after the second. This covers "Server is stopping during the library import".
   - `test_shutting_down_without_connect_retry_fails_at_once`: the import fails with the `RemoteError` `server is shutting down` after a single import. This covers "Stopping server without connect retry".
-  - `test_uri_that_the_client_cannot_use_fails_at_once_with_connect_retry`: `htp://127.0.0.1:8271` fails with the `ValueError` that names `htp`, well within the window. This covers "URI that the client cannot use".
+  - `test_uri_that_the_client_cannot_use_fails_at_once_with_connect_retry`: `htp://127.0.0.1:8271` fails with the `ValueError` that names `htp`, within 5 seconds. This covers "URI that the client cannot use".
   - `test_refused_import_when_a_lost_session_is_replaced_fails_the_call_at_once`: after a lost connection, the import of the next call is refused, and the call fails at once with the message. This covers "Refused import when a lost session is replaced".
   - `test_refused_import_does_not_count_as_a_failed_attempt`: the server is down for a few attempts and then refuses the import once. The next call connects, and the INFO message `Connected to … after …` counts only the failed connections and the successful one.
 
@@ -27,8 +27,8 @@ Every new or changed test that covers a part of the change is run against a copy
   - the test without retry passes before and after; it fails in a copy that repeats `-32002` even without connect retry;
   - the test of the attempts fails in a copy that checks the failure only after it has counted it.
 - [ ] 2.2 In `atests/connection/connect_retry.robot`, let the suite's server also serve `MissingDependencyLib`, with one variable for the libraries of every start of the server. Add the tests:
-  - `A Refused Import Fails At Once Despite Connect Retry`: `Import Library` of `OtherLibrary` with `rpc_connect_retry_timeout=30s` fails with `*Library 'OtherLibrary' is not available.` within 10 seconds.
-  - `A Library That Fails To Import Fails At Once Despite Connect Retry`: `Import Library` of `MissingDependencyLib` with `rpc_connect_retry_timeout=30s` fails with an error that holds `No module named 'a_module_that_does_not_exist'` within 10 seconds.
+  - `A Refused Import Fails At Once Despite Connect Retry`: `Import Library` of `OtherLibrary` with `rpc_connect_retry_timeout=10s` fails with `*Library 'OtherLibrary' is not available.` within 5 seconds.
+  - `A Library That Fails To Import Fails At Once Despite Connect Retry`: `Import Library` of `MissingDependencyLib` with `rpc_connect_retry_timeout=10s` fails with an error that holds `No module named 'a_module_that_does_not_exist'` within 5 seconds.
 
   These cover the scenarios "Server does not serve the library" and "Library fails to import on the server" from Robot Framework. Verify that both fail in the copy of 2.1 that repeats every failure, and run the suite once with `--randomize tests`.
 - [ ] 2.3 In `docs/src/content/docs/guides/lost-connections.mdx`, section Connect retry, say which failures are repeated:

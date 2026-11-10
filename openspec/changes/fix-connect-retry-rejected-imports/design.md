@@ -62,11 +62,12 @@ The code applies to every request that the runner no longer runs: imports, keywo
   - A refused import after a lost connection fails the call at once.
   - A refused import does not count in the attempts of a later INFO message.
 - **Server unit tests:** `tests/server/test_runner.py` and `tests/server/test_endpoint.py` expect `-32002` instead of `-32603`, also for an import.
-- **Robot tests** in `atests/connection/connect_retry.robot`, with a window of 30 seconds against the suite's own server:
+- **Robot tests** in `atests/connection/connect_retry.robot`, with a window of 10 seconds against the suite's own server:
   - an import of a library that the server does not serve;
   - an import of `MissingDependencyLib`, which fails to import on the server.
 
-  Both fail within a few seconds with the server's message. The suite's server also serves `MissingDependencyLib`.
+  Both fail within 5 seconds with the server's message. The suite's server also serves `MissingDependencyLib`.
+- **Times:** the tests use a window of 10 seconds and expect a failure within 5 seconds. A refused import takes a fraction of a second, so 5 seconds leave a slow CI runner room. The code without the change waits the whole window, so the bound tells the two apart.
 - **No Robot test for a stopping server.** The time between the start of a stop and the closed listener is too short to reach reliably. The client unit test and the runner unit tests cover the two halves.
 
 ## Risks / Trade-offs
