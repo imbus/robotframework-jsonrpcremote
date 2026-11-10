@@ -141,10 +141,20 @@ async def _run(pipes: str, body: str, data: bytes = b"") -> tuple[bytes, str, in
     async with _process(pipes, body) as child:
         child.writer.write(data)
         stdout, stderr, _ = await asyncio.wait_for(
-            asyncio.gather(child.reader.read(), child.stderr.read(), child.writer.drain()), 30
+            asyncio.gather(child.reader.read(), child.stderr.read(), _drain(child.writer)), 30
         )
         code = await asyncio.wait_for(child.process.wait(), 10)
     return stdout, stderr.decode(errors="replace"), code
+
+
+async def _drain(writer: asyncio.StreamWriter) -> None:
+    """Wait until the child has the data; a child that has already ended has nothing left to receive.
+
+    asyncio fails ``drain()`` once the pipe is gone, even with nothing to send. That happens when the child ends
+    before ``drain()`` starts, as on a slow runner. The tests check what the child writes either way.
+    """
+    with suppress(ConnectionResetError):
+        await writer.drain()
 
 
 @dataclass
