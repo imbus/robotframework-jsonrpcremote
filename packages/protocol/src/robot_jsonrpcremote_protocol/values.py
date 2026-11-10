@@ -29,12 +29,14 @@ __all__ = [
     "TYPE_KEY",
     "VALUE_KEY",
     "PickleNotAgreedError",
+    "UnresolvedType",
     "ValueCannotTravelError",
     "ValueDoesNotFitError",
     "ValueFormat",
     "agreed_pickle_protocol",
     "resolve_type_name",
     "type_name",
+    "unresolved_type",
 ]
 
 PICKLED_KEY: Final = "__pickled__"
@@ -97,6 +99,30 @@ _ROBOT_TYPE_NAMES: Final[dict[type, str]] = {
     dict: "dictionary",
     list: "list",
 }
+
+
+class UnresolvedType:
+    """The base of the placeholders that ``unresolved_type`` makes for classes that cannot be imported."""
+
+    type_name: str = ""
+    reason: str = ""
+
+
+_UNRESOLVED: Final[dict[tuple[str, str], type[UnresolvedType]]] = {}
+
+
+def unresolved_type(name: str, reason: str) -> type[UnresolvedType]:
+    """A placeholder for the class ``name`` in a declared type, which cannot be imported for ``reason``.
+
+    No value is of it, so a value at its place travels as one without a declared type. Decoding a value other than
+    ``null`` for it fails, since only the class could build it.
+    """
+    placeholder = _UNRESOLVED.get((name, reason))
+    if placeholder is None:
+        attributes = {"type_name": name, "reason": reason, "__module__": __name__}
+        placeholder = type(name.rpartition(".")[2], (UnresolvedType,), attributes)
+        _UNRESOLVED[(name, reason)] = placeholder
+    return placeholder
 
 
 # The built-in and standard types that have a form of their own, by the names that Robot Framework gives them.
@@ -407,6 +433,8 @@ class ValueFormat:
         cls, arguments = _class_and_arguments(fixed)
         if not isinstance(cls, type):
             return _NO_FORM
+        if issubclass(cls, UnresolvedType):
+            raise ValueDoesNotFitError(cls.type_name, data, f"it cannot be imported: {cls.reason}")
         name = type_name(cls)
 
         def does_not_fit(reason: str) -> ValueDoesNotFitError:

@@ -66,6 +66,10 @@ class TypedValuesLib:
         """Returns the module and the qualified name of the type of the value that it got."""
         return f"{type(value).__module__}.{type(value).__qualname__}"
 
+    def make_declared_only_on_the_server(self) -> OnlyOnTheServer:
+        """Returns an instance of a class that the client does not have, with the class as its declared type."""
+        return OnlyOnTheServer(1)
+
     def make_only_on_the_server(self) -> Any:
         """Returns an instance of a class that the client does not have, without a declared type."""
         return OnlyOnTheServer(1)

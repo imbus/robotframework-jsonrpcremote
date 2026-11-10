@@ -62,10 +62,11 @@ keywords, so that Robot Framework converts arguments on the client, as for a
 local library, and Libdoc describes the classes. A return value of a declared
 class becomes an instance of that class. For that, the classes must be
 installed on the client, in the same modules as on the server. A class that the
-client cannot import goes to Robot Framework by its name, and its place counts
-as one without a declared type: a return value in the form of the class arrives
-in that form, as a dict, and one that names the class in `__type__` fails the
-call with a message that names the class.
+client cannot import goes to Robot Framework by its name, and a return value
+that needs it fails the call with a message that names the class and why it
+cannot be imported; an argument of that class still travels, such as a dict
+from which the server builds a dataclass. See
+[Values and types](/robotframework-jsonrpcremote/guides/values-and-types/).
 
 ## Options of the client
 

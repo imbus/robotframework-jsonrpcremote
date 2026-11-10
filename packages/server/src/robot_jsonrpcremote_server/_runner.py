@@ -108,6 +108,14 @@ def _as_robot_data(value: Any) -> Any:
 _ROBOT_NAMED_MODULES = ("builtins", "typing", "collections.abc")
 
 
+def _robot_resolves(name: str, cls: type) -> bool:
+    """Whether Robot Framework resolves ``name`` back to ``cls``, as the client does with the text."""
+    try:
+        return TypeInfo.from_string(name).type is cls
+    except Exception:
+        return False
+
+
 def _type_text(info: TypeInfo | None) -> str:
     """The text of a type in the library definition: as Robot Framework writes it, with classes named by module."""
     if info is None or not info.name:
@@ -115,10 +123,16 @@ def _type_text(info: TypeInfo | None) -> str:
     if info.is_union:
         return " | ".join(_type_text(member) for member in info.nested or ())
     cls = info.type
-    if isinstance(cls, type) and cls.__module__ not in _ROBOT_NAMED_MODULES:
-        name = type_name(cls)
-    else:
+    name: str
+    if not isinstance(cls, type):
         name = info.name
+    elif cls.__module__ not in _ROBOT_NAMED_MODULES:
+        name = type_name(cls)
+    elif _robot_resolves(info.name, cls):
+        name = info.name
+    else:
+        # Robot Framework writes a name that it does not resolve itself, such as `Iterable`, or `object` before 7.5.
+        name = f"{cls.__module__}.{cls.__qualname__}"
     if info.nested:
         return f"{name}[{', '.join(_type_text(item) for item in info.nested)}]"
     return name
@@ -173,7 +187,8 @@ def _robot_import_library(
             tags=list(kw.tags),
             source=str(kw.source),
             lineno=kw.lineno,
-            return_type=_type_text(kw.args.return_type) or None,
+            # None for a type that the server cannot resolve itself: it encodes such a return value as undeclared.
+            return_type=_type_text(kw.args.return_type) if _hint_of(kw.args.return_type) is not NOT_DECLARED else None,
         )
 
     return LibraryDefinition(

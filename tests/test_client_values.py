@@ -242,3 +242,30 @@ def test_a_return_value_that_does_not_fit_its_type_fails(server: FakeServer, con
     assert str(error.value) == (
         "Return value '{'x': 1}' (dictionary) cannot be converted to value_types.Point: missing field 'y'"
     )
+
+
+def test_a_declared_return_value_of_a_class_that_is_not_installed_fails(server: FakeServer, connect: Any) -> None:
+    _define(server, ("message", ""), return_type="notinstalled.Point")
+    remote = connect()
+    server.script(RUN_KEYWORD_REQUEST, RunKeywordResult(result={"x": 1, "y": 2}))
+
+    with pytest.raises(ValueError, match=r"^Return value ") as error:
+        _call(remote, "x")
+
+    assert str(error.value) == (
+        "Return value '{'x': 1, 'y': 2}' (dictionary) cannot be converted to notinstalled.Point: "
+        "it cannot be imported: No module named 'notinstalled'"
+    )
+
+
+@pytest.mark.parametrize(
+    ("return_type", "result"), [("list[notinstalled.Point]", []), ("notinstalled.Point | None", None)]
+)
+def test_a_return_value_that_needs_nothing_of_a_missing_class_comes_back(
+    server: FakeServer, connect: Any, return_type: str, result: Any
+) -> None:
+    _define(server, ("message", ""), return_type=return_type)
+    remote = connect()
+    server.script(RUN_KEYWORD_REQUEST, RunKeywordResult(result=result))
+
+    assert _call(remote, "x") == result

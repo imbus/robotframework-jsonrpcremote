@@ -41,7 +41,7 @@ The server SHALL read pickles by default. `--no-pickles` SHALL turn them off and
 
 ### Requirement: The library definition names classes with their module and states return types
 
-In a library definition, the server SHALL write the type of an argument with the module and qualified name of each class in it, such as `mytypes.Point` or `list[mytypes.Point] | None`, and the built-in and standard types by the names of Robot Framework, such as `int` or `datetime`. Each keyword definition SHALL carry the return type of the keyword in the same way, or none if the keyword declares none.
+In a library definition, the server SHALL write the type of an argument with the module and qualified name of each class in it, such as `mytypes.Point`, and a built-in or standard type by the name that Robot Framework gives it, such as `int` or `datetime`, if Robot Framework resolves that name back to the type, else also by module and qualified name. Each keyword definition SHALL carry its return type in the same way, or none if the keyword declares none or the server cannot resolve it.
 
 #### Scenario: Argument and return types of classes
 
@@ -53,6 +53,16 @@ In a library definition, the server SHALL write the type of an argument with the
 
 - **WHEN** a keyword declares no return type
 - **THEN** its definition carries no return type
+
+#### Scenario: A return type that the server cannot resolve
+
+- **WHEN** a keyword declares the return type `"NoSuchType"`, which names no class that the server can import
+- **THEN** its definition carries no return type
+
+#### Scenario: A type that Robot Framework does not resolve by its name
+
+- **WHEN** a keyword declares the return type `Iterable[str]` of `collections.abc`
+- **THEN** its definition gives the return type `collections.abc.Iterable[str]`
 
 #### Scenario: Standard types
 

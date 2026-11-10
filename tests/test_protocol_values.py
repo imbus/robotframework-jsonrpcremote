@@ -8,6 +8,7 @@ import os
 import pathlib
 import pickle
 import re
+import types
 import uuid
 from collections import OrderedDict
 from typing import Any, Optional
@@ -24,6 +25,7 @@ from robot_jsonrpcremote_protocol import (
     ValueFormat,
     agreed_pickle_protocol,
     type_name,
+    unresolved_type,
 )
 
 WITH_PICKLES = ValueFormat(pickle_protocol=5)
@@ -346,3 +348,28 @@ def test_decoding_a_dataclass_with_a_missing_field_fails() -> None:
 def test_decoding_a_class_that_is_not_installed_fails() -> None:
     with pytest.raises(ValueDoesNotFitError, match=r"notinstalled\.Point.*No module named 'notinstalled'"):
         WITHOUT_PICKLES.decode({TYPE_KEY: "notinstalled.Point", "x": 1})
+
+
+# --- classes that cannot be imported --------------------------------------------------------------------------------
+
+_MISSING = unresolved_type("notinstalled.Point", "No module named 'notinstalled'")
+
+
+@FORMATS
+def test_decoding_a_value_for_an_unresolved_type_fails(value_format: ValueFormat) -> None:
+    with pytest.raises(
+        ValueDoesNotFitError, match=r"notinstalled\.Point: it cannot be imported: No module named 'notinstalled'$"
+    ):
+        value_format.decode({"x": 1, "y": 2}, _MISSING)
+
+
+@FORMATS
+def test_null_and_an_empty_list_need_nothing_of_an_unresolved_type(value_format: ValueFormat) -> None:
+    assert value_format.decode(None, _MISSING) is None
+    assert value_format.decode(None, _MISSING | None) is None
+    assert value_format.decode([], types.GenericAlias(list, (_MISSING,))) == []
+
+
+def test_a_value_at_the_place_of_an_unresolved_type_travels_as_without_one() -> None:
+    assert WITHOUT_PICKLES.encode({"x": 1, "y": 2}, _MISSING) == {"x": 1, "y": 2}
+    assert set(WITH_PICKLES.encode(Point(1, 2), _MISSING)) == {PICKLED_KEY}

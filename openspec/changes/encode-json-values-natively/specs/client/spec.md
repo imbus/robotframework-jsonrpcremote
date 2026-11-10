@@ -118,12 +118,22 @@ A keyword call SHALL fail with a `TypeError` that names the argument or the retu
 
 ### Requirement: A return value that does not fit its type fails the call
 
-When a typed return value does not fit its type, its class is not installed on the client, or its `__type__` names none of the supported kinds, the keyword call SHALL fail with a `ValueError` worded as Robot Framework words a failed conversion, naming the return value, the type and the reason.
+When a typed return value does not fit its type, its class, declared or named in `__type__`, is not installed on the client, or its `__type__` names none of the supported kinds, the keyword call SHALL fail with a `ValueError` worded as Robot Framework words a failed conversion, naming the return value, the type and the reason.
 
 #### Scenario: A class that is not installed
 
 - **WHEN** a server answers with `{"__type__": "notinstalled.Point", "x": 1}`, and no module `notinstalled` is installed on the client
 - **THEN** the call fails with a `ValueError` that names the return value, `notinstalled.Point` and that the module cannot be imported
+
+#### Scenario: A declared class that is not installed
+
+- **WHEN** a server answers a keyword whose return type is `notinstalled.Point` with `{"x": 1, "y": 2}`, and no module `notinstalled` is installed on the client
+- **THEN** the call fails with a `ValueError` that names the return value, `notinstalled.Point` and that the module cannot be imported
+
+#### Scenario: A return value that needs nothing of the missing class
+
+- **WHEN** a server answers a keyword whose return type is `list[notinstalled.Point]` with `[]`, or one whose return type is `notinstalled.Point | None` with `null`
+- **THEN** the keyword returns `[]` or `None`
 
 #### Scenario: A form that does not fit
 

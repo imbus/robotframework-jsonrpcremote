@@ -29,6 +29,7 @@ export default defineConfig({
 					items: [
 						'guides/transports',
 						'guides/sessions',
+						'guides/values-and-types',
 						'guides/failures',
 						'guides/lost-connections',
 						'guides/container',

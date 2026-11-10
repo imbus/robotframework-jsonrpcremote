@@ -10,12 +10,14 @@ from .values import PICKLED_KEY as PICKLED_KEY
 from .values import TYPE_KEY as TYPE_KEY
 from .values import VALUE_KEY as VALUE_KEY
 from .values import PickleNotAgreedError as PickleNotAgreedError
+from .values import UnresolvedType as UnresolvedType
 from .values import ValueCannotTravelError as ValueCannotTravelError
 from .values import ValueDoesNotFitError as ValueDoesNotFitError
 from .values import ValueFormat as ValueFormat
 from .values import agreed_pickle_protocol as agreed_pickle_protocol
 from .values import resolve_type_name as resolve_type_name
 from .values import type_name as type_name
+from .values import unresolved_type as unresolved_type
 
 SimpleType: TypeAlias = str | int | float | bool | None
 AnyType: TypeAlias = SimpleType | list[Any] | dict[str, Any]

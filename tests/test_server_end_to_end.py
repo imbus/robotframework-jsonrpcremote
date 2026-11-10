@@ -68,6 +68,7 @@ class Color(Enum):
 
 LIBRARY = """\
 import logging
+from collections.abc import Iterable
 from datetime import datetime
 
 from end_to_end_types import Color, Point
@@ -93,6 +94,12 @@ class EndToEndLib:
 
     def make_point(self):
         return Point(1, 2)
+
+    def unresolvable(self) -> "NoSuchType":  # noqa: F821
+        return "x"
+
+    def letters(self, text: str) -> Iterable[str]:
+        return list(text)
 
     def when(self, when: datetime) -> datetime:
         return when
@@ -681,6 +688,23 @@ async def test_a_keyword_without_a_return_type_has_none(port: int) -> None:
         imported = await session.import_library("EndToEndLib")
 
     assert _keyword(imported, "Make Point").return_type is None
+
+
+async def test_a_return_type_that_the_server_cannot_resolve_is_left_out(port: int) -> None:
+    async with _connection(port) as session:
+        await session.handshake()
+        imported = await session.import_library("EndToEndLib")
+
+    assert _keyword(imported, "Unresolvable").return_type is None
+
+
+async def test_a_class_that_robot_framework_does_not_resolve_by_its_name_is_named_with_its_module(port: int) -> None:
+    async with _session(port) as session:
+        imported_types = _keyword(await session.import_library("EndToEndLib"), "Letters")
+        result = await session.run_keyword("Letters", ["ab"])
+
+    assert imported_types.return_type == "collections.abc.Iterable[str]"
+    assert result.result == ["a", "b"]
 
 
 async def test_the_definition_names_standard_types_as_robot_framework_does(port: int) -> None:

@@ -1,0 +1,133 @@
+---
+title: Values and types
+description: How keyword arguments and return values travel between client and server, as JSON, as typed values of classes that both share, or as pickles.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import shapes from '../../../../examples/values-and-types/shapes.py?raw';
+import drawing from '../../../../examples/values-and-types/Drawing.py?raw';
+import suite from '../../../../examples/values-and-types/drawing.robot?raw';
+import withoutTypes from '../../../../examples/values-and-types/without-types.robot?raw';
+
+Keyword arguments and return values cross the connection between the client
+and the server. How a value travels depends on its type, on the type that the
+keyword declares for it, and on whether both sides read pickles.
+
+## How values travel
+
+- **JSON values** travel as they are: `None`, strings, numbers and booleans,
+  and lists and dicts of them, nested to any depth. A dict from a `&{dict}`
+  variable arrives as a plain dict.
+- **Typed values** travel as JSON in a form of their own: dataclasses, enums,
+  named tuples, standard types such as `datetime`, `Decimal`, `bytes`, `UUID`
+  and `Path`, and tuples, sets and dicts with keys other than strings. A
+  dataclass travels as an object with its fields, such as `{"x": 1, "y": 2}`,
+  and a member of an enum as its name, such as `"RED"`. The
+  [protocol](/robotframework-jsonrpcremote/reference/protocol/#values) lists
+  every form.
+- **Pickles** carry the other Python objects between Python peers, if both
+  sides read pickles; see [Pickles](#pickles).
+
+Where a keyword declares the type of an argument or of its return value, a
+value of that type travels in its form, also when both sides read pickles. The
+receiver builds it by the declared type: the server before the keyword runs,
+and the client when the keyword returns.
+
+## Classes that client and server share
+
+A typed value of a class needs the class on both sides. The library definition
+names a class by its module and its qualified name, such as `shapes.Point`, and
+the client imports it by that name. So client and server need the same classes
+in the same modules: a package that both install, or a module on the module
+search path of both.
+
+In this example, the module `shapes` holds the types:
+
+<Code code={shapes} lang="python" title="shapes.py" />
+
+The library of the server uses them in the signatures of its keywords:
+
+<Code code={drawing} lang="python" title="Drawing.py" />
+
+The server finds both in the current directory:
+
+```sh
+robot-jsonrpcremote-server --pythonpath . Drawing
+```
+
+The suite gets a `Point` back from `Move` and gives `Paint` the name of a
+member of `Color`:
+
+<Code code={suite} lang="text" title="drawing.robot" />
+
+It runs with `shapes` on the module search path of the client, too:
+
+```sh
+robot --pythonpath . drawing.robot
+```
+
+The client gives Robot Framework the classes of the declared types. Robot
+Framework therefore converts `red` to the member `RED` on the client, as for a
+local library, and Libdoc describes `Color` with its members.
+
+The files are in
+[`docs/examples/values-and-types`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/values-and-types)
+in the repository.
+
+## Without the classes on the client
+
+A class that the client cannot import goes to Robot Framework by its name, and
+Libdoc shows that name. An argument of the class still travels: a dict, from
+which the server builds the dataclass, or the name of a member, which the
+server converts. A return value of the class fails the call, since only the
+class could build it, with a message that names the class and why the client
+cannot import it:
+
+<Code code={withoutTypes} lang="text" title="without-types.robot" />
+
+```sh
+robot without-types.robot
+```
+
+A return value that holds nothing of the class, such as `None` or an empty
+list, comes back as it is.
+
+## Values without a declared type
+
+Where a keyword declares no type, as without a type hint or with `Any`, a value
+that JSON cannot hold travels as a pickle if both sides read pickles. Otherwise
+a typed value names its type in the key `__type__`, as in
+`{"__type__": "shapes.Point", "x": 1, "y": 2}`, and the receiver builds it by
+that name. An object of a class without a form fails the call then, with a
+message that names its type.
+
+## Pickles
+
+Pickles are on by default. Client and server each state in `robot/initialize`
+the highest pickle protocol that they read, and use the lower one. A pickle
+carries any Python object whose class both sides can import, but only Python
+reads it.
+
+The server turns them off with `--no-pickles`, or with
+`ROBOT_JSONRPC_PICKLES=no` in its environment, and the client with
+`rpc_pickles=False`:
+
+```text
+*** Settings ***
+Library    JsonRpcRemote    tcp://127.0.0.1:8271    Drawing    rpc_pickles=False
+```
+
+Without pickles, values travel as JSON values and typed values only, as with a
+server in another language. A value that would need a pickle fails the call
+with a message that names its type and says which side reads no pickles, such
+as `Argument 'point' of type 'mymodule.Widget' cannot be sent: it is not JSON, and rpc_pickles is off.`
+
+## Servers in other languages
+
+A server in another language states no pickle protocol in its answer to
+`robot/initialize`, so the client sends it no pickles. It names the types of
+its keywords in the library definition with the Python names of the classes,
+such as `shapes.Point`, and reads and writes the values in the forms of the
+[protocol](/robotframework-jsonrpcremote/reference/protocol/#values). The
+client needs the Python classes of the types that such a server returns, as
+for a server in Python.

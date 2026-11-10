@@ -56,11 +56,13 @@ from robot_jsonrpcremote_protocol import (
     ServerInfo,
     SetLogLevelParams,
     ShutdownParams,
+    UnresolvedType,
     ValueCannotTravelError,
     ValueDoesNotFitError,
     ValueFormat,
     agreed_pickle_protocol,
     resolve_type_name,
+    unresolved_type,
 )
 
 from .__version__ import __version__
@@ -185,8 +187,12 @@ def _hint_of(info: TypeInfo) -> Any:
         return typing.Union[tuple(_hint_of(member) for member in info.nested or ())]
     base = info.type
     if base is None:
-        # A name that Robot Framework does not know, such as `mytypes.Point`: a class of the remote library.
-        base = resolve_type_name(info.name)
+        # A name that Robot Framework does not know, such as `mytypes.Point`: a class of the remote library. One
+        # that is not installed becomes a placeholder, so that a return value that needs it fails.
+        try:
+            base = resolve_type_name(info.name)
+        except LookupError as error:
+            base = unresolved_type(info.name, str(error))
     if info.nested:
         return base[tuple(_hint_of(item) for item in info.nested)]
     return base
@@ -198,6 +204,13 @@ def _type_hint(text: str) -> Any:
         return _hint_of(TypeInfo.from_string(text))
     except (LookupError, ValueError, TypeError):
         return NOT_DECLARED
+
+
+def _has_unresolved(hint: Any) -> bool:
+    """Whether a type hint holds a placeholder for a class that is not installed on the client."""
+    if isinstance(hint, type) and issubclass(hint, UnresolvedType):
+        return True
+    return any(_has_unresolved(argument) for argument in typing.get_args(hint))
 
 
 def _without_pickles(session: "_Session") -> str:
@@ -1127,7 +1140,8 @@ class JsonRpcRemote:
                 # The class itself, so that Robot Framework converts on the client and Libdoc describes it; the
                 # text as it is where a class is not installed on the client.
                 declared = self._declared_type(arg.type)
-                type_hints[arg.name] = arg.type if declared is NOT_DECLARED else declared
+                missing = declared is NOT_DECLARED or _has_unresolved(declared)
+                type_hints[arg.name] = arg.type if missing else declared
 
         return type_hints if type_hints else None
 

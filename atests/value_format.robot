@@ -86,6 +86,17 @@ A Returned Class That The Client Does Not Have Fails
     ...    ValueError: Return value '*' (dictionary) cannot be converted to ServerOnlyTypes.OnlyOnTheServer: it cannot be imported: No module named 'ServerOnlyTypes'
     ...    ServerOnly.Make Only On The Server
 
+A Returned Declared Class That The Client Does Not Have Fails With Pickles
+    [Documentation]    A declared type travels as typed JSON in any case, so it fails with pickles, too.
+    Start A Typed Server    ${WITH_PICKLES}
+    Import The Typed Library    ${WITH_PICKLES}    DeclaredServerOnlyWithPickles
+    Declared Class Of The Server Fails    DeclaredServerOnlyWithPickles
+
+A Returned Declared Class That The Client Does Not Have Fails Without Pickles
+    Start A Typed Server    ${WITHOUT_PICKLES}    pickles=${False}
+    Import The Typed Library    ${WITHOUT_PICKLES}    DeclaredServerOnlyWithoutPickles
+    Declared Class Of The Server Fails    DeclaredServerOnlyWithoutPickles
+
 Libdoc Describes A Declared Enum With Its Members
     Start A Typed Server    ${WITH_PICKLES}
     ${typedocs}=    Typedocs In Json Spec    JsonRpcRemote::tcp://127.0.0.1:${WITH_PICKLES}::TypedValuesLib
@@ -113,6 +124,12 @@ Declared Values Make A Round Trip
         ${result}=    Run Keyword    ${alias}.${keyword}    ${value}
         Should Be The Same Value    ${result}    ${value}
     END
+
+Declared Class Of The Server Fails
+    [Arguments]    ${alias}
+    Run Keyword And Expect Error
+    ...    ValueError: Return value '{'value': 1}' (dictionary) cannot be converted to ServerOnlyTypes.OnlyOnTheServer: it cannot be imported: No module named 'ServerOnlyTypes'
+    ...    ${alias}.Make Declared Only On The Server
 
 Should Be The Same Value
     [Arguments]    ${result}    ${expected}

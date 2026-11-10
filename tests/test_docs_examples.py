@@ -220,6 +220,17 @@ def test_several_libraries(tmp_path: Path) -> None:
     assert code == 0, _failed(result)
 
 
+def test_values_and_types(tmp_path: Path) -> None:
+    folder = _EXAMPLES / "values-and-types"
+    with _server(folder, tmp_path / "server.txt", "robot-jsonrpcremote-server", "--pythonpath", ".", "Drawing"):
+        # With the module of the types on the module search path of the client, as on the server.
+        code, result = _robot(folder, tmp_path, "--pythonpath", ".", "drawing.robot")
+        assert code == 0, _failed(result)
+        # Without it.
+        code, result = _robot(folder, tmp_path, "without-types.robot")
+    assert code == 0, _failed(result)
+
+
 def test_connect_retry(tmp_path: Path) -> None:
     folder = _EXAMPLES / "connect-retry"
     # The suite starts first: its library import waits for the server.
