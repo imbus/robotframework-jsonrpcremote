@@ -16,7 +16,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from fake_server import NEVER_ANSWER, RESET_CONNECTION, FakeServer, has_cycle, wait_until
+from robot.errors import RemoteError
 
+from jsonrpcpeer import JsonRpcErrorCode, JsonRpcResponseError
 from JsonRpcRemote import JsonRpcRemote, _definition_changes, _Session, _time_option
 from robot_jsonrpcremote_protocol import (
     IMPORT_LIBRARY_REQUEST,
@@ -24,6 +26,7 @@ from robot_jsonrpcremote_protocol import (
     RUN_KEYWORD_REQUEST,
     KeywordDefinition,
     LibraryDefinition,
+    RobotJsonRpcErrorCode,
 )
 
 
@@ -201,7 +204,7 @@ def test_failed_attempts_are_repeated_every_interval(
 ) -> None:
     remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.2)
     remote._stop_session()  # as at the end of the session's rpc_scope
-    server.script(IMPORT_LIBRARY_REQUEST, RuntimeError("not ready"), RuntimeError("not ready"))
+    server.script(IMPORT_LIBRARY_REQUEST, RESET_CONNECTION, RESET_CONNECTION)
     attempts = _record_attempts(monkeypatch)
 
     assert _call(remote, "up") == "echo: up"
@@ -270,7 +273,7 @@ def test_connection_that_needed_several_attempts_is_logged_as_info(
 ) -> None:
     remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
     remote._stop_session()  # as at the end of the session's rpc_scope
-    server.script(IMPORT_LIBRARY_REQUEST, RuntimeError("not ready"), RuntimeError("not ready"))
+    server.script(IMPORT_LIBRARY_REQUEST, RESET_CONNECTION, RESET_CONNECTION)
     attempts = _record_attempts(monkeypatch)
     caplog.set_level(logging.INFO, logger="RobotFramework")
 
@@ -291,6 +294,111 @@ def test_connection_at_the_first_attempt_is_not_logged(
     connect(rpc_connect_retry_timeout=10)
 
     assert _robot_log(caplog) == []
+
+
+# --- failures that are no connection failures ------------------------------------
+
+
+def _shutting_down() -> JsonRpcResponseError:
+    """The answer of a server that no longer runs a request because it is stopping."""
+    return JsonRpcResponseError(RobotJsonRpcErrorCode.SHUTTING_DOWN, "server is shutting down")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        JsonRpcResponseError(JsonRpcErrorCode.INVALID_PARAMS, "Library 'FakeLib' is not available."),
+        JsonRpcResponseError(
+            JsonRpcErrorCode.INTERNAL_ERROR,
+            "Importing library 'FakeLib' failed: ModuleNotFoundError: No module named 'a_module_that_does_not_exist'",
+        ),
+    ],
+    ids=["not-served", "fails-to-import"],
+)
+def test_refused_import_fails_at_once_with_connect_retry(server: FakeServer, error: JsonRpcResponseError) -> None:
+    server.script(IMPORT_LIBRARY_REQUEST, *[error] * 20)
+
+    started = time.monotonic()
+    with pytest.raises(RemoteError) as raised:
+        JsonRpcRemote(
+            server.uri, "FakeLib", rpc_timeout=5, rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1
+        )
+
+    assert time.monotonic() - started < 5
+    assert str(raised.value) == error.message
+    assert server.requests.count(IMPORT_LIBRARY_REQUEST) == 1
+
+
+def test_import_answered_with_shutting_down_is_tried_again(
+    server: FakeServer, connect: Callable[..., JsonRpcRemote]
+) -> None:
+    server.script(IMPORT_LIBRARY_REQUEST, _shutting_down())
+
+    remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
+
+    assert server.requests.count(IMPORT_LIBRARY_REQUEST) == 2
+    assert _call(remote, "up") == "echo: up"
+
+
+def test_shutting_down_without_connect_retry_fails_at_once(server: FakeServer) -> None:
+    server.script(IMPORT_LIBRARY_REQUEST, *[_shutting_down() for _ in range(20)])
+
+    with pytest.raises(RemoteError, match=r"^server is shutting down$"):
+        JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5)
+
+    assert server.requests.count(IMPORT_LIBRARY_REQUEST) == 1
+
+
+def test_uri_that_the_client_cannot_use_fails_at_once_with_connect_retry() -> None:
+    started = time.monotonic()
+    with pytest.raises(ValueError, match=r"^Unsupported URI scheme 'htp'"):
+        JsonRpcRemote(
+            "htp://127.0.0.1:8271",
+            "FakeLib",
+            rpc_timeout=5,
+            rpc_connect_retry_timeout=10,
+            rpc_connect_retry_interval=0.1,
+        )
+
+    assert time.monotonic() - started < 5
+
+
+def test_refused_import_when_a_lost_session_is_replaced_fails_the_call_at_once(
+    server: FakeServer, connect: Callable[..., JsonRpcRemote]
+) -> None:
+    remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
+    lost = _session(remote)
+    server.close_connections()
+    wait_until(lambda: lost.lost)
+    message = "Library 'FakeLib' is not available."
+    server.script(IMPORT_LIBRARY_REQUEST, *[JsonRpcResponseError(JsonRpcErrorCode.INVALID_PARAMS, message)] * 20)
+
+    started = time.monotonic()
+    with pytest.raises(RemoteError, match=rf"^{re.escape(message)}$"):
+        _call(remote, "again")
+
+    assert time.monotonic() - started < 5
+    assert server.requests.count(IMPORT_LIBRARY_REQUEST) == 2
+
+
+def test_refused_import_does_not_count_as_a_failed_attempt(
+    server: FakeServer, connect: Callable[..., JsonRpcRemote], caplog: pytest.LogCaptureFixture
+) -> None:
+    remote = connect(rpc_connect_retry_timeout=10, rpc_connect_retry_interval=0.1)
+    remote._stop_session()  # as at the end of the session's rpc_scope
+    # Two failed connections, then a server that answers, but refuses the import once.
+    server.script(INITIALIZE_REQUEST, RESET_CONNECTION, RESET_CONNECTION)
+    server.script(IMPORT_LIBRARY_REQUEST, JsonRpcResponseError(JsonRpcErrorCode.INVALID_PARAMS, "not yet"))
+    caplog.set_level(logging.INFO, logger="RobotFramework")
+
+    with pytest.raises(RemoteError, match=r"^not yet$"):
+        _call(remote, "refused")
+    assert _call(remote, "up") == "echo: up"
+
+    connected = rf"Connected to '{re.escape(server.uri)}' after \d+\.\ds \(3 attempts\)\."
+    [(level, message)] = _robot_log(caplog)
+    assert level == logging.INFO
+    assert re.fullmatch(connected, message), message
 
 
 # --- reconnect after a lost connection -------------------------------------------
@@ -358,7 +466,7 @@ def test_reconnect_warning_counts_the_failed_attempts(
     lost = _session(remote)
     server.close_connections()
     wait_until(lambda: lost.lost)
-    server.script(IMPORT_LIBRARY_REQUEST, RuntimeError("not ready"))
+    server.script(IMPORT_LIBRARY_REQUEST, RESET_CONNECTION)
     caplog.set_level(logging.WARNING, logger="RobotFramework")
 
     assert _call(remote, "again") == "echo: again"

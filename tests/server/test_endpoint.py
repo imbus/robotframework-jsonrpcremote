@@ -405,7 +405,7 @@ async def test_error_of_a_stopping_server_leaves_run_keyword() -> None:
     endpoint = await _initialized_endpoint(_FailingContext(error))
 
     assert await _error_of(endpoint.run_keyword(RunKeywordParams(library_token="token", name="Keyword"))) is error
-    assert (error.code, error.message) == (JsonRpcErrorCode.INTERNAL_ERROR, "server is shutting down")
+    assert (error.code, error.message) == (RobotJsonRpcErrorCode.SHUTTING_DOWN, "server is shutting down")
 
 
 async def _error_of(call: Awaitable[Any]) -> JsonRpcResponseError:

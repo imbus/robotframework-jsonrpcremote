@@ -140,7 +140,7 @@ is stopped. It then:
    client;
 2. answers requests that need Robot Framework (importing or finalizing a
    library, running a keyword) and are still waiting or arrive meanwhile with
-   the error `server is shutting down`, without running them;
+   the error `server is shutting down`, code `-32002`, without running them;
 3. stops accepting connections, closes every client connection and exits with
    exit code 0.
 

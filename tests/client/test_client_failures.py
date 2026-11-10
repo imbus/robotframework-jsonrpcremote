@@ -160,12 +160,16 @@ def test_error_response_to_the_import_of_a_later_session_fails_the_keyword_call(
     assert details.traceback == ""
 
 
-def test_error_response_is_named_as_the_last_error_when_connect_retry_gives_up(server: FakeServer) -> None:
+def test_answer_of_a_stopping_server_is_named_as_the_last_error_when_connect_retry_gives_up(
+    server: FakeServer,
+) -> None:
+    # The only error response that connect retry repeats.
     remote = JsonRpcRemote(server.uri, "FakeLib", rpc_timeout=5, rpc_connect_retry_timeout=0.2)
     remote._stop_session()  # as at the end of the session's rpc_scope
-    server.script(IMPORT_LIBRARY_REQUEST, *[JsonRpcResponseError(-32602, "refused")] * 5)
+    server.script(IMPORT_LIBRARY_REQUEST, *[JsonRpcResponseError(-32002, "server is shutting down")] * 5)
 
     with pytest.raises(
-        ConnectionError, match=r"^Could not connect .*: JsonRpcResponseError: RPC Error -32602: refused$"
+        ConnectionError,
+        match=r"^Could not connect .*: JsonRpcResponseError: RPC Error -32002: server is shutting down$",
     ):
         asyncio.run(remote.run_keyword("Echo", ["value"], {}))

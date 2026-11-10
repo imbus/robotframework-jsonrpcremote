@@ -58,6 +58,14 @@ has passed. This applies to every connection: at the library import, when a new
 session starts, and when the client replaces a lost session. Each attempt is
 still limited by `rpc_timeout`.
 
+Only a failed connection is repeated: a server that cannot be reached yet, a
+connection that is refused, reset or closed, an attempt that takes longer than
+`rpc_timeout`, and a server that is stopping and answers
+`server is shutting down`. When the server answers that the import cannot
+succeed, for example with `Library 'OtherLibrary' is not available.` or with the
+error of a library that fails to import, the call fails at once, as without
+connect retry. So does a URI that the client cannot use.
+
 If the time passes without a connection, the call fails with an error such as:
 
 ```text

@@ -47,6 +47,7 @@ from robot_jsonrpcremote_protocol import (
     LibraryDefinition,
     LogParams,
     PickleNotAgreedError,
+    RobotJsonRpcErrorCode,
     RunKeywordError,
     RunKeywordErrorMode,
     RunKeywordParams,
@@ -152,6 +153,17 @@ def _time_option(name: str, value: float | str) -> float:
 
 def _describe_error(error: BaseException) -> str:
     return f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
+
+
+def _is_connection_failure(error: BaseException) -> bool:
+    """Whether another connection attempt could succeed: the server was not reached, or it is stopping.
+
+    A refused, reset or closed connection, a pipe or command that does not exist and the timeout of an attempt are
+    ``OSError``s. Any other answer of the server, and a URI that the client cannot use, would fail the same way again.
+    """
+    if isinstance(error, JsonRpcResponseError):
+        return error.code == RobotJsonRpcErrorCode.SHUTTING_DOWN
+    return isinstance(error, OSError)
 
 
 def _robot_log_level() -> str | None:
@@ -994,8 +1006,9 @@ class JsonRpcRemote:
     def _connect_with_retry(self) -> _Session:
         """Connect; with connect retry, try again every interval until the window has passed.
 
-        Once a window has passed without a connection, every call makes one attempt until a
-        connection succeeds again.
+        Only a connection failure is tried again; any other failure is raised at once, as without connect retry, and
+        is no failed attempt of an outage. Once a window has passed without a connection, every call makes one
+        attempt until a connection succeeds again.
         """
         started = time.monotonic()
         retry = self._retry_timeout > 0 and not (self._outage is not None and self._outage.window_spent)
@@ -1006,6 +1019,8 @@ class JsonRpcRemote:
             try:
                 return self._connect()
             except Exception as error:
+                if not _is_connection_failure(error):
+                    raise
                 if self._outage is None:
                     self._outage = _Outage(started)
                 self._outage.failed_attempts += 1

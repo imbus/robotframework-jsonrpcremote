@@ -52,7 +52,7 @@ DEFAULT_VALUE_FORMAT = ValueFormat(pickle.HIGHEST_PROTOCOL, dict_types=(DotDict,
 
 def _shutting_down() -> JsonRpcResponseError:
     """The error for a command that the stopping server no longer runs."""
-    return JsonRpcResponseError(JsonRpcErrorCode.INTERNAL_ERROR, "server is shutting down")
+    return JsonRpcResponseError(RobotJsonRpcErrorCode.SHUTTING_DOWN, "server is shutting down")
 
 
 class KeywordFailedError(Exception):

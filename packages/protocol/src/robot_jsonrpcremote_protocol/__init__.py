@@ -26,6 +26,8 @@ AnyType: TypeAlias = SimpleType | list[Any] | dict[str, Any]
 class RobotJsonRpcErrorCode(IntEnum):
     NOT_INITIALIZED = -32000
     KEYWORD_NOT_FOUND = -32001
+    # A request that the server no longer runs because it is stopping; a client may try again with a new connection.
+    SHUTTING_DOWN = -32002
 
 
 class ArgumentKind(str, Enum):
