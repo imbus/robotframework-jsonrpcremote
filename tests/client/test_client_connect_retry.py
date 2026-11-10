@@ -154,6 +154,9 @@ def test_interval_of_zero_without_connect_retry_is_accepted(server: FakeServer) 
 
 
 def test_rejected_options_leave_no_error_for_the_finalizer(server: FakeServer, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The garbage of earlier tests first, such as a transport that a stopped server left open: only the finalizer of
+    # the library below counts.
+    gc.collect()
     unraisable: list[Any] = []
     monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
 
