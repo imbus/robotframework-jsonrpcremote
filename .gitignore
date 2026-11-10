@@ -32,6 +32,9 @@ results/
 
 .robotcode-cache/
 
+# The packages of the example in Node.js, which npm ci installs
+examples/node-robot-jsonrpcserver/node_modules/
+
 # Documentation site
 docs/node_modules/
 docs/.astro/

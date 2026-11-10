@@ -9,6 +9,9 @@ import suite from '../../../../examples/own-server/echo.robot?raw';
 import stdioSuite from '../../../../examples/own-server/echo_stdio.robot?raw';
 import pipeSuite from '../../../../examples/own-server/echo_pipe.robot?raw';
 import moveSuite from '../../../../examples/own-server/move.robot?raw';
+import nodeServer from '../../../../../examples/node-robot-jsonrpcserver/src/server.ts?raw';
+import nodeSuite from '../../../../examples/node-server/echo.robot?raw';
+import nodePipeSuite from '../../../../examples/node-server/echo_pipe.robot?raw';
 
 `JsonRpcRemote` and the server talk [JSON-RPC 2.0](https://www.jsonrpc.org/specification).
 The protocol is language-agnostic by design: a server can be written in any
@@ -21,7 +24,8 @@ package `robotframework-jsonrpcremote-protocol` defines them in the module
 and both sides as the classes `ServerEndpoint` and `ClientEndpoint`, with the
 name and the types of each message in use. The client, the server and the
 [example server](#example-a-hand-written-server) at the end of this page use
-them.
+them. The [example in Node.js](#example-a-server-in-nodejs) after it shows a
+server in another language.
 
 ## Framing
 
@@ -470,3 +474,51 @@ Programs in other languages read and write them as usual, with one reader and
 one writer. Do not let anyone else use these pipes: a child process that
 inherits stdin or stdout, or a second handle in another thread, can lose data
 or crash the process. Start child processes with their own stdin and stdout.
+
+## Example: a server in Node.js
+
+The example server
+[`examples/node-robot-jsonrpcserver`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/examples/node-robot-jsonrpcserver)
+shows a server in another language. It is written in TypeScript, which Node.js
+24 runs directly, without a build step, and it uses the
+JSON-RPC library [`vscode-jsonrpc`](https://www.npmjs.com/package/vscode-jsonrpc).
+The library reads and writes the framing of the Language Server Protocol, which
+this protocol uses, and dispatches the requests and notifications to their
+handlers. A handler that throws a `ResponseError` answers with its code and
+message, and a method without a handler gets `-32601`. The file
+`src/protocol.ts` declares the messages of this page with the field names of
+the wire, as a `RequestType` or a `NotificationType` with the types of their
+params and results.
+
+The example serves the library `NodeLibrary` with three keywords. `Echo`
+sends a log message with `robot/log` and returns its argument, `Sum Of`
+declares its argument as `list[int]` and returns the sum, and `Fail With`
+fails with its message:
+
+<Code code={nodeServer} lang="ts" title="examples/node-robot-jsonrpcserver/src/server.ts" />
+
+The server reads no pickles and states no `pickle_protocol`, so the client
+sends it lists and objects as plain JSON and other values as typed JSON; see
+[Values](#values). It refuses a library import and a keyword call before the
+handshake with `-32000`, and an unknown keyword with `-32001`, as the reference
+server does.
+
+In a clone of the repository, `npm ci` in the folder of the example installs
+its packages, and `node src/server.ts` there starts it on `127.0.0.1:8271`.
+With `--port`, it listens on another port. A suite uses it like any other
+server:
+
+<Code code={nodeSuite} lang="text" title="echo.robot" />
+
+With `--stdio`, the example serves one client over its stdin and stdout, and
+with `--pipe ADDRESS`, also written `--pipe=ADDRESS`, it connects to the pipe
+of the client, as [Over a pipe](#over-a-pipe) describes. In both cases, it ends
+with the connection. It writes what it reports to stderr, in every transport,
+so stdout carries nothing but messages over stdio. The client starts it with
+`node` and the path of its file, here as a list:
+
+<Code code={nodePipeSuite} lang="text" title="echo_pipe.robot" />
+
+The suites are in
+[`docs/examples/node-server`](https://github.com/imbus/robotframework-jsonrpcremote/tree/main/docs/examples/node-server)
+in the repository.

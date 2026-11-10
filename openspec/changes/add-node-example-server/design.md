@@ -47,8 +47,9 @@ See proposal.md for the motivation. The starting point:
   - `verbatimModuleSyntax` makes type imports explicit.
   - `module` `nodenext`, `noEmit` and `strict`.
 - **`package.json`:**
-  - `"type": "module"` and `engines` `>=22.18`.
+  - `"type": "module"` and `engines` `>=24`: Node.js 24, a line with long-term support. Daniel chose it on 2026-11-10 over Node.js 26, the newest line with long-term support.
   - The versions are exact, with `package-lock.json` committed, so that `npm ci` installs the same everywhere.
+  - `@types/node` is that of Node.js 24, the oldest version that the example supports, so that `tsc` refuses an API that only newer versions have.
   - The scripts `start` (`node src/server.ts`) and `check` (`tsc`).
 - **Alternatives:**
   - JavaScript would show no types of the protocol.
@@ -102,6 +103,7 @@ The protocol page shows `src/server.ts` in full, as it does with the code of the
   - They start the example as a process: over TCP with `--port 0`, reading the port from its line on stderr; with `create_stdio_subprocess()` and `--stdio`; and with `create_pipe_subprocess()`.
   - They talk to it with a `JsonRpcPeer` and the types of the protocol package, as `tests/examples/test_example_server.py` does, and cover every scenario of the requirement.
   - They skip without `node` or without the installed packages, except in CI, with the hint to run `npm ci` in the example folder.
+  - The path of the example and this rule are in `tests/node_example.py`, which the test of the docs example uses too.
 - **Robot suites `atests/stdio/node_example.robot` and `atests/pipe/node_example.robot`:**
   - `Echo` with its log message, from `LogCapture`, `Sum Of` with a list, `Fail With` with `Run Keyword And Expect Error`, and a keyword after the failure.
   - The commands come from `atests/resources/stdio_vars.py` and `pipe_vars.py`, with the path of the example from `atests/resources/paths.py`.
@@ -127,7 +129,7 @@ The protocol page shows `src/server.ts` in full, as it does with the code of the
 
 ## Risks / Trade-offs
 
-- [Node.js older than 22.18 does not run the `.ts` files] → `engines` states it, the README names it, and CI pins Node.js 24.
+- [Node.js older than 22.18 does not run the `.ts` files, and Node.js older than 24 is not tested] → `engines` states 24, the README names it, and CI uses Node.js 24.
 - [Some versions of Node.js write a warning about type stripping to stderr] → stderr is for reports, and the messages are untouched.
 - [`npm ci` needs the network in CI and for local tests] → The tests skip without the installed packages, except in CI. The test server keeps covering the client without them.
 - [Two servers in Node.js] → They have different jobs: the test server shows the wire without a library, the example shows how to write a server.

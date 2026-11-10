@@ -5,6 +5,8 @@ import shlex
 import sys
 import tempfile
 
+from paths import NODE_EXAMPLE as _NODE_EXAMPLE
+
 # The libraries of the servers, with the Node server and its wrapper script.
 _LIBRARIES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "libraries")
 
@@ -32,3 +34,5 @@ OWN_SERVER_COMMAND = shlex.join([sys.executable, "-m", "simple_robot_jsonrpcserv
 # A server written in Node, and the same server started by a wrapper script, which is a .cmd file on Windows.
 NODE_SERVER_COMMAND = shlex.join(["node", os.path.join(_LIBRARIES, "node_keywords.js")])
 NODE_WRAPPER_COMMAND = shlex.join([os.path.join(_LIBRARIES, "node_keywords.cmd")])
+# The example server in Node.js, which serves NodeLibrary.
+NODE_EXAMPLE_COMMAND = shlex.join(["node", os.path.join(_NODE_EXAMPLE, "src", "server.ts"), "--stdio"])

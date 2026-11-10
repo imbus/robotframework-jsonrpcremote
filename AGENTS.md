@@ -10,7 +10,7 @@ robotframework-jsonrpcremote is a [uv](https://github.com/astral-sh/uv) workspac
 - Protocol definitions: `packages/protocol/src/robot_jsonrpcremote_protocol/`
 - JSON-RPC peer (asyncio): `packages/jsonrpcpeer/src/jsonrpcpeer/`
 - Server runtime (`robot-jsonrpcremote-server` CLI): `packages/server/src/robot_jsonrpcremote_server/`
-- Examples: `examples/simple-robot-jsonrpcserver/`
+- Examples: `examples/simple-robot-jsonrpcserver/` (Python) and `examples/node-robot-jsonrpcserver/` (Node.js, TypeScript run directly)
 - Unit tests (pytest): `tests/`, a folder per package
 - Robot Framework integration tests: `atests/`, a folder per topic
 - Documentation site (Starlight, published to <https://imbus.github.io/robotframework-jsonrpcremote/>): `docs/`
@@ -32,7 +32,7 @@ English is the project language. Write everything that goes into the repository 
 - Examples:
 	- Owning path: `examples/`.
 - Tests:
-	- Unit tests live in `tests/` (pytest), in a folder per package: `peer/`, `protocol/`, `client/` and `server/`, plus `examples/` for the example server, `docs/` for the examples of the documentation site and `atests/` for the tools of the Robot tests. The shared helpers, such as `fake_server.py`, sit in `tests/` itself, which pytest puts on the module search path. Add or update the unit tests for any Python change.
+	- Unit tests live in `tests/` (pytest), in a folder per package: `peer/`, `protocol/`, `client/` and `server/`, plus `examples/` for the example servers, `docs/` for the examples of the documentation site and `atests/` for the tools of the Robot tests. The shared helpers, such as `fake_server.py`, sit in `tests/` itself, which pytest puts on the module search path. Add or update the unit tests for any Python change.
 	- End-to-end behavior is covered by Robot Framework suites in `atests/`, in a folder per topic: `keywords/`, `values/`, `library/`, `logging/`, `failures/`, `connection/`, `stdio/` and `pipe/`. The libraries that the tests run are in `atests/libraries/`, the tools of the suites in `atests/resources/`, and `atests/resources/paths.py` gives the suites these folders. `__init__.robot` starts a shared server for the suites that start none of their own.
 	- Add or change a Robot test when the changed behavior can be observed from Robot Framework: keyword calls with their arguments and results, log messages, execution errors, the library import, Libdoc or the output files. When such a change adds none, say why. Behavior that only shows inside a package is covered by unit tests; the Robot suites still run as a regression check.
 	- Run each new test against the code without the part of the change it covers and see it fail there; failing against the unchanged code alone does not show which part a test covers.
@@ -62,6 +62,8 @@ All commands run inside the project environment via `uv run` (or after activatin
 	- Lint / format the `.robot` files in `atests/` (optional).
 - `uv build --all-packages`
 	- Build wheels and sdists for all packages into `dist/`.
+- `npm ci` and `npm run check` in `examples/node-robot-jsonrpcserver/`
+	- Install the packages of the example server in Node.js, which its tests and suites need, and check its types with `tsc`. Without them, the tests and suites of the example skip, except in CI.
 - `npm ci` and `npm run build` in `docs/`
 	- Install and build the documentation site; the build fails on broken internal links. `npm run dev` serves it locally.
 - `uv run --all-packages pytest tests/docs/test_docs_examples.py`

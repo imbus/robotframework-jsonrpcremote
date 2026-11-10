@@ -1,0 +1,17 @@
+{
+  // Only a check: Node.js runs the .ts files directly and removes their types as it loads them.
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "nodenext",
+    "strict": true,
+    "noEmit": true,
+    // Refuses what Node.js cannot remove, such as an enum.
+    "erasableSyntaxOnly": true,
+    // Type imports say so, so that removing them leaves valid JavaScript.
+    "verbatimModuleSyntax": true,
+    // Node.js imports a module by its file name, with the extension .ts.
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

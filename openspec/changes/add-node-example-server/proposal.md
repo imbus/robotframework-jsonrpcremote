@@ -44,8 +44,8 @@ _None._
   - `.gitignore`: the `node_modules` of the example.
   - `.github/workflows/ci.yml`: Node.js, `npm ci`, the type check.
 - **Tests:**
-  - New `tests/examples/test_node_example_server.py`.
-  - New Robot suites `atests/stdio/node_example.robot` and `atests/pipe/node_example.robot`, with commands in `atests/resources/stdio_vars.py` and `pipe_vars.py`.
+  - New `tests/examples/test_node_example_server.py`, with the shared helper `tests/node_example.py`.
+  - New Robot suites `atests/stdio/node_example.robot` and `atests/pipe/node_example.robot`, with commands in `atests/resources/stdio_vars.py` and `pipe_vars.py`, and the path of the example in `atests/resources/paths.py`.
   - `tests/docs/test_docs_examples.py` runs the new docs example.
 - **Docs:** `docs/src/content/docs/reference/protocol.mdx`, `roadmap.mdx`, new `docs/examples/node-server/`, `AGENTS.md` and `CONTRIBUTING.md`.
 - **Dependencies:** `vscode-jsonrpc` at runtime and `typescript` and `@types/node` for the type check, all for the example only; nothing changes for the Python packages.

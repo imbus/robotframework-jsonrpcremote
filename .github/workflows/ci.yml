@@ -37,6 +37,19 @@ jobs:
       - name: Mypy (strict) for the code that runs only on Windows
         run: uv run mypy --platform win32
 
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install the packages of the example in Node.js
+        working-directory: examples/node-robot-jsonrpcserver
+        run: npm ci
+
+      - name: Type check of the example in Node.js
+        working-directory: examples/node-robot-jsonrpcserver
+        run: npm run check
+
   test:
     name: test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
@@ -67,6 +80,16 @@ jobs:
       - name: Check that the GIL is off
         if: endsWith(matrix.python, 't')
         run: uv run --all-packages python -c "import sys, hypothesis, pytest, robot, robotcode.cli, JsonRpcRemote, robot_jsonrpcremote_server; sys.exit(sys._is_gil_enabled())"
+
+      # The example in Node.js needs Node.js 24, and the Node suites of the test server run on it too.
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install the packages of the example in Node.js
+        working-directory: examples/node-robot-jsonrpcserver
+        run: npm ci
 
       - name: Unit tests
         run: uv run --all-packages pytest
@@ -104,6 +127,16 @@ jobs:
 
       - name: Sync dependencies
         run: uv sync --all-packages
+
+      # The example in Node.js needs Node.js 24, and the Node suites of the test server run on it too.
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install the packages of the example in Node.js
+        working-directory: examples/node-robot-jsonrpcserver
+        run: npm ci
 
       # --with layers the minimum over the locked version, also for the servers the suites start.
       - name: Unit tests

@@ -59,6 +59,8 @@ module-name = "JsonRpcRemote"
 
 [tool.uv.workspace]
 members = ["packages/*", "examples/*"]
+# The example in Node.js is no Python package.
+exclude = ["examples/node-robot-jsonrpcserver"]
 
 
 [tool.uv.sources]

@@ -140,6 +140,7 @@ This project is a [uv](https://github.com/astral-sh/uv) workspace (monorepo). Al
    - [Python](https://www.python.org/) >= 3.12
    - [uv](https://docs.astral.sh/uv/getting-started/installation/)
    - [Git](https://git-scm.com/)
+   - [Node.js](https://nodejs.org/) >= 24, for the example server in Node.js and the documentation site
 
 2. **Setup:**
    ```bash
@@ -150,7 +151,15 @@ This project is a [uv](https://github.com/astral-sh/uv) workspace (monorepo). Al
 
    `uv sync` creates a `.venv` and installs the client, all workspace packages (`packages/*`), the example server, and the development tools (pytest, ruff, mypy, robotcode, robocop, pre-commit, commitizen, ...). Prefix commands with `uv run` to run them inside that environment, or activate it with `source .venv/bin/activate`.
 
-3. **Install the pre-commit hooks:**
+3. **Install the packages of the example server in Node.js:**
+   ```bash
+   cd examples/node-robot-jsonrpcserver
+   npm ci
+   ```
+
+   Its unit tests, its Robot suites and its example of the documentation site run it with `node`. Without `node` or these packages, they skip, except in CI, where they fail.
+
+4. **Install the pre-commit hooks:**
    ```bash
    uv run pre-commit install
    ```
@@ -165,7 +174,7 @@ The repository ships a [`.pre-commit-config.yaml`](.pre-commit-config.yaml) that
 - **pre-commit:** Ruff lint (`ruff check`), a Ruff formatting check (`ruff format --check`, which only verifies formatting without changing files), and mypy type checking run on the staged files.
 - **pre-push:** commitizen validates the commit messages of the range being pushed.
 
-The local hooks call the project's pinned tools via `uv run`, so they use the same Ruff and mypy versions as everything else in the project. Install the hooks once with `uv run pre-commit install` (see step 3 above). To run all hooks manually against the whole repository:
+The local hooks call the project's pinned tools via `uv run`, so they use the same Ruff and mypy versions as everything else in the project. Install the hooks once with `uv run pre-commit install` (see step 4 above). To run all hooks manually against the whole repository:
 
 ```bash
 uv run pre-commit run --all-files
@@ -179,8 +188,8 @@ The repository is a uv workspace organized into a client library, several suppor
 - **[`packages/protocol`](packages/protocol)** — JSON-RPC 2.0 protocol messages, data structures, and types, and the endpoint definitions of both sides.
 - **[`packages/jsonrpcpeer`](packages/jsonrpcpeer)** — an asynchronous JSON-RPC 2.0 peer implementation built on `asyncio`.
 - **[`packages/server`](packages/server)** — the server runtime that hosts Robot Framework libraries (`robot-jsonrpcremote-server` CLI).
-- **[`examples/`](examples)** — runnable usage examples, e.g. a minimal hand-written server.
-- **[`tests`](tests)** — fast unit tests (pytest), in a folder per package: `peer/`, `protocol/`, `client/` and `server/`, plus `examples/` for the example server, `docs/` for the examples of the documentation site and `atests/` for the tools of the Robot tests. The shared helpers sit in `tests/` itself.
+- **[`examples/`](examples)** — runnable usage examples: a minimal hand-written server in Python and an example server in Node.js.
+- **[`tests`](tests)** — fast unit tests (pytest), in a folder per package: `peer/`, `protocol/`, `client/` and `server/`, plus `examples/` for the example servers, `docs/` for the examples of the documentation site and `atests/` for the tools of the Robot tests. The shared helpers sit in `tests/` itself.
 - **[`atests`](atests)** — Robot Framework integration tests, in a folder per topic, with the libraries that the tests run in `atests/libraries/` and the tools of the suites in `atests/resources/`.
 - **[`docs`](docs)** — the documentation site (Starlight), with its runnable examples in `docs/examples/`.
 
@@ -246,6 +255,12 @@ uv run mypy
 ```
 
 > The check targets are configured via `files` in `[tool.mypy]` (in [`pyproject.toml`](pyproject.toml)), so `uv run mypy` with no arguments checks the whole project. `pyright` is also available in the dev dependencies for editor integration, but mypy is the authoritative type-check gate.
+
+**Type check of the example server in Node.js (tsc):**
+```bash
+cd examples/node-robot-jsonrpcserver
+npm run check
+```
 
 **Robot Framework style (optional, for `atests`):**
 ```bash

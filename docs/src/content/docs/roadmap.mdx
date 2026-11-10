@@ -55,6 +55,10 @@ welcome as
   `ServerEndpoint` and `ClientEndpoint` state both sides for servers in Python,
   with a hand-written example server; see the
   [protocol](/robotframework-jsonrpcremote/reference/protocol/).
+- An example server in Node.js, in TypeScript on the JSON-RPC library
+  `vscode-jsonrpc`, which serves a whole session over TCP, a pipe or its stdin
+  and stdout; see the
+  [protocol](/robotframework-jsonrpcremote/reference/protocol/#example-a-server-in-nodejs).
 - A message that cannot be read does not end the session: the client shows the
   problem in Robot Framework's log and on the console.
 - Arguments and return values of keywords and the arguments of a library import
@@ -92,8 +96,8 @@ welcome as
 ## Planned
 
 - **More transports:** WebSockets and Streamable HTTP, and encryption with TLS.
-- **Servers in other languages:** example servers in other languages, such as
-  Rust, Java and .NET.
+- **Servers in other languages:** more example servers in other languages,
+  such as Rust, Java and .NET.
 - **A Robot Framework process per session** on the server, so that sessions run
   apart from each other.
 - **Keyword timeouts and cancellation**, including the test and keyword

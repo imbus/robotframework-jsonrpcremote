@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from node_example import NODE_EXAMPLE, node_or_skip
 from robot.api import ExecutionResult
 
 from jsonrpcpeer import open_pipe_connection
@@ -198,6 +199,18 @@ def test_own_server(tmp_path: Path) -> None:
     code, result = _robot(folder, tmp_path, "echo_stdio.robot")
     assert code == 0, _failed(result)
     code, result = _robot(folder, tmp_path, "echo_pipe.robot")
+    assert code == 0, _failed(result)
+
+
+def test_node_server(tmp_path: Path) -> None:
+    node_or_skip(_path())
+    # The example server in Node.js, started in its folder as the page starts it.
+    with _server(NODE_EXAMPLE, tmp_path / "server.txt", "node", "src/server.ts"):
+        code, result = _robot(_EXAMPLES / "node-server", tmp_path, "echo.robot")
+    assert code == 0, _failed(result)
+
+    # The client starts it for the suite, with the command as a list.
+    code, result = _robot(_EXAMPLES / "node-server", tmp_path, "echo_pipe.robot")
     assert code == 0, _failed(result)
 
 
