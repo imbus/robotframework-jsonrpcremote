@@ -726,6 +726,12 @@ When the response to a request cannot be written as JSON or exceeds the maximum 
 - **THEN** the response carries the code `-32603` and the `id` `7`
 - **AND** the peer logs an error that holds the reason
 
+#### Scenario: Result holds a float that JSON does not allow
+
+- **WHEN** the request handler of a request with the `id` `7` returns `{"value": float("nan")}`
+- **THEN** the response carries the code `-32603` and the `id` `7`
+- **AND** the peer writes no message that holds `NaN`
+
 #### Scenario: Response exceeds the maximum message size
 
 - **WHEN** the response to a request with the `id` `7` exceeds the maximum message size of the peer

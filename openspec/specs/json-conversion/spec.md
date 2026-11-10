@@ -501,7 +501,7 @@ For an abstract collection type that a list satisfies, such as `Sequence`, `Muta
 
 ### Requirement: `as_json` writes dataclasses, enums, tuples and sets as JSON
 
-`as_json` SHALL write a dataclass as an object, an enum as its value, and tuples, named tuples, sets and frozensets as arrays. For any other value that JSON cannot hold, it SHALL fail with a `TypeError`.
+`as_json` SHALL write a dataclass as an object, an enum as its value, and tuples, named tuples, sets and frozensets as arrays. For any other value that JSON cannot hold, it SHALL fail with a `TypeError`. For `NaN` and infinite floats, which JSON does not allow, it SHALL fail with a `ValueError` instead of writing them.
 
 #### Scenario: Collections
 
@@ -523,6 +523,12 @@ For an abstract collection type that a list satisfies, such as `Sequence`, `Muta
 
 - **WHEN** `as_json` gets `b"x"`
 - **THEN** it fails with a `TypeError` whose text is `Can't get default value for <class 'bytes'> with value b'x'`
+
+#### Scenario: Float that JSON does not allow
+
+- **WHEN** `as_json` gets `float("nan")`, `float("inf")` or `float("-inf")`, on its own or inside a list or a dataclass
+- **THEN** it fails with a `ValueError`
+- **AND** it writes nothing
 
 ### Requirement: `as_json` leaves out some fields of a dataclass
 
@@ -722,29 +728,3 @@ A dataclass with `ValidateMixin` SHALL apply the `convert` metadata of its field
 
 - **WHEN** `to_camel_case` gets `a_1`
 - **THEN** it returns `a_1`
-
-### Requirement: Values other than JSON scalars travel as pickles
-
-`value_to_jsonable` SHALL keep `None`, strings, numbers and booleans, and SHALL turn any other value into an object with the key `__pickled__`. `jsonable_to_value` SHALL turn such an object back and SHALL keep every other value.
-
-#### Scenario: JSON scalars
-
-- **WHEN** `value_to_jsonable` gets `None`, a string, a number or a boolean
-- **THEN** it returns the value
-
-#### Scenario: Value that is pickled
-
-- **WHEN** `value_to_jsonable` gets `complex(1, 2)`, and `jsonable_to_value` gets the result
-- **THEN** the result has the key `__pickled__`
-- **AND** `jsonable_to_value` returns `complex(1, 2)`
-
-#### Scenario: Object without the key
-
-- **WHEN** `jsonable_to_value` gets `{"a": 1}`
-- **THEN** it returns `{"a": 1}`
-- **AND** `jsonable_dict_to_object` fails with a `ValueError` whose text is `Dictionary does not contain pickled data`
-
-#### Scenario: Value that cannot be pickled
-
-- **WHEN** `value_to_jsonable` gets a lambda
-- **THEN** it fails with an error whose text names the lambda
